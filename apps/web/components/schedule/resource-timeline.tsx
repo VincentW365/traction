@@ -87,7 +87,7 @@ export function ResourceTimeline({ resources, events, operatingHours, date, zoom
       </div>
 
       {/* Scrollable timeline */}
-      <div ref={scrollRef} className="flex-1 overflow-auto">
+      <div ref={scrollRef} className="flex-1 overflow-auto relative">
         {/* Time header */}
         <TimeHeader
           openMinutes={openMinutes}
@@ -128,9 +128,12 @@ export function ResourceTimeline({ resources, events, operatingHours, date, zoom
           </div>
         ))}
 
-        {/* Current time indicator (overlaid on the scrollable area) */}
+        {/* Current time indicator — constrained to timeline grid area only (below header) */}
         {isToday && (
-          <div className="absolute top-0 bottom-0 pointer-events-none" style={{ left: `${LABEL_WIDTH}px`, width: `${totalWidth}px` }}>
+          <div
+            className="absolute bottom-0 pointer-events-none"
+            style={{ top: '28px', left: `${LABEL_WIDTH}px`, width: `${totalWidth}px` }}
+          >
             <CurrentTimeIndicator
               openMinutes={openMinutes}
               closeMinutes={closeMinutes}
