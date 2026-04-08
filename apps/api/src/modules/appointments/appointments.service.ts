@@ -1,0 +1,631 @@
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  Logger,
+} from '@nestjs/common';
+import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { StatusHistoryService } from '../audit/status-history.service';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { CreateAppointmentDto } from './dto/create-appointment.dto';
+import { UpdateAppointmentDto } from './dto/update-appointment.dto';
+import { toZonedTime } from 'date-fns-tz';
+import { getDay, getHours, getMinutes, startOfDay, isBefore } from 'date-fns';
+
+/**
+ * Expected shape of the operating_hours BusinessRuleConfig value_json.
+ *
+ * Example:
+ * {
+ *   "timezone": "America/Jamaica",
+ *   "schedule": {
+ *     "1": { "open": "07:30", "close": "17:00" },
+ *     "2": { "open": "07:30", "close": "17:00" },
+ *     ...
+ *     "6": { "open": "08:00", "close": "13:00" }
+ *   }
+ * }
+ *
+ * Days follow JS getDay(): 0 = Sunday, 1 = Monday, ... 6 = Saturday.
+ * A missing day key means the site is closed on that day.
+ */
+interface OperatingHoursSchedule {
+  timezone?: string;
+  schedule: Record<
+    string,
+    { open: string; close: string } | undefined
+  >;
+}
+
+@Injectable()
+export class AppointmentsService {
+  private readonly logger = new Logger(AppointmentsService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private statusHistory: StatusHistoryService,
+    private auditService: AuditService,
+  ) {}
+
+  // ---------------------------------------------------------------------------
+  // CREATE
+  // ---------------------------------------------------------------------------
+
+  async create(data: CreateAppointmentDto, userId: string) {
+    const scheduledStartAt = new Date(data.scheduledStartAt);
+
+    // 1. Validate: scheduledStartAt must be in the future
+    if (isBefore(scheduledStartAt, new Date())) {
+      throw new BadRequestException(
+        'Scheduled start time must be in the future',
+      );
+    }
+
+    // 2. Validate: within operating hours
+    await this.validateOperatingHours(scheduledStartAt, data.siteId);
+
+    // 3. Resolve service type IDs from codes
+    const serviceTypeMap = await this.resolveServiceTypeCodes(
+      data.serviceTypes.map((s) => s.serviceTypeCode),
+    );
+
+    // 4. Check for same-day merge opportunity (SCH-004)
+    const existingAppointment = await this.findSameDayAppointment(
+      data.customerId,
+      data.vehicleId,
+      data.siteId,
+      scheduledStartAt,
+    );
+
+    if (existingAppointment) {
+      return this.mergeServicesIntoExisting(
+        existingAppointment.id,
+        data.serviceTypes,
+        serviceTypeMap,
+        userId,
+      );
+    }
+
+    // 5. Calculate estimated end time from service durations
+    const totalDurationMinutes = data.serviceTypes.reduce((sum, s) => {
+      const st = serviceTypeMap.get(s.serviceTypeCode);
+      return sum + (st?.baseDurationMinutes ?? 0) * (s.qty ?? 1);
+    }, 0);
+
+    const scheduledEndAt = new Date(
+      scheduledStartAt.getTime() + totalDurationMinutes * 60 * 1000,
+    );
+
+    // 6. Create appointment + appointment_services in a transaction
+    const appointment = await this.prisma.$transaction(async (tx) => {
+      const appt = await tx.appointment.create({
+        data: {
+          siteId: data.siteId,
+          customerId: data.customerId,
+          vehicleId: data.vehicleId,
+          scheduledStartAt,
+          scheduledEndAt,
+          status: 'DRAFT',
+          notes: data.notes,
+          createdByUserId: userId,
+          services: {
+            create: data.serviceTypes.map((s) => ({
+              serviceTypeId: serviceTypeMap.get(s.serviceTypeCode)!.id,
+              qty: s.qty ?? 1,
+              requestedNotes: s.notes,
+            })),
+          },
+        },
+        include: {
+          services: { include: { serviceType: true } },
+          customer: true,
+          vehicle: true,
+          site: true,
+        },
+      });
+
+      return appt;
+    });
+
+    // 7. Record status history: null → DRAFT
+    await this.statusHistory.record({
+      entityType: 'Appointment',
+      entityId: appointment.id,
+      fromStatus: null,
+      toStatus: 'DRAFT',
+      changedByUserId: userId,
+    });
+
+    // 8. Placeholder: queue notification job for appointment confirmation
+    this.logger.log(
+      `[NOTIFICATION_PLACEHOLDER] Appointment ${appointment.id} created — queue confirmation notification`,
+    );
+
+    return appointment;
+  }
+
+  // ---------------------------------------------------------------------------
+  // FIND BY SITE
+  // ---------------------------------------------------------------------------
+
+  async findBySite(
+    siteId: string,
+    filters: { date?: string; status?: string },
+  ) {
+    const where: Record<string, unknown> = { siteId };
+
+    if (filters.date) {
+      const dayStart = new Date(filters.date);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      where.scheduledStartAt = { gte: dayStart, lt: dayEnd };
+    }
+
+    if (filters.status) {
+      where.status = filters.status;
+    }
+
+    return this.prisma.appointment.findMany({
+      where,
+      orderBy: { scheduledStartAt: 'asc' },
+      include: {
+        services: { include: { serviceType: true } },
+        customer: { select: { id: true, firstName: true, lastName: true, phone: true } },
+        vehicle: { select: { id: true, plateNumber: true, make: true, model: true, modelYear: true } },
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // FIND BY ID
+  // ---------------------------------------------------------------------------
+
+  async findById(id: string) {
+    const appointment = await this.prisma.appointment.findUnique({
+      where: { id },
+      include: {
+        services: { include: { serviceType: true } },
+        customer: true,
+        vehicle: true,
+        site: true,
+      },
+    });
+
+    if (!appointment) {
+      throw new NotFoundException(`Appointment ${id} not found`);
+    }
+
+    return appointment;
+  }
+
+  // ---------------------------------------------------------------------------
+  // UPDATE (reschedule / edit services)
+  // ---------------------------------------------------------------------------
+
+  async update(id: string, data: UpdateAppointmentDto, userId: string) {
+    const existing = await this.findById(id);
+
+    if (['CANCELLED', 'COMPLETED', 'CHECKED_IN', 'IN_PROGRESS'].includes(existing.status)) {
+      throw new BadRequestException(
+        `Cannot update appointment in status ${existing.status}`,
+      );
+    }
+
+    const updateData: Record<string, unknown> = {};
+
+    // Handle reschedule
+    if (data.scheduledStartAt) {
+      const newStart = new Date(data.scheduledStartAt);
+
+      if (isBefore(newStart, new Date())) {
+        throw new BadRequestException(
+          'Scheduled start time must be in the future',
+        );
+      }
+
+      await this.validateOperatingHours(newStart, existing.siteId);
+      updateData.scheduledStartAt = newStart;
+
+      // Recalculate end time if service types not changing
+      if (!data.serviceTypes) {
+        const services = existing.services;
+        const totalDuration = services.reduce(
+          (sum, s) => sum + s.serviceType.baseDurationMinutes * s.qty,
+          0,
+        );
+        updateData.scheduledEndAt = new Date(
+          newStart.getTime() + totalDuration * 60 * 1000,
+        );
+      }
+    }
+
+    if (data.notes !== undefined) {
+      updateData.notes = data.notes;
+    }
+
+    // Handle service type replacement
+    if (data.serviceTypes) {
+      const serviceTypeMap = await this.resolveServiceTypeCodes(
+        data.serviceTypes.map((s) => s.serviceTypeCode),
+      );
+
+      const baseStart = data.scheduledStartAt
+        ? new Date(data.scheduledStartAt)
+        : existing.scheduledStartAt;
+
+      const totalDuration = data.serviceTypes.reduce((sum, s) => {
+        const st = serviceTypeMap.get(s.serviceTypeCode);
+        return sum + (st?.baseDurationMinutes ?? 0) * (s.qty ?? 1);
+      }, 0);
+
+      updateData.scheduledEndAt = new Date(
+        baseStart.getTime() + totalDuration * 60 * 1000,
+      );
+
+      // Delete existing services and create new ones inside transaction
+      const appointment = await this.prisma.$transaction(async (tx) => {
+        await tx.appointmentService.deleteMany({
+          where: { appointmentId: id },
+        });
+
+        return tx.appointment.update({
+          where: { id },
+          data: {
+            ...updateData,
+            status: 'RESCHEDULED',
+            services: {
+              create: data.serviceTypes!.map((s) => ({
+                serviceTypeId: serviceTypeMap.get(s.serviceTypeCode)!.id,
+                qty: s.qty ?? 1,
+                requestedNotes: s.notes,
+              })),
+            },
+          },
+          include: {
+            services: { include: { serviceType: true } },
+            customer: true,
+            vehicle: true,
+            site: true,
+          },
+        });
+      });
+
+      await this.statusHistory.record({
+        entityType: 'Appointment',
+        entityId: id,
+        fromStatus: existing.status,
+        toStatus: 'RESCHEDULED',
+        changedByUserId: userId,
+      });
+
+      return appointment;
+    }
+
+    // Simple update (no service type changes)
+    const wasRescheduled = !!data.scheduledStartAt;
+    if (wasRescheduled) {
+      updateData.status = 'RESCHEDULED';
+    }
+
+    const appointment = await this.prisma.appointment.update({
+      where: { id },
+      data: updateData,
+      include: {
+        services: { include: { serviceType: true } },
+        customer: true,
+        vehicle: true,
+        site: true,
+      },
+    });
+
+    if (wasRescheduled) {
+      await this.statusHistory.record({
+        entityType: 'Appointment',
+        entityId: id,
+        fromStatus: existing.status,
+        toStatus: 'RESCHEDULED',
+        changedByUserId: userId,
+      });
+    }
+
+    return appointment;
+  }
+
+  // ---------------------------------------------------------------------------
+  // CONFIRM
+  // ---------------------------------------------------------------------------
+
+  async confirm(id: string, userId: string) {
+    const existing = await this.findById(id);
+
+    if (!['DRAFT', 'RESCHEDULED'].includes(existing.status)) {
+      throw new BadRequestException(
+        `Cannot confirm appointment in status ${existing.status}`,
+      );
+    }
+
+    const appointment = await this.prisma.appointment.update({
+      where: { id },
+      data: {
+        status: 'CONFIRMED',
+        confirmationStatus: 'CONFIRMED',
+      },
+      include: {
+        services: { include: { serviceType: true } },
+        customer: true,
+        vehicle: true,
+        site: true,
+      },
+    });
+
+    await this.statusHistory.record({
+      entityType: 'Appointment',
+      entityId: id,
+      fromStatus: existing.status,
+      toStatus: 'CONFIRMED',
+      changedByUserId: userId,
+    });
+
+    this.logger.log(
+      `[NOTIFICATION_PLACEHOLDER] Appointment ${id} confirmed — queue confirmation SMS/email`,
+    );
+
+    return appointment;
+  }
+
+  // ---------------------------------------------------------------------------
+  // CANCEL
+  // ---------------------------------------------------------------------------
+
+  async cancel(id: string, reason: string, userId: string) {
+    const existing = await this.findById(id);
+
+    if (['CANCELLED', 'COMPLETED'].includes(existing.status)) {
+      throw new BadRequestException(
+        `Cannot cancel appointment in status ${existing.status}`,
+      );
+    }
+
+    const appointment = await this.prisma.appointment.update({
+      where: { id },
+      data: { status: 'CANCELLED' },
+      include: {
+        services: { include: { serviceType: true } },
+        customer: true,
+        vehicle: true,
+        site: true,
+      },
+    });
+
+    await this.statusHistory.record({
+      entityType: 'Appointment',
+      entityId: id,
+      fromStatus: existing.status,
+      toStatus: 'CANCELLED',
+      changedByUserId: userId,
+      reasonCode: 'APPOINTMENT_CANCEL',
+      notes: reason,
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: AUDIT_ACTIONS.APPOINTMENT_CANCEL,
+      entityType: 'Appointment',
+      entityId: id,
+      beforeJson: { status: existing.status },
+      afterJson: { status: 'CANCELLED' },
+      reasonCode: 'APPOINTMENT_CANCEL',
+      notes: reason,
+    });
+
+    this.logger.log(
+      `[NOTIFICATION_PLACEHOLDER] Appointment ${id} cancelled — queue cancellation notification`,
+    );
+
+    return appointment;
+  }
+
+  // ---------------------------------------------------------------------------
+  // PRIVATE HELPERS
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Validate that the requested datetime falls within the site's operating hours.
+   * Loads the BusinessRuleConfig with ruleKey='operating_hours' for the given site.
+   */
+  private async validateOperatingHours(
+    scheduledStartAt: Date,
+    siteId: string,
+  ): Promise<void> {
+    // Load operating hours config for this site (site-specific first, then global fallback)
+    const now = new Date();
+    const config = await this.prisma.businessRuleConfig.findFirst({
+      where: {
+        ruleKey: 'operating_hours',
+        effectiveFrom: { lte: now },
+        AND: [
+          { OR: [{ siteId }, { siteId: null }] },
+          { OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }] },
+        ],
+      },
+      orderBy: { siteId: 'desc' }, // site-specific takes precedence over global (null)
+    });
+
+    if (!config) {
+      this.logger.warn(
+        `No operating_hours config found for site ${siteId} — skipping validation`,
+      );
+      return;
+    }
+
+    // Resolve the site timezone
+    const site = await this.prisma.site.findUnique({
+      where: { id: siteId },
+      select: { timezone: true },
+    });
+    const siteTimezone = site?.timezone ?? 'America/Jamaica';
+
+    const operatingHours = config.valueJson as unknown as OperatingHoursSchedule;
+
+    if (
+      !this.isWithinOperatingHours(
+        scheduledStartAt,
+        operatingHours,
+        siteTimezone,
+      )
+    ) {
+      throw new BadRequestException(
+        'Scheduled time is outside of operating hours for this site',
+      );
+    }
+  }
+
+  /**
+   * Check if a given UTC datetime falls within the site's operating hours
+   * after converting to the site's local timezone.
+   */
+  isWithinOperatingHours(
+    scheduledStartAt: Date,
+    operatingHoursConfig: OperatingHoursSchedule,
+    siteTimezone: string,
+  ): boolean {
+    const zonedTime = toZonedTime(scheduledStartAt, siteTimezone);
+    const dayOfWeek = getDay(zonedTime); // 0=Sunday ... 6=Saturday
+    const dayKey = String(dayOfWeek);
+
+    const daySchedule = operatingHoursConfig.schedule[dayKey];
+    if (!daySchedule) {
+      // Site is closed on this day
+      return false;
+    }
+
+    const [openHour, openMinute] = daySchedule.open.split(':').map(Number);
+    const [closeHour, closeMinute] = daySchedule.close.split(':').map(Number);
+
+    const hour = getHours(zonedTime);
+    const minute = getMinutes(zonedTime);
+    const requestedMinutes = hour * 60 + minute;
+    const openMinutes = openHour * 60 + openMinute;
+    const closeMinutes = closeHour * 60 + closeMinute;
+
+    return requestedMinutes >= openMinutes && requestedMinutes < closeMinutes;
+  }
+
+  /**
+   * Resolve service type codes to their database records.
+   * Throws if any code is not found or not active.
+   */
+  private async resolveServiceTypeCodes(
+    codes: string[],
+  ): Promise<Map<string, { id: string; baseDurationMinutes: number }>> {
+    const uniqueCodes = [...new Set(codes)];
+
+    const serviceTypes = await this.prisma.serviceType.findMany({
+      where: { code: { in: uniqueCodes }, isActive: true },
+      select: { id: true, code: true, baseDurationMinutes: true },
+    });
+
+    const map = new Map(
+      serviceTypes.map((st) => [
+        st.code,
+        { id: st.id, baseDurationMinutes: st.baseDurationMinutes },
+      ]),
+    );
+
+    const missing = uniqueCodes.filter((c) => !map.has(c));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Unknown or inactive service type codes: ${missing.join(', ')}`,
+      );
+    }
+
+    return map;
+  }
+
+  /**
+   * SCH-004: Find an existing appointment for the same customer+vehicle
+   * on the same calendar day at the same site.
+   */
+  private async findSameDayAppointment(
+    customerId: string,
+    vehicleId: string,
+    siteId: string,
+    scheduledStartAt: Date,
+  ) {
+    const dayStart = startOfDay(scheduledStartAt);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    return this.prisma.appointment.findFirst({
+      where: {
+        customerId,
+        vehicleId,
+        siteId,
+        scheduledStartAt: { gte: dayStart, lt: dayEnd },
+        status: { notIn: ['CANCELLED', 'COMPLETED', 'MISSED'] },
+      },
+      include: {
+        services: { include: { serviceType: true } },
+      },
+    });
+  }
+
+  /**
+   * Merge additional services into an existing same-day appointment (SCH-004).
+   * Avoids duplicating service types that are already on the appointment.
+   */
+  private async mergeServicesIntoExisting(
+    appointmentId: string,
+    newServices: { serviceTypeCode: string; qty?: number; notes?: string }[],
+    serviceTypeMap: Map<string, { id: string; baseDurationMinutes: number }>,
+    userId: string,
+  ) {
+    const existing = await this.prisma.appointment.findUniqueOrThrow({
+      where: { id: appointmentId },
+      include: { services: true },
+    });
+
+    const existingTypeIds = new Set(existing.services.map((s) => s.serviceTypeId));
+
+    const servicesToAdd = newServices
+      .filter((s) => !existingTypeIds.has(serviceTypeMap.get(s.serviceTypeCode)!.id))
+      .map((s) => ({
+        appointmentId,
+        serviceTypeId: serviceTypeMap.get(s.serviceTypeCode)!.id,
+        qty: s.qty ?? 1,
+        requestedNotes: s.notes,
+      }));
+
+    if (servicesToAdd.length > 0) {
+      await this.prisma.appointmentService.createMany({
+        data: servicesToAdd,
+      });
+
+      // Recalculate scheduledEndAt with newly merged services
+      const allServices = await this.prisma.appointmentService.findMany({
+        where: { appointmentId },
+        include: { serviceType: true },
+      });
+
+      const totalDuration = allServices.reduce(
+        (sum, s) => sum + s.serviceType.baseDurationMinutes * s.qty,
+        0,
+      );
+
+      const newEndAt = new Date(
+        existing.scheduledStartAt.getTime() + totalDuration * 60 * 1000,
+      );
+
+      await this.prisma.appointment.update({
+        where: { id: appointmentId },
+        data: { scheduledEndAt: newEndAt },
+      });
+    }
+
+    this.logger.log(
+      `[SAME_DAY_MERGE] Merged ${servicesToAdd.length} new service(s) into appointment ${appointmentId}`,
+    );
+
+    return this.findById(appointmentId);
+  }
+}

@@ -1,0 +1,13 @@
+scenario,source_type,arrival_delta_min,parts_ready,quick_service,result_priority_class,ranking_action,notes
+"On-time appointment checked in, parts ready, skill available",APPOINTMENT,-30 to +15,Yes,Any,APPT_PROTECTED,Rank above walk-ins; assign earliest compatible resource.,Protected appointment policy applies.
+Appointment arrives >30 min early,APPOINTMENT,< -30,Yes,Any,WALKIN_TEMP,Treat as walk-in until protection window opens.,Can be served early if capacity allows.
+Appointment arrives 16-30 min late,APPOINTMENT,+16 to +30,Yes,Any,APPT_LATE_SOFT,Lose protected slot; rank dynamically with lateness penalty.,Manager may restore priority.
+"Appointment arrives >30 min late, no contact",APPOINTMENT,> +30,Any,Any,MISSED,Remove from protected flow; reschedule or convert to walk-in.,Capacity-based salvage only.
+"Walk-in quick service, quick lane idle",WALKIN,N/A,Yes,Yes,WALKIN_FASTTRACK,Insert into quick lane if protected appointments not delayed >10 min.,Lane capacity required.
+Walk-in standard service,WALKIN,N/A,Yes,No,WALKIN_STANDARD,Rank after protected appointments using wait-time fairness.,Default walk-in path.
+Any visit with mandatory parts not ready,ANY,Any,No,Any,BLOCKED_PARTS,Do not schedule to service start; alert parts team.,Can remain visible with blocked reason.
+Any visit with no qualified tech scheduled,ANY,Any,Yes,Any,BLOCKED_SKILL,Hold from scheduling; escalate or reschedule.,Eligibility fails.
+Multiple services same customer and vehicle same day,ANY,Any,Mixed,Mixed,MERGED_VISIT,Single queue position with multi-line service order.,No duplicate ticket.
+Long-wait walk-in breaches fairness threshold,WALKIN,N/A,Yes,No,WALKIN_ESCALATED,Manager alert; optional manual intervention.,Threshold default 90 min.
+Batched similar service family with no protected-delay breach,ANY,Any,Yes,Any,BATCH_ELIGIBLE,Apply batching bonus in ranking and assignment.,Efficiency without unfairness.
+Manager override,ANY,Any,Any,Any,MANUAL_OVERRIDE,Apply explicit ranked order change with audit.,Reason code mandatory.

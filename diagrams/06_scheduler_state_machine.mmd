@@ -1,0 +1,22 @@
+stateDiagram-v2
+    [*] --> PendingCheckIn
+    PendingCheckIn --> CheckedIn : check_in
+    CheckedIn --> BlockedParts : parts_missing
+    CheckedIn --> BlockedSkill : no_tech_or_bay
+    CheckedIn --> Ranked : scheduler_ranked
+    BlockedParts --> Ranked : parts_ready
+    BlockedSkill --> Ranked : qualified_resource_available
+    Ranked --> Called : technician_or_bay_ready
+    Called --> InService : service_start
+    InService --> WaitingParts : parts_shortage_discovered
+    WaitingParts --> InService : parts_arrive
+    InService --> QC : technician_complete
+    QC --> ReadyForPickup : qc_pass
+    ReadyForPickup --> Closed : paid_and_released
+    CheckedIn --> Abandoned : customer_leaves
+    Ranked --> Abandoned : customer_leaves
+    PendingCheckIn --> Cancelled : cancel
+    CheckedIn --> Cancelled : cancel_before_service
+    Closed --> [*]
+    Cancelled --> [*]
+    Abandoned --> [*]

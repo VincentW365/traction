@@ -1,0 +1,30 @@
+flowchart TD
+    A[Customer checked in] --> B{Has appointment?}
+    B -- No --> W1[Classify as walk-in]
+    B -- Yes --> C{Arrival time vs appointment}
+    C -- More than 30 min early --> E1[Temporary walk-in class]
+    C -- 30 min early to 15 min late --> E2[Protected appointment]
+    C -- 16 to 30 min late --> E3[Late-soft appointment]
+    C -- More than 30 min late --> E4[Missed appointment / reschedule or convert]
+
+    W1 --> P{Mandatory parts ready?}
+    E1 --> P
+    E2 --> P
+    E3 --> P
+
+    P -- No --> B1[Blocked by parts]
+    P -- Yes --> T{Qualified tech and bay available?}
+    T -- No --> B2[Blocked by skill or bay]
+    T -- Yes --> Q{Quick-service fast-track eligible?}
+    Q -- Yes --> F1[Insert into quick lane if no protected delay breach]
+    Q -- No --> R1[Compute weighted rank]
+
+    R1 --> G{Batching opportunity?}
+    G -- Yes --> R2[Apply batching bonus]
+    G -- No --> R3[Keep standard score]
+
+    F1 --> Z[Persist queue decision snapshot]
+    R2 --> Z
+    R3 --> Z
+    B1 --> Z
+    B2 --> Z

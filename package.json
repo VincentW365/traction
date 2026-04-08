@@ -1,0 +1,43 @@
+{
+  "name": "bsop",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:reset": "prisma migrate reset",
+    "db:studio": "prisma studio",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
+  },
+  "devDependencies": {
+    "playwright": "^1.59.0",
+    "prettier": "^3",
+    "prisma": "^6",
+    "tsx": "^4",
+    "turbo": "^2"
+  },
+  "dependencies": {
+    "@prisma/client": "^6"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@prisma/client",
+      "@prisma/engines",
+      "bcrypt",
+      "esbuild",
+      "prisma",
+      "sharp",
+      "msgpackr-extract"
+    ]
+  }
+}

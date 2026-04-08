@@ -1,0 +1,17 @@
+flowchart TD
+    A[Eligible service identified] --> B[Offer transport options]
+    B --> C{Customer accepts?}
+    C -- No --> X[No transport workflow]
+    C -- Yes --> D[Capture drop-off / pickup preferences]
+    D --> E[Create transport request]
+    E --> F{Capacity available?}
+    F -- No --> G[Waitlist or manager decision]
+    F -- Yes --> H[Assign driver and time window]
+    H --> I[Execute drop-off leg]
+    I --> J[Service in progress]
+    J --> K{ETA <= 30 min or ready for pickup?}
+    K -- No --> J
+    K -- Yes --> L[Trigger pickup coordination]
+    L --> M[Confirm customer window]
+    M --> N[Assign pickup driver]
+    N --> O[Complete pickup leg]

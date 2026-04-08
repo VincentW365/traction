@@ -1,0 +1,120 @@
+# 18_Backlog_Epics_User_Stories.md
+
+## Purpose
+
+Provide a delivery-ready backlog skeleton aligned to the approved phases.
+
+The CSV source lives in:
+- `data/backlog_epics_user_stories.csv`
+
+---
+
+## 1. Backlog Summary
+
+| story_id | epic | phase | priority | role | story | acceptance_summary |
+| --- | --- | --- | --- | --- | --- | --- |
+| EP1-US1 | Foundation & Access | 0 | Must | Admin | As an admin, I can sign in and access site-specific administration areas so that operational data stays controlled. | OIDC/JWT auth scaffolded; site-aware RBAC guards work in API and UI. |
+| EP1-US2 | Foundation & Access | 0 | Must | Admin | As an admin, I can manage users and roles so that staff only see actions they are allowed to perform. | Create, activate, deactivate, and role-assign staff users with audit. |
+| EP2-US1 | Customer & Vehicle Master | 1 | Must | Front Desk / Cashier | As front desk, I can find or create a customer in under a minute so repeat visits are fast. | Search by phone, plate, name; create customer and vehicle quickly. |
+| EP2-US2 | Customer & Vehicle Master | 1 | Must | Front Desk / Cashier | As front desk, I can attach one or more vehicles to a customer so visit history is accurate. | Vehicle CRUD with plate/VIN uniqueness checks. |
+| EP3-US1 | Appointment Scheduling | 1 | Must | Service Advisor | As a service advisor, I can create an appointment that respects duration, technician skill, and bay constraints. | Scheduler only offers valid slots and stores requested services. |
+| EP3-US2 | Appointment Scheduling | 1 | Must | Customer | As a customer, I receive confirmation when my booking is created or changed. | SMS/email confirmation queued and logged. |
+| EP3-US3 | Appointment Scheduling | 1 | Should | Service Advisor | As a service advisor, I can reschedule without losing customer/vehicle/service context. | Original appointment history retained; reschedule event audited. |
+| EP4-US1 | Walk-In & Check-In | 1 | Must | Front Desk / Cashier | As front desk, I can register a walk-in and issue a queue ticket in a few clicks. | Walk-in creation, ticket generation, ETA display, audit. |
+| EP4-US2 | Walk-In & Check-In | 1 | Must | Front Desk / Cashier | As front desk, I can check in an appointment and apply early/late rules automatically. | Grace period and early-arrival behavior implemented from config. |
+| EP4-US3 | Walk-In & Check-In | 1 | Must | Customer | As a customer, I can see my ticket and estimated wait so I know what to expect. | Customer status view and queue board update in real time. |
+| EP5-US1 | Queue Board & Real-Time | 1 | Must | Manager | As a manager, I can see the live queue, statuses, and blocked reasons so I can intervene quickly. | Live board shows rank, ETA, status, blocked reasons, assigned tech if applicable. |
+| EP5-US2 | Queue Board & Real-Time | 1 | Must | Manager | As a manager, I can override queue position with a reason when needed. | Before/after audit captured with reason codes. |
+| EP6-US1 | Service Orders & Technician Assignment | 2 | Must | Service Advisor | As a service advisor, I can create and refine a service order from the requested visit. | Job card supports multiple line items, notes, and promised time. |
+| EP6-US2 | Service Orders & Technician Assignment | 2 | Must | Service Advisor | As a service advisor, I can assign a qualified technician and bay. | Only compatible techs/bays can be selected; no double-booking. |
+| EP6-US3 | Service Orders & Technician Assignment | 2 | Must | Technician | As a technician, I can update work status from my queue so the office sees progress instantly. | Start, pause, waiting-parts, QC, complete transitions recorded with timestamps. |
+| EP6-US4 | Service Orders & Technician Assignment | 2 | Should | Manager | As a manager, I can see utilization and bottlenecks by technician and bay. | Operational dashboard metrics computed from actual timestamps. |
+| EP7-US1 | Parts Readiness | 3 | Must | Parts / Store Staff | As parts staff, I can see upcoming jobs that need parts so I can stage them before arrival. | Next-day parts board with required-by time and readiness flags. |
+| EP7-US2 | Parts Readiness | 3 | Must | Parts / Store Staff | As parts staff, I can reserve or transfer critical parts for a job. | Parts reservation and transfer workflow with ETA tracking. |
+| EP7-US3 | Parts Readiness | 3 | Must | Service Advisor | As a service advisor, I can see whether a job is blocked by parts before promising completion. | Parts-ready flags visible in scheduler and service order. |
+| EP8-US1 | Notifications | 4 | Must | Customer | As a customer, I receive reminders and delay notifications so I am not left guessing. | 24h and 2h reminders, delay alerts, ready-for-pickup notifications. |
+| EP8-US2 | Notifications | 4 | Should | Front Desk / Cashier | As front desk, I can resend or manually trigger notices when needed. | Manual resend with channel history and audit. |
+| EP9-US1 | Transport | 4 | Should | Transport Coordinator | As transport coordinator, I can schedule customer drop-off and pickup legs around the service lifecycle. | Transport request, scheduling, driver assignment, status tracking. |
+| EP9-US2 | Transport | 4 | Could | Customer | As a customer, I can confirm my preferred transport window from a message link. | Lightweight confirmation flow with secure token. |
+| EP10-US1 | Reporting & BI | 5 | Must | Manager | As a manager, I can track wait time, no-shows, utilization, parts delays, and satisfaction. | Dashboard and exportable reports with filters by date/site/service family. |
+| EP10-US2 | Reporting & BI | 5 | Should | Manager | As a manager, I can get recurring-maintenance opportunities and reminder suggestions. | Return-due list generated from historical visits and service intervals. |
+| EP10-US3 | Reporting & BI | 5 | Could | Manager | As a manager, I can view prediction-based no-show risk and duration estimates once enough data exists. | Optional analytics module behind feature flag; explainability included. |
+| EP11-US1 | Admin Configuration | 1 | Must | Manager | As a manager, I can edit grace period, operating hours, service durations, and templates without developer help. | Config UI with validation, versioning, and audit. |
+| EP11-US2 | Admin Configuration | 1 | Must | Admin | As an admin, I can view a full audit trail of operational and configuration changes. | Audit filter by actor, entity, action, date. |
+
+---
+
+## 2. Prioritization Rules
+
+### Must
+Required for the phase to achieve its business objective.
+
+### Should
+Strong value; include if capacity allows after Must items are stable.
+
+### Could
+Useful but deferrable.
+
+### Won't (for now)
+Not in current phase or MVP.
+
+---
+
+## 3. Backlog Governance
+
+- Every story should map to a module and phase.
+- Every story should have clear acceptance criteria before development starts.
+- Stories that change core rules must reference `docs/03_Business_Rules.md`.
+- Stories that change schema or contracts must reference approval gates.
+
+---
+
+## 4. Recommended Sprint Ordering for Phase 1
+
+### Sprint 0
+- repo scaffolding
+- auth scaffold
+- design system baseline
+- schema foundations
+- config and audit foundations
+
+### Sprint 1
+- customer / vehicle search and create
+- appointment create / reschedule
+- service catalogue read
+- operating-hours config
+
+### Sprint 2
+- walk-in create
+- check-in flow
+- ticket generation
+- early/late rule handling
+
+### Sprint 3
+- queue rank computation
+- queue board
+- manager override
+- status history
+
+### Sprint 4
+- polish
+- reporting baseline
+- production hardening
+- pilot readiness checklist
+
+---
+
+## 5. Story Writing Standard
+
+Each story should eventually include:
+- user role
+- goal
+- reason
+- impacted entities
+- impacted screens
+- rule references
+- test scenarios
+- phase
+- acceptance criteria
+
+This file is the scaffold, not the final Jira replacement.

@@ -1,0 +1,781 @@
+openapi: 3.1.0
+info:
+  title: Bert's Service Operations Platform API
+  version: 0.1.0
+  description: >
+    Outline contract for the unified service platform covering appointments,
+    walk-ins, queue management, service orders, parts, transport, reporting,
+    configuration, and audit.
+servers:
+  - url: /api/v1
+tags:
+  - name: Customers
+  - name: Vehicles
+  - name: Appointments
+  - name: Check-In
+  - name: WalkIns
+  - name: Queue
+  - name: Service Orders
+  - name: Parts
+  - name: Transport
+  - name: Notifications
+  - name: Reports
+  - name: Config
+  - name: Audit
+paths:
+  /customers:
+    get:
+      tags: [Customers]
+      summary: Search customers
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        '200':
+          description: Customer search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Customer' }
+    post:
+      tags: [Customers]
+      summary: Create customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCustomerRequest' }
+      responses:
+        '201':
+          description: Customer created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Customer' }
+
+  /vehicles:
+    get:
+      tags: [Vehicles]
+      summary: Search vehicles
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        '200':
+          description: Vehicle search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Vehicle' }
+    post:
+      tags: [Vehicles]
+      summary: Create vehicle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateVehicleRequest' }
+      responses:
+        '201':
+          description: Vehicle created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Vehicle' }
+
+  /appointments:
+    post:
+      tags: [Appointments]
+      summary: Create appointment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppointmentRequest' }
+      responses:
+        '201':
+          description: Appointment created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+
+  /appointments/{appointmentId}:
+    patch:
+      tags: [Appointments]
+      summary: Update or reschedule appointment
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAppointmentRequest' }
+      responses:
+        '200':
+          description: Appointment updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+
+  /appointments/{appointmentId}/confirm:
+    post:
+      tags: [Appointments]
+      summary: Confirm appointment
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        '200':
+          description: Appointment confirmed
+
+  /appointments/{appointmentId}/cancel:
+    post:
+      tags: [Appointments]
+      summary: Cancel appointment
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Appointment cancelled
+
+  /appointments/{appointmentId}/check-in:
+    post:
+      tags: [Check-In]
+      summary: Check in appointment and activate service visit
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckInRequest' }
+      responses:
+        '200':
+          description: Check-in completed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckInResponse' }
+
+  /walk-ins:
+    post:
+      tags: [WalkIns]
+      summary: Register walk-in visit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWalkInRequest' }
+      responses:
+        '201':
+          description: Walk-in created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckInResponse' }
+
+  /queue/board:
+    get:
+      tags: [Queue]
+      summary: Get live queue board
+      parameters:
+        - in: query
+          name: siteId
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Queue board
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueBoardResponse' }
+
+  /queue/recompute:
+    post:
+      tags: [Queue]
+      summary: Trigger queue recomputation
+      requestBody:
+        required: false
+      responses:
+        '202':
+          description: Queue recomputation triggered
+
+  /queue-tickets/{ticketId}/override:
+    post:
+      tags: [Queue]
+      summary: Apply manager override to queue ticket
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueOverrideRequest' }
+      responses:
+        '200':
+          description: Override applied
+
+  /service-orders:
+    post:
+      tags: [Service Orders]
+      summary: Create service order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateServiceOrderRequest' }
+      responses:
+        '201':
+          description: Service order created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceOrder' }
+
+  /service-orders/{serviceOrderId}:
+    patch:
+      tags: [Service Orders]
+      summary: Update service order
+      parameters:
+        - $ref: '#/components/parameters/ServiceOrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateServiceOrderRequest' }
+      responses:
+        '200':
+          description: Service order updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceOrder' }
+
+  /service-orders/{serviceOrderId}/assign:
+    post:
+      tags: [Service Orders]
+      summary: Assign technician and bay
+      parameters:
+        - $ref: '#/components/parameters/ServiceOrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignTechnicianRequest' }
+      responses:
+        '200':
+          description: Assignment applied
+
+  /service-orders/{serviceOrderId}/status:
+    post:
+      tags: [Service Orders]
+      summary: Change service order status
+      parameters:
+        - $ref: '#/components/parameters/ServiceOrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeStatusRequest' }
+      responses:
+        '200':
+          description: Status changed
+
+  /parts-requests:
+    post:
+      tags: [Parts]
+      summary: Create parts request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePartsRequest' }
+      responses:
+        '201':
+          description: Parts request created
+
+  /parts-requests/{partsRequestId}/reserve:
+    post:
+      tags: [Parts]
+      summary: Reserve parts
+      parameters:
+        - $ref: '#/components/parameters/PartsRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReservePartsRequest' }
+      responses:
+        '200':
+          description: Parts reserved or partially reserved
+
+  /inventory-transfers:
+    post:
+      tags: [Parts]
+      summary: Create inventory transfer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTransferRequest' }
+      responses:
+        '201':
+          description: Transfer created
+
+  /inventory-transfers/{transferId}/receive:
+    post:
+      tags: [Parts]
+      summary: Receive inventory transfer
+      parameters:
+        - $ref: '#/components/parameters/TransferId'
+      responses:
+        '200':
+          description: Transfer received
+
+  /transport-requests:
+    post:
+      tags: [Transport]
+      summary: Create transport request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTransportRequest' }
+      responses:
+        '201':
+          description: Transport request created
+
+  /transport-requests/{transportRequestId}/assign-driver:
+    post:
+      tags: [Transport]
+      summary: Assign driver
+      parameters:
+        - $ref: '#/components/parameters/TransportRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignDriverRequest' }
+      responses:
+        '200':
+          description: Driver assigned
+
+  /transport-requests/{transportRequestId}/status:
+    post:
+      tags: [Transport]
+      summary: Change transport request status
+      parameters:
+        - $ref: '#/components/parameters/TransportRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeStatusRequest' }
+      responses:
+        '200':
+          description: Transport status changed
+
+  /reports/kpis:
+    get:
+      tags: [Reports]
+      summary: Read KPI dashboard data
+      parameters:
+        - in: query
+          name: siteId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: startDate
+          schema: { type: string, format: date }
+        - in: query
+          name: endDate
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: KPI dashboard response
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KpiDashboardResponse' }
+
+  /config/business-rules:
+    get:
+      tags: [Config]
+      summary: Read business rules configuration
+      responses:
+        '200':
+          description: Rule configuration list
+
+  /config/business-rules/{ruleKey}:
+    patch:
+      tags: [Config]
+      summary: Update business rule configuration
+      parameters:
+        - in: path
+          name: ruleKey
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateRuleConfigRequest' }
+      responses:
+        '200':
+          description: Rule configuration updated
+
+  /audit-logs:
+    get:
+      tags: [Audit]
+      summary: Read audit logs
+      parameters:
+        - in: query
+          name: actorId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: entityType
+          schema: { type: string }
+      responses:
+        '200':
+          description: Audit logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditLogItem' }
+
+components:
+  parameters:
+    AppointmentId:
+      in: path
+      name: appointmentId
+      required: true
+      schema: { type: string, format: uuid }
+    TicketId:
+      in: path
+      name: ticketId
+      required: true
+      schema: { type: string, format: uuid }
+    ServiceOrderId:
+      in: path
+      name: serviceOrderId
+      required: true
+      schema: { type: string, format: uuid }
+    PartsRequestId:
+      in: path
+      name: partsRequestId
+      required: true
+      schema: { type: string, format: uuid }
+    TransferId:
+      in: path
+      name: transferId
+      required: true
+      schema: { type: string, format: uuid }
+    TransportRequestId:
+      in: path
+      name: transportRequestId
+      required: true
+      schema: { type: string, format: uuid }
+
+  schemas:
+    Customer:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customerNumber: { type: string }
+        firstName: { type: string }
+        lastName: { type: string }
+        phone: { type: string }
+        email: { type: string, format: email }
+
+    Vehicle:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        plateNumber: { type: string }
+        vin: { type: string }
+        make: { type: string }
+        model: { type: string }
+        year: { type: integer }
+
+    ServiceTypeSelection:
+      type: object
+      required: [serviceTypeCode]
+      properties:
+        serviceTypeCode: { type: string }
+        qty: { type: integer, default: 1 }
+        notes: { type: string }
+
+    Appointment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        siteId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        vehicleId: { type: string, format: uuid }
+        scheduledStartAt: { type: string, format: date-time }
+        scheduledEndAt: { type: string, format: date-time }
+        status: { type: string }
+
+    ServiceVisit:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        appointmentId: { type: string, format: uuid, nullable: true }
+        sourceType: { type: string, enum: [APPOINTMENT, WALKIN] }
+        arrivalAt: { type: string, format: date-time, nullable: true }
+        checkedInAt: { type: string, format: date-time, nullable: true }
+        status: { type: string }
+
+    QueueTicket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        serviceVisitId: { type: string, format: uuid }
+        ticketNumber: { type: string }
+        checkInSequence: { type: integer }
+        queueRank: { type: integer, nullable: true }
+        displayStatus: { type: string }
+
+    ServiceOrder:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        serviceVisitId: { type: string, format: uuid }
+        status: { type: string }
+        promisedCompletionAt: { type: string, format: date-time, nullable: true }
+        paymentStatus: { type: string, nullable: true }
+
+    CreateCustomerRequest:
+      type: object
+      required: [firstName, lastName, phone]
+      properties:
+        firstName: { type: string }
+        lastName: { type: string }
+        phone: { type: string }
+        email: { type: string, format: email, nullable: true }
+
+    CreateVehicleRequest:
+      type: object
+      required: [customerId, plateNumber]
+      properties:
+        customerId: { type: string, format: uuid }
+        plateNumber: { type: string }
+        vin: { type: string, nullable: true }
+        make: { type: string, nullable: true }
+        model: { type: string, nullable: true }
+        year: { type: integer, nullable: true }
+
+    CreateAppointmentRequest:
+      type: object
+      required: [siteId, customerId, vehicleId, scheduledStartAt, serviceTypes]
+      properties:
+        siteId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        vehicleId: { type: string, format: uuid }
+        scheduledStartAt: { type: string, format: date-time }
+        serviceTypes:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceTypeSelection' }
+        notes: { type: string, nullable: true }
+
+    UpdateAppointmentRequest:
+      type: object
+      properties:
+        scheduledStartAt: { type: string, format: date-time }
+        serviceTypes:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceTypeSelection' }
+        notes: { type: string, nullable: true }
+
+    CheckInRequest:
+      type: object
+      properties:
+        arrivalAt: { type: string, format: date-time, nullable: true }
+        notes: { type: string, nullable: true }
+
+    CreateWalkInRequest:
+      type: object
+      required: [siteId, customerId, vehicleId, serviceTypes]
+      properties:
+        siteId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        vehicleId: { type: string, format: uuid }
+        serviceTypes:
+          type: array
+          items: { $ref: '#/components/schemas/ServiceTypeSelection' }
+        notes: { type: string, nullable: true }
+
+    CheckInResponse:
+      type: object
+      properties:
+        serviceVisit: { $ref: '#/components/schemas/ServiceVisit' }
+        queueTicket: { $ref: '#/components/schemas/QueueTicket' }
+        priorityClass: { type: string }
+        etaStartAt: { type: string, format: date-time, nullable: true }
+
+    QueueBoardResponse:
+      type: object
+      properties:
+        siteId: { type: string, format: uuid }
+        generatedAt: { type: string, format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              queueTicketId: { type: string, format: uuid }
+              ticketNumber: { type: string }
+              queueRank: { type: integer, nullable: true }
+              displayStatus: { type: string }
+              priorityClass: { type: string }
+              blockedReason: { type: string, nullable: true }
+              etaStartAt: { type: string, format: date-time, nullable: true }
+
+    QueueOverrideRequest:
+      type: object
+      required: [reasonCode]
+      properties:
+        reasonCode: { type: string }
+        notes: { type: string, nullable: true }
+        desiredRank: { type: integer, nullable: true }
+
+    CreateServiceOrderRequest:
+      type: object
+      required: [serviceVisitId, items]
+      properties:
+        serviceVisitId: { type: string, format: uuid }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              serviceTypeCode: { type: string }
+              estimateMinutes: { type: integer, nullable: true }
+              notes: { type: string, nullable: true }
+        promisedCompletionAt: { type: string, format: date-time, nullable: true }
+
+    UpdateServiceOrderRequest:
+      type: object
+      properties:
+        promisedCompletionAt: { type: string, format: date-time, nullable: true }
+        notes: { type: string, nullable: true }
+
+    AssignTechnicianRequest:
+      type: object
+      required: [technicianId, bayId]
+      properties:
+        technicianId: { type: string, format: uuid }
+        bayId: { type: string, format: uuid }
+
+    ChangeStatusRequest:
+      type: object
+      required: [toStatus]
+      properties:
+        toStatus: { type: string }
+        reasonCode: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+
+    CreatePartsRequest:
+      type: object
+      required: [serviceOrderId, items]
+      properties:
+        serviceOrderId: { type: string, format: uuid }
+        items:
+          type: array
+          items:
+            type: object
+            required: [sku, qtyRequested]
+            properties:
+              sku: { type: string }
+              qtyRequested: { type: integer }
+              criticalFlag: { type: boolean, default: false }
+
+    ReservePartsRequest:
+      type: object
+      required: [reservations]
+      properties:
+        reservations:
+          type: array
+          items:
+            type: object
+            required: [sku, qty]
+            properties:
+              sku: { type: string }
+              qty: { type: integer }
+              inventoryLocationCode: { type: string, nullable: true }
+
+    CreateTransferRequest:
+      type: object
+      required: [partsRequestId, sourceSiteId, destinationSiteId]
+      properties:
+        partsRequestId: { type: string, format: uuid }
+        sourceSiteId: { type: string, format: uuid }
+        destinationSiteId: { type: string, format: uuid }
+        etaAt: { type: string, format: date-time, nullable: true }
+
+    CreateTransportRequest:
+      type: object
+      required: [serviceVisitId, direction]
+      properties:
+        serviceVisitId: { type: string, format: uuid }
+        direction: { type: string, enum: [DROPOFF, PICKUP] }
+        origin: { type: string, nullable: true }
+        destination: { type: string, nullable: true }
+        requestedAt: { type: string, format: date-time, nullable: true }
+
+    AssignDriverRequest:
+      type: object
+      required: [driverUserId, scheduledAt]
+      properties:
+        driverUserId: { type: string, format: uuid }
+        scheduledAt: { type: string, format: date-time }
+
+    UpdateRuleConfigRequest:
+      type: object
+      required: [value]
+      properties:
+        value: {}
+        effectiveFrom: { type: string, format: date-time, nullable: true }
+        notes: { type: string, nullable: true }
+
+    KpiDashboardResponse:
+      type: object
+      properties:
+        siteId: { type: string, format: uuid, nullable: true }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        metrics:
+          type: array
+          items:
+            type: object
+            properties:
+              code: { type: string }
+              name: { type: string }
+              value: {}
+              target: { type: string, nullable: true }
+
+    AuditLogItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        actorUserId: { type: string, format: uuid, nullable: true }
+        action: { type: string }
+        entityType: { type: string }
+        entityId: { type: string, format: uuid }
+        occurredAt: { type: string, format: date-time }
+        reasonCode: { type: string, nullable: true }
+        notes: { type: string, nullable: true }

@@ -1,0 +1,56 @@
+flowchart LR
+    subgraph Customer
+        C1[Book appointment]
+        C2[Walk-in arrival]
+        C3[Receive notifications]
+        C4[Pickup / transport]
+    end
+
+    subgraph FrontDesk["Front Desk / Service Advisor"]
+        F1[Create or confirm booking]
+        F2[Check-in]
+        F3[Issue queue ticket]
+        F4[Create / refine service order]
+        F5[Close order / payment handoff]
+    end
+
+    subgraph Scheduler["Scheduling Engine (Core Brain)"]
+        S1[Validate slot]
+        S2[Build active visit]
+        S3[Compute eligibility]
+        S4[Rank queue dynamically]
+        S5[Estimate start / completion]
+        S6[Assign technician / bay candidates]
+    end
+
+    subgraph Ops["Service Operations"]
+        O1[Technician assignment]
+        O2[Service execution]
+        O3[Pause / waiting parts]
+        O4[Quality check]
+        O5[Ready for pickup]
+    end
+
+    subgraph Parts["Parts & Logistics"]
+        P1[Reserve parts]
+        P2[Transfer / procure]
+        P3[Mark parts ready]
+    end
+
+    subgraph Transport["Transport"]
+        T1[Schedule drop-off]
+        T2[Schedule pickup]
+        T3[Assign driver]
+    end
+
+    C1 --> F1 --> S1
+    C2 --> F2
+    S1 --> C3
+    F2 --> F3 --> S2 --> S3 --> S4 --> S5 --> S6
+    S6 --> F4 --> O1 --> O2
+    O2 --> O3
+    O3 --> P1 --> P2 --> P3 --> S4
+    O2 --> O4 --> O5 --> F5 --> C4
+    S5 --> C3
+    O5 --> T2 --> T3 --> C4
+    F4 --> T1 --> T3

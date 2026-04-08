@@ -1,0 +1,21 @@
+service_code,service_name,family,base_duration_min,appointment_only,quick_service,skill_code,bay_type,parts_preposition_required,transport_eligible,batching_family,notes
+OIL-01,Oil Change,Quick Service,30,No,Yes,LUBE,Lube Bay,Yes,No,QUICK_LUBE,Fast-track eligible if dedicated quick lane exists.
+TIR-01,Tire Rotation,Quick Service,25,No,Yes,TIRE,General Bay,No,No,TIRE_QUICK,Fast-track eligible when bay and technician are free.
+BAT-01,Battery Test / Replace,Electrical / Quick,30,No,Yes,ELECTRICAL,General Bay,Yes,No,BATTERY,Replacement requires battery reservation.
+BRK-01,Brake Inspection,Brakes,30,No,No,BRAKE,General Bay,No,No,BRAKE,May lead to conversion into repair order.
+BRK-02,Brake Pad Replacement,Brakes,90,Recommended,No,BRAKE,General Bay,Yes,Yes,BRAKE,Critical parts must be reserved before slot protection.
+TIR-02,Wheel Alignment,Tires,60,Recommended,No,ALIGNMENT,Alignment Bay,No,No,ALIGNMENT,Requires alignment-capable bay.
+TIR-03,Tire Install & Balance,Tires,60,Recommended,No,TIRE,Tire Bay,Yes,No,TIRE_INSTALL,Tires should be staged before arrival.
+AC-01,A/C Diagnostic,A/C,60,Recommended,No,AC,General Bay,No,No,AC,Often diagnostic-only first visit.
+AC-02,A/C Repair,A/C,180,Yes,No,AC,General Bay,Yes,Yes,AC,Requires specialist technician and parts readiness.
+ENG-01,Engine Diagnostic,Diagnostics,90,Recommended,No,DIAG,Diagnostic Bay,No,No,DIAGNOSTIC,May expand into multi-day repair.
+ENG-02,Major Tune-Up,Engine,180,Yes,No,ENGINE,General Bay,Yes,Yes,ENGINE_SERVICE,Schedule with experienced technician.
+ELE-01,Electrical Diagnostic,Electrical,90,Recommended,No,ELECTRICAL,Diagnostic Bay,No,No,ELECTRICAL,Specialist assignment required.
+COL-01,Cooling System Service,Cooling,90,Recommended,No,GENERAL,General Bay,Yes,Yes,COOLING,Coolant / hoses / clamps may require reservation.
+SUSP-01,Suspension Inspection,Suspension,45,Recommended,No,SUSPENSION,General Bay,No,No,SUSPENSION,Inspection may convert to replacement job.
+SUSP-02,Shock / Strut Replacement,Suspension,180,Yes,No,SUSPENSION,General Bay,Yes,Yes,SUSPENSION,Specialist assignment and parts staging required.
+TRANS-01,Transmission Diagnostic,Transmission,120,Yes,No,TRANSMISSION,Diagnostic Bay,No,Yes,TRANSMISSION,High-complexity slot; avoid overbooking.
+INSP-01,Pre-Purchase Inspection,Inspection,75,Recommended,No,GENERAL,Inspection Bay,No,No,INSPECTION,Results should be exportable as report.
+GEN-01,General Diagnostic,Diagnostics,60,Recommended,No,GENERAL,Diagnostic Bay,No,No,DIAGNOSTIC,Default catch-all when exact issue is unknown.
+BEL-01,Belt / Hose Replacement,Engine / Cooling,60,Recommended,No,GENERAL,General Bay,Yes,No,BELT_HOSE,Pre-stage if VIN-specific parts are needed.
+SPK-01,Spark Plug Replacement,Engine,120,Recommended,No,ENGINE,General Bay,Yes,No,ENGINE_SERVICE,Vehicle-specific parts and torque specs required.

@@ -1,0 +1,180 @@
+import { Controller, Get, Patch, Param, Body, NotFoundException, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RbacGuard } from '../../common/guards/rbac.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { PERMISSIONS } from '../../common/constants/permissions';
+
+/**
+ * Public customer status endpoint — NO authentication required.
+ * Accessed via token URL given at check-in.
+ */
+@ApiTags('Customer Status')
+@Controller('status')
+export class StatusController {
+  constructor(private prisma: PrismaService) {}
+
+  @Get(':token')
+  @ApiOperation({ summary: 'Get customer visit status (public, no auth)' })
+  async getStatus(@Param('token') token: string) {
+    const now = new Date();
+
+    const visit = await this.prisma.serviceVisit.findFirst({
+      where: {
+        customerStatusToken: token,
+        tokenExpiresAt: { gt: now },
+      },
+      include: {
+        vehicle: { select: { plateNumber: true } },
+        queueTicket: { select: { ticketNumber: true, queueRank: true, displayStatus: true } },
+        appointment: {
+          include: { services: { include: { serviceType: { select: { name: true } } } } },
+        },
+        serviceOrders: {
+          include: { items: { include: { serviceType: { select: { name: true } } } } },
+        },
+      },
+    });
+
+    if (!visit) {
+      throw new NotFoundException('This link has expired or is invalid. Please contact the front desk.');
+    }
+
+    const ticket = visit.queueTicket;
+    const position = ticket?.queueRank ?? null;
+    const displayStatus = ticket?.displayStatus ?? visit.status;
+    const partsReadiness = visit.partsReadiness;
+
+    // Gather services from appointment or service orders
+    const services = [
+      ...(visit.appointment?.services?.map((s) => s.serviceType.name) ?? []),
+      ...(visit.serviceOrders?.flatMap((so) => so.items.map((i) => i.serviceType.name)) ?? []),
+    ];
+    const uniqueServices = [...new Set(services)];
+
+    // Mask plate: show only last 4 characters
+    const plate = visit.vehicle?.plateNumber ?? '';
+    const maskedPlate = plate.length > 4
+      ? '***' + plate.slice(-4)
+      : plate;
+
+    // Determine estimated wait text based on position and status
+    const estimatedWait = this.getEstimatedWaitText(displayStatus, position, partsReadiness);
+
+    // Status progression
+    const statusProgression = ['CHECKED_IN', 'IN_QUEUE', 'CALLED', 'IN_SERVICE', 'READY_FOR_PICKUP'];
+    const currentStep = this.getCurrentStep(displayStatus, visit.status);
+
+    return {
+      ticketNumber: ticket?.ticketNumber ?? null,
+      position,
+      status: displayStatus,
+      partsReadiness,
+      estimatedWait,
+      services: uniqueServices.length > 0 ? uniqueServices : ['Service in progress'],
+      vehiclePlate: maskedPlate,
+      statusProgression,
+      currentStep,
+    };
+  }
+
+  private getEstimatedWaitText(
+    displayStatus: string,
+    position: number | null,
+    partsReadiness: string,
+  ): string {
+    // Terminal/active states
+    if (displayStatus === 'COMPLETED' || displayStatus === 'CANCELLED') {
+      return 'Visit complete.';
+    }
+    if (['READY_FOR_PICKUP', 'QC'].includes(displayStatus)) {
+      return 'Your vehicle is ready for pickup!';
+    }
+    if (displayStatus === 'IN_SERVICE') {
+      return 'Work is in progress on your vehicle.';
+    }
+    if (displayStatus === 'CALLED') {
+      return 'You have been called — please proceed to the service area.';
+    }
+
+    // Blocked
+    if (displayStatus === 'BLOCKED' || partsReadiness === 'REQUIRED_NOT_READY') {
+      return "We're getting your parts ready. You'll keep your place in line.";
+    }
+
+    // In queue with position
+    if (position !== null) {
+      if (position <= 2) return "You're next — estimated 15-30 minutes";
+      if (position <= 5) return 'A few ahead of you — estimated 30-60 minutes';
+      return 'Several ahead of you — estimated over 1 hour';
+    }
+
+    return "You're in line — we'll update you soon.";
+  }
+
+  private getCurrentStep(displayStatus: string, visitStatus: string): number {
+    // Map to progression: 0=CHECKED_IN, 1=IN_QUEUE, 2=CALLED, 3=IN_SERVICE, 4=READY_FOR_PICKUP
+    const status = displayStatus || visitStatus;
+    if (['READY_FOR_PICKUP', 'QC', 'CLOSED'].includes(status)) return 4;
+    if (status === 'IN_SERVICE') return 3;
+    if (status === 'CALLED') return 2;
+    if (['WAITING', 'BLOCKED', 'PENDING_RANK', 'QUEUED'].includes(status)) return 1;
+    return 0; // CHECKED_IN
+  }
+}
+
+/**
+ * Service Visit completion endpoint — records mileage out, oil installed.
+ * Used by front desk after technician marks work complete.
+ */
+@ApiTags('Service Visits')
+@Controller('service-visits')
+@UseGuards(JwtAuthGuard, RbacGuard)
+@ApiBearerAuth()
+export class ServiceVisitCompletionController {
+  constructor(private prisma: PrismaService) {}
+
+  @Patch(':id/completion')
+  @RequirePermission(PERMISSIONS.CHECKIN_PERFORM)
+  @ApiOperation({ summary: 'Record completion data (mileage out, oil installed)' })
+  async recordCompletion(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: {
+      mileageOut?: number;
+      oilBrandInstalled?: string;
+      oilGradeInstalled?: string;
+    },
+  ) {
+    const visit = await this.prisma.serviceVisit.findUnique({
+      where: { id },
+      include: { vehicle: true },
+    });
+
+    if (!visit) throw new NotFoundException(`ServiceVisit ${id} not found`);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const sv = await tx.serviceVisit.update({
+        where: { id },
+        data: {
+          mileageOut: body.mileageOut ?? undefined,
+          oilBrandInstalled: body.oilBrandInstalled ?? undefined,
+          oilGradeInstalled: body.oilGradeInstalled ?? undefined,
+          status: 'CLOSED',
+        },
+      });
+
+      // Update vehicle odometer to mileage out
+      if (body.mileageOut && visit.vehicleId) {
+        await tx.vehicle.update({
+          where: { id: visit.vehicleId },
+          data: { odometer: body.mileageOut },
+        });
+      }
+
+      return sv;
+    });
+
+    return { message: 'Visit completion recorded', serviceVisitId: updated.id };
+  }
+}

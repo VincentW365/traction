@@ -1,0 +1,31 @@
+{
+  "name": "@bsop/web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bsop/types": "workspace:*",
+    "@bsop/ui": "workspace:*",
+    "@tanstack/react-query": "^5",
+    "next": "^15",
+    "react": "^19",
+    "react-dom": "^19",
+    "socket.io-client": "^4"
+  },
+  "devDependencies": {
+    "@bsop/tsconfig": "workspace:*",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^3.2.4"
+  }
+}

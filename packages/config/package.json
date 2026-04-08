@@ -1,0 +1,18 @@
+{
+  "name": "@bsop/config",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/env.ts",
+  "types": "./src/env.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no lint configured yet'"
+  },
+  "dependencies": {
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@bsop/tsconfig": "workspace:*"
+  }
+}

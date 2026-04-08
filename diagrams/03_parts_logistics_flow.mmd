@@ -1,0 +1,11 @@
+flowchart LR
+    A[Appointment or approved repair scope] --> B[Create parts request]
+    B --> C{All critical parts on site?}
+    C -- Yes --> D[Reserve / stage parts]
+    C -- No --> E[Create transfer or procurement task]
+    E --> F[Track ETA and exceptions]
+    F --> G{Received before service?}
+    G -- Yes --> D
+    G -- No --> H[Job remains BLOCKED_PARTS]
+    D --> I[Mark parts ready]
+    I --> J[Scheduler can rank visit as eligible]

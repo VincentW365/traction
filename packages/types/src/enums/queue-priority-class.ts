@@ -1,0 +1,13 @@
+export const QueuePriorityClass = {
+  APPT_PROTECTED: 'APPT_PROTECTED',
+  APPT_LATE_SOFT: 'APPT_LATE_SOFT',
+  WALKIN_STANDARD: 'WALKIN_STANDARD',
+  WALKIN_FASTTRACK: 'WALKIN_FASTTRACK',
+  BLOCKED_PARTS: 'BLOCKED_PARTS',
+  BLOCKED_SKILL: 'BLOCKED_SKILL',
+  MISSED_APPOINTMENT: 'MISSED_APPOINTMENT',
+  MANUAL_OVERRIDE: 'MANUAL_OVERRIDE',
+} as const;
+
+export type QueuePriorityClass =
+  (typeof QueuePriorityClass)[keyof typeof QueuePriorityClass];

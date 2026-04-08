@@ -1,0 +1,3 @@
+@echo off
+echo Starting Redis 8.6.2...
+"%~dp0..\.local\redis\Redis-8.6.2-Windows-x64-msys2\redis-server.exe" --port 6379

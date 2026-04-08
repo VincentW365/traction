@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+/* ============================================================
+   BSOP Design System — Bert's Traction Service Operations
+   ============================================================ */
+
+@layer base {
+  :root {
+    /* Brand colors */
+    --brand-primary: #1e40af;
+    --brand-primary-light: #3b82f6;
+    --brand-accent: #f59e0b;
+    --brand-dark: #0f172a;
+
+    /* Surface system */
+    --surface-app: #f1f5f9;
+    --surface-card: #ffffff;
+    --surface-elevated: #ffffff;
+    --surface-sidebar: #0f172a;
+    --surface-topbar: #ffffff;
+
+    /* Border system */
+    --border-default: #e2e8f0;
+    --border-subtle: #f1f5f9;
+    --border-strong: #cbd5e1;
+  }
+
+  body {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Consistent scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+}
+
+@layer components {
+  /* Standard page container */
+  .page-container {
+    @apply max-w-7xl mx-auto;
+  }
+
+  /* Standard card */
+  .card {
+    @apply bg-white rounded-lg border border-slate-200 shadow-sm;
+  }
+
+  .card-header {
+    @apply px-5 py-4 border-b border-slate-100;
+  }
+
+  .card-body {
+    @apply px-5 py-4;
+  }
+
+  /* Standard table */
+  .table-container {
+    @apply bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden;
+  }
+
+  .table-header {
+    @apply bg-slate-50/80 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider;
+  }
+
+  .table-header th {
+    @apply px-4 py-3;
+  }
+
+  .table-row {
+    @apply border-t border-slate-100 hover:bg-slate-50/50 transition-colors;
+  }
+
+  .table-row td {
+    @apply px-4 py-3 text-sm;
+  }
+
+  /* Standard form inputs */
+  .input-field {
+    @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm
+      text-slate-900 placeholder:text-slate-400
+      focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none
+      transition-colors;
+  }
+
+  .input-label {
+    @apply block text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5;
+  }
+
+  /* Standard buttons */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2
+      text-sm font-semibold text-white shadow-sm
+      hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/50
+      disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-slate-300
+      bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm
+      hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400/50
+      disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+  }
+
+  .btn-success {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-2
+      text-sm font-semibold text-white shadow-sm
+      hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/50
+      disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+  }
+
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2
+      text-sm font-semibold text-white shadow-sm
+      hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/50
+      disabled:opacity-50 disabled:cursor-not-allowed transition-colors;
+  }
+
+  /* Status badge base */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold tracking-wide;
+  }
+
+  /* Stat card */
+  .stat-card {
+    @apply bg-white rounded-lg border border-slate-200 p-4;
+  }
+
+  .stat-value {
+    @apply text-2xl font-bold text-slate-900;
+  }
+
+  .stat-label {
+    @apply text-xs font-medium text-slate-500 uppercase tracking-wide mt-1;
+  }
+}

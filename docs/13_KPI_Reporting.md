@@ -1,0 +1,187 @@
+# 13_KPI_Reporting.md
+
+## Purpose
+
+Define the operational measures the platform must support from day one.
+
+The CSV source lives in:
+- `data/kpi_dictionary.csv`
+
+---
+
+## 1. Reporting Principle
+
+If the platform does not capture:
+- timestamps
+- status history
+- assignments
+- parts state
+- communication state
+
+then future reporting will be weak no matter how nice the dashboard looks.
+
+So reporting is not a phase-5 afterthought.
+It starts in phase 1 with disciplined event capture.
+
+---
+
+## 2. KPI Dictionary
+
+| kpi_code | name | formula | target | source_fields | owner | phase |
+| --- | --- | --- | --- | --- | --- | --- |
+| KPI-01 | Appointment On-Time Start Rate | appointments_started_within_15m_of_scheduled_start / checked_in_appointments | ≥ 85% pilot, ≥ 92% mature | scheduled_start_at, service_start_at | Manager | 1 |
+| KPI-02 | Average Queue Wait (min) | avg(service_start_at - checked_in_at) | 40% reduction vs baseline | checked_in_at, service_start_at | Manager | 1 |
+| KPI-03 | Average Check-In Time (sec) | avg(check_in_completed_at - check_in_started_at) | ≤ 60 sec | check_in_started_at, checked_in_at | Front Desk Lead | 1 |
+| KPI-04 | No-Show Rate | no_show_appointments / confirmed_appointments | ≤ 8% after reminders | appointment_status | Manager | 1 |
+| KPI-05 | Late Arrival Rate | late_checkins / confirmed_appointments | Trend down month over month | scheduled_start_at, checked_in_at | Manager | 1 |
+| KPI-06 | Queue Abandonment Rate | visits_left_before_service / checked_in_visits | ≤ 3% | visit_status | Manager | 2 |
+| KPI-07 | Technician Utilization | sum(active_service_minutes) / sum(available_shift_minutes) | 85–90% | technician_assignments, shifts | Service Manager | 2 |
+| KPI-08 | Bay Utilization | sum(active_bay_minutes) / sum(open_bay_minutes) | ≥ 75% | work_bays, assignments | Service Manager | 2 |
+| KPI-09 | Average Service Duration Variance | avg(actual_minutes - estimated_minutes) | Within ±15% by service family | service_order_items | Operations Analyst | 2 |
+| KPI-10 | Same-Day Completion Rate | same_day_closed_orders / same_day_opened_orders | ≥ 90% for eligible services | created_at, closed_at | Manager | 2 |
+| KPI-11 | First-Time Parts Readiness Rate | jobs_with_all_mandatory_parts_ready_before_service / parts_dependent_jobs | ≥ 95% | parts_ready_flag, service_start_at | Parts Lead | 3 |
+| KPI-12 | Parts Delay Minutes | sum(waiting_parts_minutes) | 25% reduction vs baseline | status_history | Parts Lead | 3 |
+| KPI-13 | Transfer On-Time Rate | transfers_received_by_eta / completed_transfers | ≥ 95% | inventory_transfers | Parts Lead | 3 |
+| KPI-14 | Reminder Confirmation Rate | appointments_confirmed_after_reminder / reminders_sent | ≥ 60% | notifications, confirmation_status | Front Desk Lead | 4 |
+| KPI-15 | Customer Delay Alert Coverage | delayed_visits_with_alert_sent / delayed_visits | ≥ 98% | predicted_completion_at, notifications | Manager | 4 |
+| KPI-16 | Transport On-Time Pickup Rate | transport_legs_started_within_10m_of_window / scheduled_transport_legs | ≥ 90% | transport_requests | Transport Coordinator | 4 |
+| KPI-17 | Customer Satisfaction Score | avg(post_service_rating) | ≥ 4.7/5 or ≥ 95% satisfied | surveys | Manager | 4 |
+| KPI-18 | On-Time Completion Rate | orders_completed_by_promised_time / completed_orders | ≥ 88% pilot, ≥ 93% mature | promised_completion_at, completed_at | Manager | 2 |
+| KPI-19 | Manual Override Rate | manual_overrides / active_visits | Monitor; reduce over time | audit_logs | Admin | 1 |
+| KPI-20 | Recurring Maintenance Retention | customers_returning_within_recommended_interval / eligible_customers | +35% servicing frequency objective | appointments, reminders | Manager | 5 |
+
+---
+
+## 3. Dashboard Recommendations
+
+### Frontline live dashboard
+Audience:
+- front desk
+- manager
+
+Cards:
+- customers waiting now
+- longest current wait
+- appointments checked in today
+- late arrivals today
+- blocked by parts now
+- blocked by skill now
+- now-serving
+
+### Workshop operations dashboard
+Audience:
+- service manager
+- advisors
+
+Cards:
+- technician utilization today
+- bay utilization today
+- active jobs by status
+- waiting parts count
+- same-day completion rate
+- on-time completion rate
+
+### Parts dashboard
+Audience:
+- parts lead
+- manager
+
+Cards:
+- next-day parts-ready rate
+- transfers in progress
+- critical shortages
+- blocked jobs by part status
+
+### Customer experience dashboard
+Audience:
+- manager
+
+Cards:
+- average wait time
+- no-show rate
+- delay alert coverage
+- satisfaction score
+- transport on-time performance
+
+---
+
+## 4. Reporting Cadence
+
+### Real-time / intraday
+- queue board
+- live visit counts
+- blocked states
+- technician workload
+
+### Daily
+- wait times
+- completions
+- no-shows
+- parts blocks
+- overrides
+
+### Weekly
+- service family trends
+- utilization
+- delay causes
+- transport performance
+
+### Monthly
+- servicing frequency
+- repeat visits
+- satisfaction
+- operating bottleneck patterns
+- duration variance by service family
+
+---
+
+## 5. Data Capture Requirements
+
+To support the KPI dictionary, the platform must store:
+- planned start
+- arrival time
+- check-in time
+- queue decision times
+- service start
+- service pause
+- waiting parts start/end
+- service complete
+- ready for pickup
+- payment cleared
+- vehicle released / visit closed
+- technician assignment times
+- parts request / reserve / transfer / receive times
+- transport request and leg completion times
+
+---
+
+## 6. Reporting Rules
+
+1. KPIs should be filterable by site, date range, service family, and technician where relevant.
+2. KPI formulas must remain documented.
+3. Historical calculations should be reproducible.
+4. Manual overrides should be measurable, not invisible.
+5. Metrics should distinguish blocked time from active labor time.
+
+---
+
+## 7. Later Analytics Opportunities
+
+Once enough clean data exists:
+- duration prediction by service family
+- no-show risk scoring
+- demand forecasting by day/time
+- repeat maintenance recommendations
+- technician training / skill gap analysis
+
+These must be treated as layered analytics, not replacements for core operational metrics.
+
+---
+
+## 8. Reporting Anti-Patterns to Avoid
+
+- deriving everything from current status only
+- missing timestamps on transitions
+- manual spreadsheet exports as primary reporting source
+- counting parts block time as productive service time
+- hiding override counts
