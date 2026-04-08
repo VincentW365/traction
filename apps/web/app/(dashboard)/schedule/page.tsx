@@ -1,163 +1,265 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
 import { api } from '../../../lib/api-client';
 import { useSiteId } from '../../../hooks/use-site';
 import { PageHeader } from '../../../components/ui/page-header';
 import { StatCard } from '../../../components/ui/stat-card';
-import { StatusBadge } from '../../../components/status-badge';
 import { LoadingState } from '../../../components/ui/loading-state';
-import { EmptyState } from '../../../components/ui/empty-state';
+import { ResourceTimeline } from '../../../components/schedule/resource-timeline';
+import { QueueRail } from '../../../components/schedule/queue-rail';
+import { WeekView } from '../../../components/schedule/week-view';
+import { TimelineEventData } from '../../../components/schedule/timeline-event';
 
-interface AppointmentResult {
-  id: string;
-  scheduledStartAt: string;
-  status: string;
-  customer: { firstName: string; lastName: string };
-  vehicle: { plateNumber: string; make: string | null; model: string | null };
-  services: Array<{ serviceType: { name: string } }>;
+// --- Types ---
+
+interface ScheduleDayResponse {
+  siteId: string;
+  date: string;
+  operatingHours: { open: string; close: string } | null;
+  resources: Array<{
+    id: string; code: string; name: string; category: string;
+    maxWeight: string | null; capabilities: string[];
+  }>;
+  events: TimelineEventData[];
+  queueItems: Array<{
+    ticketId: string; serviceVisitId: string; ticketNumber: string;
+    customerName: string; customerId: string; vehiclePlate: string; vehicleId: string;
+    vehicleWeightClass: string | null; services: string; sourceType: string;
+    waitMinutes: number; partsReadiness: string; readyForDispatch: boolean;
+    blockedReason: string | null; fifoPosition: number | null; displayStatus: string;
+    requiredResourceTypes: string[];
+  }>;
+  readyForPickup: Array<{
+    serviceVisitId: string; ticketNumber: string; customerName: string;
+    customerPhone: string; customerEmail: string | null; vehiclePlate: string;
+  }>;
+  stats: { appointments: number; walkIns: number; completed: number; blocked: number };
 }
 
-interface ResourceItem {
-  resourceId: string;
-  code: string;
-  name: string;
-  resourceCategory: string;
-  status: string;
-  currentJob: {
-    ticketNumber: string | null;
-    customerName: string;
-    vehiclePlate: string;
-    startedAt: string;
-  } | null;
+interface ScheduleWeekResponse {
+  siteId: string;
+  weekStart: string;
+  days: Array<{
+    date: string; dayName: string;
+    operatingHours: { open: string; close: string } | null;
+    appointmentCount: number; walkInCount: number; completedCount: number;
+    blockedCount: number; resourceUtilization: number; isToday: boolean; isClosed: boolean;
+  }>;
 }
 
-const RESOURCE_BORDER: Record<string, string> = {
-  AVAILABLE: 'border-l-4 border-l-emerald-500',
-  OCCUPIED: 'border-l-4 border-l-amber-500',
-  RESERVED: 'border-l-4 border-l-blue-500',
-};
+type ZoomLevel = 'compact' | 'standard' | 'detailed';
+
+// --- Helpers ---
+
+function getMonday(dateStr: string): string {
+  const d = new Date(`${dateStr}T12:00:00`);
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  d.setDate(diff);
+  return d.toISOString().split('T')[0];
+}
+
+function formatDateShort(dateStr: string): string {
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString('en-US', {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+}
+
+// --- Component ---
 
 export default function SchedulePage() {
   const siteId = useSiteId();
-  const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().split('T')[0],
-  );
+  const router = useRouter();
+  const today = new Date().toISOString().split('T')[0];
 
-  const { data: appointments, isLoading: apptLoading } = useQuery<AppointmentResult[]>({
-    queryKey: ['schedule-appointments', siteId, selectedDate],
-    queryFn: () => api.get(`/appointments?siteId=${siteId}&date=${selectedDate}`),
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [activeTab, setActiveTab] = useState<'day' | 'week'>('day');
+  const [zoom, setZoom] = useState<ZoomLevel>('standard');
+  const [railCollapsed, setRailCollapsed] = useState(false);
+
+  // Session-persist zoom
+  const setZoomPersist = useCallback((z: ZoomLevel) => {
+    setZoom(z);
+    try { sessionStorage.setItem('schedule_zoom', z); } catch {}
+  }, []);
+
+  // Day schedule query
+  const dayQuery = useQuery<ScheduleDayResponse>({
+    queryKey: ['schedule-day', siteId, selectedDate],
+    queryFn: () => api.get(`/schedule/day?siteId=${siteId}&date=${selectedDate}`),
+    refetchInterval: activeTab === 'day' ? 10000 : false,
+    enabled: activeTab === 'day',
   });
 
-  const { data: resourceBoard } = useQuery<{ resources: ResourceItem[] }>({
-    queryKey: ['schedule-resources', siteId],
-    queryFn: () => api.get(`/resources/board?siteId=${siteId}`),
-    refetchInterval: 10000,
+  // Week schedule query
+  const weekStart = getMonday(selectedDate);
+  const weekQuery = useQuery<ScheduleWeekResponse>({
+    queryKey: ['schedule-week', siteId, weekStart],
+    queryFn: () => api.get(`/schedule/week?siteId=${siteId}&weekStart=${weekStart}`),
+    enabled: activeTab === 'week',
   });
 
-  const resources = resourceBoard?.resources ?? [];
-  const appts = appointments ?? [];
+  function prevDay() {
+    const d = new Date(`${selectedDate}T12:00:00`);
+    d.setDate(d.getDate() - 1);
+    setSelectedDate(d.toISOString().split('T')[0]);
+  }
+  function nextDay() {
+    const d = new Date(`${selectedDate}T12:00:00`);
+    d.setDate(d.getDate() + 1);
+    setSelectedDate(d.toISOString().split('T')[0]);
+  }
+  function goToday() {
+    setSelectedDate(today);
+  }
 
-  const occupiedCount = resources.filter((r) => r.status === 'OCCUPIED').length;
-  const availableCount = resources.filter((r) => r.status === 'AVAILABLE').length;
+  function handleEventClick(event: TimelineEventData) {
+    if (event.ticketNumber) {
+      // Navigate to ticket detail — find the event id which encodes the source
+      router.push(`/queue/${event.id.replace(/^(res-|occ-|done-)/, '')}`);
+    }
+  }
+
+  function handleWeekDaySelect(date: string) {
+    setSelectedDate(date);
+    setActiveTab('day');
+  }
+
+  const data = dayQuery.data;
+  const stats = data?.stats;
 
   return (
-    <div className="page-container space-y-6">
-      <PageHeader
-        title="Day Schedule"
-        subtitle="Appointments and resource allocation"
-        breadcrumbs={[
-          { label: 'Dashboard', href: '/' },
-          { label: 'Schedule' },
-        ]}
-        actions={
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="input-field w-auto"
-          />
-        }
-      />
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard value={appts.length} label="Appointments" color="blue" />
-        <StatCard value={availableCount} label="Available Resources" color="green" />
-        <StatCard value={occupiedCount} label="Occupied" color="amber" />
-        <StatCard value={resources.length} label="Total Resources" color="slate" />
-      </div>
-
-      {/* Appointments List */}
-      <section>
-        <div className="card-header px-0 border-0 mb-3">
-          <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Appointments</h2>
-        </div>
-        {apptLoading ? (
-          <LoadingState message="Loading appointments..." />
-        ) : appts.length === 0 ? (
-          <EmptyState
-            title="No appointments for this date"
-            description="Select a different date or create a new appointment."
-          />
-        ) : (
-          <div className="table-container">
-            <table className="w-full text-sm">
-              <thead className="table-header">
-                <tr>
-                  <th>Time</th>
-                  <th>Customer</th>
-                  <th>Vehicle</th>
-                  <th>Services</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {appts.map((a) => (
-                  <tr key={a.id} className="table-row">
-                    <td className="font-medium text-slate-900 whitespace-nowrap">
-                      {new Date(a.scheduledStartAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </td>
-                    <td className="text-slate-700">{a.customer.firstName} {a.customer.lastName}</td>
-                    <td className="font-mono text-xs text-slate-700">{a.vehicle.plateNumber}</td>
-                    <td className="text-slate-600 max-w-xs truncate">{a.services.map((s) => s.serviceType.name).join(', ')}</td>
-                    <td><StatusBadge status={a.status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* Resource Status */}
-      <section>
-        <div className="card-header px-0 border-0 mb-3">
-          <h2 className="text-sm font-semibold text-slate-700 uppercase tracking-wide">Resource Status</h2>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {resources.map((r) => (
-            <div
-              key={r.resourceId}
-              className={`card p-4 ${RESOURCE_BORDER[r.status] || 'border-l-4 border-l-slate-300'}`}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-mono font-bold text-sm text-slate-900">{r.code}</span>
-                <StatusBadge status={r.status} />
+    <div className="page-container flex flex-col h-[calc(100vh-60px)]">
+      {/* Header */}
+      <div className="shrink-0">
+        <PageHeader
+          title="Schedule"
+          subtitle={activeTab === 'day' ? formatDateShort(selectedDate) : `Week of ${formatDateShort(weekStart)}`}
+          breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Schedule' }]}
+          actions={
+            <div className="flex items-center gap-2">
+              {/* Tab toggle */}
+              <div className="flex rounded-md border border-slate-200 overflow-hidden">
+                <button
+                  onClick={() => setActiveTab('day')}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    activeTab === 'day' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >Day</button>
+                <button
+                  onClick={() => setActiveTab('week')}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    activeTab === 'week' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >Week</button>
               </div>
-              <div className="text-xs text-slate-500">{r.name}</div>
-              {r.status === 'OCCUPIED' && r.currentJob && (
-                <div className="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-600">
-                  <span className="font-medium">{r.currentJob.ticketNumber}</span>
-                  {' '}&mdash;{' '}
-                  {r.currentJob.customerName} ({r.currentJob.vehiclePlate})
+
+              {/* Date nav */}
+              {activeTab === 'day' && (
+                <div className="flex items-center gap-1">
+                  <button onClick={prevDay} className="p-1.5 rounded-md border border-slate-200 hover:bg-slate-50" title="Previous day">
+                    <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                  </button>
+                  <button onClick={goToday} className="px-2.5 py-1.5 text-xs font-medium text-slate-600 border border-slate-200 rounded-md hover:bg-slate-50">
+                    Today
+                  </button>
+                  <button onClick={nextDay} className="p-1.5 rounded-md border border-slate-200 hover:bg-slate-50" title="Next day">
+                    <svg className="w-3.5 h-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                  </button>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="ml-1 text-xs border border-slate-200 rounded-md px-2 py-1.5 text-slate-600"
+                  />
+                </div>
+              )}
+
+              {/* Zoom (day view only) */}
+              {activeTab === 'day' && (
+                <div className="flex rounded-md border border-slate-200 overflow-hidden">
+                  {(['compact', 'standard', 'detailed'] as ZoomLevel[]).map((z) => (
+                    <button
+                      key={z}
+                      onClick={() => setZoomPersist(z)}
+                      className={`px-2 py-1.5 text-[10px] font-medium capitalize transition-colors ${
+                        zoom === z ? 'bg-slate-700 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'
+                      }`}
+                    >{z}</button>
+                  ))}
                 </div>
               )}
             </div>
-          ))}
-        </div>
-      </section>
+          }
+        />
+
+        {/* Stat cards — day view only */}
+        {activeTab === 'day' && stats && (
+          <div className="grid grid-cols-4 gap-3 mb-4">
+            <StatCard value={stats.appointments} label="Appointments" color="blue" />
+            <StatCard value={stats.walkIns} label="Walk-Ins" color="amber" />
+            <StatCard value={stats.completed} label="Completed" color="green" />
+            <StatCard value={stats.blocked} label="Blocked" color="red" />
+          </div>
+        )}
+      </div>
+
+      {/* Main content area */}
+      <div className="flex-1 min-h-0">
+        {activeTab === 'day' && (
+          <>
+            {dayQuery.isLoading && <LoadingState message="Loading schedule..." />}
+            {dayQuery.isError && (
+              <div className="card p-6 text-center text-red-600 text-sm">
+                Failed to load schedule. Please try again.
+              </div>
+            )}
+            {data && (
+              <div className="flex h-full gap-0">
+                {/* Timeline */}
+                <div className="flex-1 min-w-0">
+                  <ResourceTimeline
+                    resources={data.resources}
+                    events={data.events}
+                    operatingHours={data.operatingHours}
+                    date={selectedDate}
+                    zoom={zoom}
+                    onEventClick={handleEventClick}
+                  />
+                </div>
+
+                {/* Queue rail */}
+                <QueueRail
+                  queueItems={data.queueItems}
+                  readyForPickup={data.readyForPickup}
+                  collapsed={railCollapsed}
+                  onToggle={() => setRailCollapsed(!railCollapsed)}
+                />
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === 'week' && (
+          <>
+            {weekQuery.isLoading && <LoadingState message="Loading week view..." />}
+            {weekQuery.isError && (
+              <div className="card p-6 text-center text-red-600 text-sm">
+                Failed to load week schedule.
+              </div>
+            )}
+            {weekQuery.data && (
+              <WeekView
+                days={weekQuery.data.days}
+                onSelectDay={handleWeekDaySelect}
+              />
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -20,6 +20,7 @@ import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { ResourcesModule } from './modules/resources/resources.module';
 import { IntegrationModule } from './modules/integrations/integration.module';
 import { StatusModule } from './modules/status/status.module';
+import { ScheduleModule } from './modules/schedule/schedule.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { StatusModule } from './modules/status/status.module';
     ResourcesModule,
     IntegrationModule,
     StatusModule,
+    ScheduleModule,
   ],
 })
 export class AppModule {}
