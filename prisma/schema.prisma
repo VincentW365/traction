@@ -55,6 +55,7 @@ enum QueueDisplayStatus {
 enum VisitSourceType {
   APPOINTMENT
   WALKIN
+  HISTORICAL_IMPORT
 }
 
 enum QueuePriorityClass {
@@ -201,6 +202,7 @@ enum IntegrationSystem {
   AUTOMATE
   SAGE
   SHAREPOINT_CONTACT_DB
+  SHAREPOINT_JOB_SHEET
 }
 
 enum ReminderStatus {

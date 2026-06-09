@@ -1,0 +1,5 @@
+-- AlterEnum
+ALTER TYPE "IntegrationSystem" ADD VALUE 'SHAREPOINT_JOB_SHEET';
+
+-- AlterEnum
+ALTER TYPE "VisitSourceType" ADD VALUE 'HISTORICAL_IMPORT';
