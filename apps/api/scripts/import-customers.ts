@@ -22,6 +22,7 @@ import { randomUUID } from 'node:crypto';
 import {
   rawRowFromCsv,
   planImport,
+  buildDryRunReport,
   type ImportPlan,
 } from '../src/modules/data-import/customer-vehicle.mapper';
 
@@ -69,43 +70,19 @@ function dryRun() {
   const c = plan.counts;
   mkdirSync(OUT_DIR, { recursive: true });
 
-  const summary = [
-    `# Customer + Vehicle Import — DRY RUN`,
-    ``,
-    `> No database writes. Source: \`${FILE}\`. Generated for review (CR-2026-003).`,
-    ``,
-    `## Counts`,
-    `| Metric | Value |`,
-    `| --- | ---: |`,
-    `| Rows read | ${c.rowsRead} |`,
-    `| **Customers to create** | ${c.customersToCreate} |`,
-    `| Customer merges (rows joining an existing customer) | ${c.customerMerges} |`,
-    `| **Vehicles to create** | ${c.vehiclesToCreate} |`,
-    `| Duplicate plates (own vehicle, disambiguated code) | ${c.duplicatePlates} |`,
-    `| ⚠ Suspicious merges (placeholder phone) | ${c.suspiciousMerges} |`,
-    `| Flag: missing name | ${c.missingName} |`,
-    `| Flag: missing/junk plate | ${c.missingOrJunkPlate} |`,
-    `| Flag: missing VIN | ${c.missingVin} |`,
-    `| Flag: duplicate VIN (nulled) | ${c.duplicateVin} |`,
-    `| Total flagged rows | ${plan.flagged.length} |`,
-    ``,
-    `## Sample flagged rows (first 15, by contact Id + issue only)`,
-    ...plan.flagged.slice(0, 15).map((f) => `- contact ${f.contactId}: ${f.issues.join(', ')}`),
-    ``,
-    `Full detail (with values) in \`import-flagged-rows.csv\` (git-ignored).`,
-    ``,
-  ].join('\n');
-
-  const csv = ['contactId,issues,detail',
-    ...plan.flagged.map((f) => `${f.contactId},"${f.issues.join(';')}","${(f.detail || '').replace(/"/g, '""')}"`),
-  ].join('\r\n');
-
+  const { summary, flaggedCsv } = buildDryRunReport(plan, FILE);
   writeFileSync(join(OUT_DIR, 'import-dryrun-summary.md'), summary, 'utf8');
-  writeFileSync(join(OUT_DIR, 'import-flagged-rows.csv'), csv, 'utf8');
+  writeFileSync(join(OUT_DIR, 'import-flagged-rows.csv'), flaggedCsv, 'utf8');
 
+  const cov = (n: number, d: number) => `${n}/${d}`;
   console.warn(`\nDRY-RUN complete — NO DB writes.`);
   console.warn(`  rows=${c.rowsRead}  customers=${c.customersToCreate}  vehicles=${c.vehiclesToCreate}  ` +
     `dupPlates=${c.duplicatePlates}  suspiciousMerges=${c.suspiciousMerges}  flagged=${plan.flagged.length}`);
+  console.warn(`  coverage — loyalty:${cov(plan.customers.filter((x) => x.loyaltyNumber).length, plan.customers.length)} ` +
+    `fuel:${cov(plan.vehicles.filter((v) => v.fuelType).length, plan.vehicles.length)} ` +
+    `transmission:${cov(plan.vehicles.filter((v) => v.transmission).length, plan.vehicles.length)} ` +
+    `drivetrain:${cov(plan.vehicles.filter((v) => v.drivetrain).length, plan.vehicles.length)} ` +
+    `engine_no:${cov(plan.vehicles.filter((v) => v.engineNo).length, plan.vehicles.length)} (engine redacted)`);
   console.warn(`  report -> ${OUT_DIR}/import-dryrun-summary.md  (+ import-flagged-rows.csv)\n`);
 }
 
@@ -124,10 +101,10 @@ async function commit() {
       const note = `import:${batchId}; raw="${cu.rawName}"`;
       const rec = await prisma.customer.upsert({
         where: { customerNumber: cu.customerNumber },
-        update: { firstName: cu.firstName, lastName: cu.lastName, phone: cu.phone, email: cu.email ?? undefined },
+        update: { firstName: cu.firstName, lastName: cu.lastName, phone: cu.phone, email: cu.email ?? undefined, loyaltyNumber: cu.loyaltyNumber ?? undefined },
         create: {
           customerNumber: cu.customerNumber, firstName: cu.firstName, lastName: cu.lastName,
-          phone: cu.phone, email: cu.email ?? undefined,
+          phone: cu.phone, email: cu.email ?? undefined, loyaltyNumber: cu.loyaltyNumber ?? undefined,
           notificationOptInSms: false, notificationOptInEmail: false, // no proven consent
           notes: note,
         },
@@ -142,10 +119,11 @@ async function commit() {
       try {
         const rec = await prisma.vehicle.upsert({
           where: { vehicleCode: v.vehicleCode },
-          update: { customerId, plateNumber: v.plateNumber ?? '', make: v.make, model: v.model, modelYear: v.modelYear },
+          update: { customerId, plateNumber: v.plateNumber ?? '', make: v.make, model: v.model, modelYear: v.modelYear, fuelType: v.fuelType, transmission: v.transmission, drivetrain: v.drivetrain, engineNo: v.engineNo },
           create: {
             customerId, vehicleCode: v.vehicleCode, plateNumber: v.plateNumber ?? '',
             vin: v.vin ?? undefined, make: v.make, model: v.model, modelYear: v.modelYear,
+            fuelType: v.fuelType, transmission: v.transmission, drivetrain: v.drivetrain, engineNo: v.engineNo,
             // NOTE: Vehicle has no `notes` field — batch tag lives on ExternalSystemRef.metadata.
           },
         });
@@ -154,8 +132,8 @@ async function commit() {
         // unique collision (e.g. VIN already in DB) → retry without vin
         const rec = await prisma.vehicle.upsert({
           where: { vehicleCode: v.vehicleCode },
-          update: { customerId, plateNumber: v.plateNumber ?? '', make: v.make, model: v.model, modelYear: v.modelYear },
-          create: { customerId, vehicleCode: v.vehicleCode, plateNumber: v.plateNumber ?? '', make: v.make, model: v.model, modelYear: v.modelYear },
+          update: { customerId, plateNumber: v.plateNumber ?? '', make: v.make, model: v.model, modelYear: v.modelYear, fuelType: v.fuelType, transmission: v.transmission, drivetrain: v.drivetrain, engineNo: v.engineNo },
+          create: { customerId, vehicleCode: v.vehicleCode, plateNumber: v.plateNumber ?? '', make: v.make, model: v.model, modelYear: v.modelYear, fuelType: v.fuelType, transmission: v.transmission, drivetrain: v.drivetrain, engineNo: v.engineNo },
         });
         vehicleId = rec.id;
       }
@@ -172,9 +150,11 @@ async function commit() {
 }
 
 async function upsertRef(prisma: PrismaClient, vehicleId: string, contactId: string, batchId: string) {
+  // Backfill-safe: on UPDATE we deliberately do NOT touch metadata, so the ORIGINAL
+  // import batch lineage (importBatchId) is preserved. Batch tag is set on create only.
   await prisma.externalSystemRef.upsert({
     where: { system_entityType_entityId: { system: SYSTEM as any, entityType: 'Vehicle', entityId: vehicleId } },
-    update: { externalId: contactId, syncStatus: 'SYNCED', metadata: { importBatchId: batchId, contactId } },
+    update: { externalId: contactId, syncStatus: 'SYNCED' },
     create: { system: SYSTEM as any, entityType: 'Vehicle', entityId: vehicleId, externalId: contactId, syncStatus: 'SYNCED', metadata: { importBatchId: batchId, contactId } },
   });
 }

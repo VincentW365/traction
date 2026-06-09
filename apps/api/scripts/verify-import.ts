@@ -23,9 +23,18 @@ const batchId = process.argv[2];
   console.warn(`Vehicles  — total: ${vehicles} | this batch (distinct via refs): ${batchVehicleIds.size}`);
   console.warn(`ExternalSystemRef (SHAREPOINT_CONTACT_DB): ${allRefs.length} | this batch: ${batchRefs.length}`);
 
-  // Data-quality spot check: how many batch vehicles actually have a VIN?
-  const withVin = await prisma.vehicle.count({ where: { id: { in: [...batchVehicleIds] }, vin: { not: null } } });
+  // Data-quality spot check + CR-2026-004 backfill coverage (counts only; engine redacted).
+  const ids = [...batchVehicleIds];
+  const [withVin, fuel, trans, drive, eng] = await Promise.all([
+    prisma.vehicle.count({ where: { id: { in: ids }, vin: { not: null } } }),
+    prisma.vehicle.count({ where: { id: { in: ids }, fuelType: { not: null } } }),
+    prisma.vehicle.count({ where: { id: { in: ids }, transmission: { not: null } } }),
+    prisma.vehicle.count({ where: { id: { in: ids }, drivetrain: { not: null } } }),
+    prisma.vehicle.count({ where: { id: { in: ids }, engineNo: { not: null } } }),
+  ]);
+  const loyalty = batchId ? await prisma.customer.count({ where: { notes: { contains: tag }, loyaltyNumber: { not: null } } }) : 0;
   console.warn(`Batch vehicles with VIN populated: ${withVin} / ${batchVehicleIds.size}`);
+  console.warn(`Backfill coverage — loyalty:${loyalty} fuel:${fuel} transmission:${trans} drivetrain:${drive} engine_no:${eng} (engine values redacted)`);
 
   // Sample customer with the most vehicles (proves dedupe → 1 customer, many vehicles)
   const sample = await prisma.customer.findFirst({

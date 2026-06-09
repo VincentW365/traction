@@ -10,6 +10,11 @@ import {
   customerNumberFromKey,
   vehicleCode,
   planImport,
+  trimOrNull,
+  normalizeFuel,
+  normalizeTransmission,
+  normalizeDrivetrain,
+  buildDryRunReport,
   type RawContactRow,
 } from '../customer-vehicle.mapper';
 
@@ -20,6 +25,7 @@ function row(p: Partial<RawContactRow> & { id: string }): RawContactRow {
     phone: p.phone ?? '8765551234', year: p.year ?? '2015', make: p.make ?? 'Toyota',
     model: p.model ?? 'Corolla', plate: p.plate ?? `ABC${p.id}`, chassis: p.chassis ?? `VIN${p.id}0000`,
     email: p.email ?? '', loyalty: p.loyalty ?? '',
+    fuel: p.fuel ?? '', transmission: p.transmission ?? '', drivetrain: p.drivetrain ?? '', engineNo: p.engineNo ?? '',
   };
 }
 
@@ -143,5 +149,60 @@ describe('planImport', () => {
     const b = planImport(input);
     expect(a.customers.map((c) => c.customerNumber)).toEqual(b.customers.map((c) => c.customerNumber));
     expect(a.vehicles.map((v) => v.vehicleCode)).toEqual(b.vehicles.map((v) => v.vehicleCode));
+  });
+});
+
+// --- CR-2026-004: additive contact fields + backfill ---
+describe('CR-2026-004 field normalizers', () => {
+  it('fuel maps synonyms, preserves unknown, null when empty', () => {
+    expect(normalizeFuel('gas')).toBe('PETROL');
+    expect(normalizeFuel('Diesel')).toBe('DIESEL');
+    expect(normalizeFuel('Kerosene')).toBe('Kerosene'); // unknown → source preserved
+    expect(normalizeFuel('')).toBeNull();
+  });
+  it('transmission canonicalizes, preserves unknown', () => {
+    expect(normalizeTransmission('auto')).toBe('AUTOMATIC');
+    expect(normalizeTransmission('M/T')).toBe('MANUAL');
+    expect(normalizeTransmission('Tiptronic')).toBe('Tiptronic');
+  });
+  it('drivetrain canonicalizes (4x4→4WD), preserves unknown', () => {
+    expect(normalizeDrivetrain('4x4')).toBe('4WD');
+    expect(normalizeDrivetrain('fwd')).toBe('FWD');
+    expect(normalizeDrivetrain('Quattro')).toBe('Quattro');
+  });
+  it('trimOrNull trims, preserves verbatim, null when empty (loyalty/engine)', () => {
+    expect(trimOrNull('  AbC-12 ')).toBe('AbC-12'); // case + inner content preserved
+    expect(trimOrNull('   ')).toBeNull();
+  });
+});
+
+describe('CR-2026-004 backfill mapping + idempotency + engine-no safety', () => {
+  it('planImport populates the new vehicle fields + customer loyalty (verbatim engine)', () => {
+    const plan = planImport([
+      row({ id: '1', loyalty: 'LOY-9', fuel: 'gas', transmission: 'auto', drivetrain: '4x4', engineNo: 'EngAbc 001' }),
+    ]);
+    expect(plan.customers[0].loyaltyNumber).toBe('LOY-9');
+    const v = plan.vehicles[0];
+    expect(v.fuelType).toBe('PETROL');
+    expect(v.transmission).toBe('AUTOMATIC');
+    expect(v.drivetrain).toBe('4WD');
+    expect(v.engineNo).toBe('EngAbc 001'); // preserved verbatim
+  });
+
+  it('is idempotent — new field values are identical across runs', () => {
+    const input = [row({ id: '1', loyalty: 'L1', fuel: 'diesel', engineNo: 'E1' })];
+    const a = planImport(input), b = planImport(input);
+    expect(a.vehicles[0]).toEqual(b.vehicles[0]);
+    expect(a.customers[0].loyaltyNumber).toBe(b.customers[0].loyaltyNumber);
+  });
+
+  it('engine number NEVER appears in the dry-run report or flagged CSV', () => {
+    const SECRET = 'ENGINE-SECRET-XYZ-999';
+    // give the row a flag too (missing plate) so it reaches the flagged CSV path
+    const plan = planImport([row({ id: '1', plate: '', engineNo: SECRET })]);
+    const { summary, flaggedCsv } = buildDryRunReport(plan, 'customers.csv');
+    expect(summary).not.toContain(SECRET);
+    expect(flaggedCsv).not.toContain(SECRET);
+    expect(summary).toContain('engine_no (values redacted)'); // coverage shown as count only
   });
 });

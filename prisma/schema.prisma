@@ -286,6 +286,7 @@ model Customer {
   lastName               String   @map("last_name")
   phone                  String
   email                  String?
+  loyaltyNumber          String?  @map("loyalty_number")
   notificationOptInSms   Boolean  @default(true) @map("notification_opt_in_sms")
   notificationOptInEmail Boolean  @default(true) @map("notification_opt_in_email")
   notes                  String?
@@ -314,6 +315,12 @@ model Vehicle {
   weightClass VehicleWeightClass? @map("weight_class")
   // DMAIC Rule 3: operational service class — drives mobile-jack eligibility (sedan only).
   serviceClass VehicleServiceClass? @map("service_class")
+  // CR-2026-004: additive Contact-DB fields (nullable). engineNo is sensitive —
+  // authenticated-only, never logged, never in public projections or dry-run reports.
+  fuelType     String?             @map("fuel_type")
+  transmission String?
+  drivetrain   String?
+  engineNo     String?             @map("engine_no")
   createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz
 

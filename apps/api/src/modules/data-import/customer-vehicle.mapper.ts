@@ -24,6 +24,10 @@ export interface RawContactRow {
   chassis: string;
   email: string;
   loyalty: string;
+  fuel: string;
+  transmission: string;
+  drivetrain: string;
+  engineNo: string;
 }
 
 export type ImportFlag =
@@ -53,6 +57,10 @@ export function rawRowFromCsv(r: Record<string, string>): RawContactRow {
     chassis: g('field_8'),
     email: g('field_11'),
     loyalty: g('field_12'),
+    fuel: g('field_10'),
+    transmission: g('field_9'),
+    drivetrain: g('field_13'),
+    engineNo: g('field_7'),
   };
 }
 
@@ -85,6 +93,28 @@ export function normalizeVin(s: string): string {
   if (v.length < 6 || /^0+$/.test(v) || JUNK_PLATE_VALUES.has(v)) return '';
   return v;
 }
+
+/** Trim; null when empty. Used for verbatim identifiers (loyalty no., engine no.). */
+export function trimOrNull(s: string): string | null {
+  const v = (s || '').trim();
+  return v || null;
+}
+
+const FUEL_MAP: Record<string, string> = { GAS: 'PETROL', GASOLINE: 'PETROL', PETROL: 'PETROL', DIESEL: 'DIESEL', HYBRID: 'HYBRID', ELECTRIC: 'ELECTRIC', EV: 'ELECTRIC', LPG: 'LPG', CNG: 'CNG' };
+const TRANS_MAP: Record<string, string> = { AUTOMATIC: 'AUTOMATIC', AUTO: 'AUTOMATIC', AT: 'AUTOMATIC', 'A/T': 'AUTOMATIC', MANUAL: 'MANUAL', MT: 'MANUAL', 'M/T': 'MANUAL', CVT: 'CVT', DCT: 'DCT' };
+const DRIVE_MAP: Record<string, string> = { FWD: 'FWD', RWD: 'RWD', AWD: 'AWD', '4WD': '4WD', '4X4': '4WD', '2WD': '2WD' };
+
+/** Map to a canonical value if known; otherwise PRESERVE the trimmed source value. */
+function normalizeWith(map: Record<string, string>, s: string, stripSpaces = false): string | null {
+  const raw = (s || '').trim();
+  if (!raw) return null;
+  let key = raw.toUpperCase();
+  if (stripSpaces) key = key.replace(/\s+/g, '');
+  return map[key] ?? raw;
+}
+export const normalizeFuel = (s: string) => normalizeWith(FUEL_MAP, s);
+export const normalizeTransmission = (s: string) => normalizeWith(TRANS_MAP, s);
+export const normalizeDrivetrain = (s: string) => normalizeWith(DRIVE_MAP, s, true);
 
 export function parseYear(s: string): number | null {
   const m = (s || '').match(/(19|20)\d{2}/);
@@ -158,6 +188,10 @@ export interface PlannedVehicle {
   make: string | null;
   model: string | null;
   modelYear: number | null;
+  fuelType: string | null;
+  transmission: string | null;
+  drivetrain: string | null;
+  engineNo: string | null; // sensitive — never log or include in reports
   flags: ImportFlag[];
 }
 
@@ -169,6 +203,7 @@ export interface PlannedCustomer {
   rawName: string;
   phone: string;
   email: string | null;
+  loyaltyNumber: string | null;
   vehicleContactIds: string[];
   suspiciousMerge: boolean;
 }
@@ -189,6 +224,58 @@ export interface ImportPlan {
     missingVin: number;
     duplicateVin: number;
   };
+}
+
+/**
+ * Build the dry-run report (pure). Counts only — NEVER includes raw engine_no
+ * (sensitive, CR-2026-004) and never raw values beyond the existing flagged
+ * detail (name|plate|chassis), which is written only to a git-ignored path.
+ */
+export function buildDryRunReport(plan: ImportPlan, sourceFile: string): { summary: string; flaggedCsv: string } {
+  const c = plan.counts;
+  const cov = (n: number, d: number) => `${n} / ${d}`;
+  const summary = [
+    `# Customer + Vehicle Import — DRY RUN`,
+    ``,
+    `> No database writes. Source: \`${sourceFile}\`. Generated for review (CR-2026-003/004).`,
+    ``,
+    `## Counts`,
+    `| Metric | Value |`,
+    `| --- | ---: |`,
+    `| Rows read | ${c.rowsRead} |`,
+    `| **Customers to create** | ${c.customersToCreate} |`,
+    `| Customer merges (rows joining an existing customer) | ${c.customerMerges} |`,
+    `| **Vehicles to create** | ${c.vehiclesToCreate} |`,
+    `| Duplicate plates (own vehicle, disambiguated code) | ${c.duplicatePlates} |`,
+    `| Suspicious merges (placeholder phone) | ${c.suspiciousMerges} |`,
+    `| Flag: missing name | ${c.missingName} |`,
+    `| Flag: missing/junk plate | ${c.missingOrJunkPlate} |`,
+    `| Flag: missing VIN | ${c.missingVin} |`,
+    `| Flag: duplicate VIN (nulled) | ${c.duplicateVin} |`,
+    `| Total flagged rows | ${plan.flagged.length} |`,
+    ``,
+    `## Backfill field coverage (CR-2026-004, counts only)`,
+    `| Field | Populated |`,
+    `| --- | ---: |`,
+    `| Customer loyalty_number | ${cov(plan.customers.filter((x) => x.loyaltyNumber).length, plan.customers.length)} |`,
+    `| Vehicle fuel_type | ${cov(plan.vehicles.filter((v) => v.fuelType).length, plan.vehicles.length)} |`,
+    `| Vehicle transmission | ${cov(plan.vehicles.filter((v) => v.transmission).length, plan.vehicles.length)} |`,
+    `| Vehicle drivetrain | ${cov(plan.vehicles.filter((v) => v.drivetrain).length, plan.vehicles.length)} |`,
+    `| Vehicle engine_no (values redacted) | ${cov(plan.vehicles.filter((v) => v.engineNo).length, plan.vehicles.length)} |`,
+    ``,
+    `## Sample flagged rows (first 15, by contact Id + issue only)`,
+    ...plan.flagged.slice(0, 15).map((f) => `- contact ${f.contactId}: ${f.issues.join(', ')}`),
+    ``,
+    `Full detail (no engine numbers) in \`import-flagged-rows.csv\` (git-ignored).`,
+    ``,
+  ].join('\n');
+
+  const flaggedCsv = [
+    'contactId,issues,detail',
+    ...plan.flagged.map((f) => `${f.contactId},"${f.issues.join(';')}","${(f.detail || '').replace(/"/g, '""')}"`),
+  ].join('\r\n');
+
+  return { summary, flaggedCsv };
 }
 
 export function planImport(rows: RawContactRow[]): ImportPlan {
@@ -220,6 +307,7 @@ export function planImport(rows: RawContactRow[]): ImportPlan {
         rawName: r.name,
         phone: normalizePhone(r.phone),
         email: r.email || null,
+        loyaltyNumber: trimOrNull(r.loyalty),
         vehicleContactIds: [],
         suspiciousMerge: false,
       };
@@ -231,6 +319,7 @@ export function planImport(rows: RawContactRow[]): ImportPlan {
         flags.push('SUSPICIOUS_MERGE_PLACEHOLDER_PHONE');
       }
       if (!customer.email && r.email) customer.email = r.email;
+      if (!customer.loyaltyNumber && trimOrNull(r.loyalty)) customer.loyaltyNumber = trimOrNull(r.loyalty);
     }
     customer.vehicleContactIds.push(r.id);
 
@@ -271,6 +360,10 @@ export function planImport(rows: RawContactRow[]): ImportPlan {
       make: r.make || null,
       model: r.model || null,
       modelYear: parseYear(r.year),
+      fuelType: normalizeFuel(r.fuel),
+      transmission: normalizeTransmission(r.transmission),
+      drivetrain: normalizeDrivetrain(r.drivetrain),
+      engineNo: trimOrNull(r.engineNo),
       flags,
     });
 
