@@ -73,11 +73,25 @@ enum ServiceOrderStatus {
   APPROVED
   ASSIGNED
   IN_PROGRESS
+  PAUSED
   WAITING_PARTS
+  WAITING_CUSTOMER
   QC
   READY_TO_INVOICE
   CLOSED
   CANCELLED
+}
+
+// Reasons a job is paused. NOTE: WAITING_PARTS / WAITING_CUSTOMER are deliberately
+// NOT pause reasons — they remain first-class ServiceOrderStatus states because
+// parts-blocking carries distinct scheduling-eligibility semantics (CR-2026-001).
+enum PauseReason {
+  WAITING_TECH
+  WAITING_BAY
+  CUSTOMER_AUTHORIZATION
+  EXTERNAL_MACHINE_SHOP
+  BREAK_OR_END_OF_DAY
+  OTHER
 }
 
 enum PartsRequestStatus {
@@ -161,12 +175,26 @@ enum ResourceCategory {
   BAY
   OVERFLOW
   LIGHT_SLOT
+  POWER_WASH
+  EXTERNAL
 }
 
 enum VehicleWeightClass {
   LIGHT
   STANDARD
   HEAVY
+}
+
+// DMAIC Rule 3: operational vehicle service class. Only SEDAN_CLASS is eligible
+// for mobile jacks; everything else (incl. UNKNOWN) is blocked unless overridden.
+enum VehicleServiceClass {
+  SEDAN_CLASS
+  SUV_LIGHT
+  SUV_HEAVY
+  PICKUP
+  VAN
+  TRUCK
+  UNKNOWN_REQUIRES_REVIEW
 }
 
 enum IntegrationSystem {
@@ -283,6 +311,8 @@ model Vehicle {
   color       String?
   odometer    Int?
   weightClass VehicleWeightClass? @map("weight_class")
+  // DMAIC Rule 3: operational service class — drives mobile-jack eligibility (sedan only).
+  serviceClass VehicleServiceClass? @map("service_class")
   createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -316,6 +346,12 @@ model ServiceType {
   // --- v4.1 Resource compatibility ---
   canUseOverflow           Boolean  @default(false) @map("can_use_overflow")
   canUseLightSlot          Boolean  @default(false) @map("can_use_light_slot")
+  // --- DMAIC alignment ---
+  requiresMileage          Boolean  @default(false) @map("requires_mileage")
+  isExternal               Boolean  @default(false) @map("is_external")
+  requiresPowerWash        Boolean  @default(false) @map("requires_power_wash")
+  standPreferred           Boolean  @default(false) @map("stand_preferred")
+  mobileJackAllowed        Boolean  @default(true)  @map("mobile_jack_allowed")
   isActive                 Boolean  @default(true) @map("is_active")
   createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                DateTime @updatedAt @map("updated_at") @db.Timestamptz
@@ -585,10 +621,52 @@ model ServiceOrder {
   partsRequests              PartsRequest[]
   posReferences              PosReference[]
   maintenanceRecommendations MaintenanceRecommendation[]
+  pauses                     ServiceOrderPause[]
+  reworks                    ServiceOrderRework[]
 
   @@index([serviceVisitId])
   @@index([status])
   @@map("service_orders")
+}
+
+// Append-only ledger of pause intervals for a service order (CR-2026-001).
+// Pause DURATION is derived from these rows (sum of endedAt - startedAt), never
+// stored as a mutable field. status=PAUSED on the order reflects an open row here.
+model ServiceOrderPause {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceOrderId  String      @map("service_order_id") @db.Uuid
+  reasonCode      PauseReason @map("reason_code")
+  startedAt       DateTime    @default(now()) @map("started_at") @db.Timestamptz
+  endedAt         DateTime?   @map("ended_at") @db.Timestamptz
+  pausedByUserId  String?     @map("paused_by_user_id") @db.Uuid
+  resumedByUserId String?     @map("resumed_by_user_id") @db.Uuid
+  notes           String?
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+
+  @@index([serviceOrderId])
+  @@map("service_order_pauses")
+}
+
+// First-class rework (rectify) loop after a QC failure (CR-2026-001). Preserves
+// original work history rather than overwriting it; reworkCount increments on repeats.
+model ServiceOrderRework {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceOrderId String    @map("service_order_id") @db.Uuid
+  reasonCode     String    @map("reason_code")
+  description    String?
+  reworkCount    Int       @default(1) @map("rework_count")
+  openedAt       DateTime  @default(now()) @map("opened_at") @db.Timestamptz
+  openedByUserId String?   @map("opened_by_user_id") @db.Uuid
+  closedAt       DateTime? @map("closed_at") @db.Timestamptz
+  closedByUserId String?   @map("closed_by_user_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+
+  @@index([serviceOrderId])
+  @@map("service_order_reworks")
 }
 
 model ServiceOrderItem {
@@ -937,12 +1015,26 @@ model WorkResource {
   updatedAt           DateTime            @updatedAt @map("updated_at") @db.Timestamptz
 
   site         Site                  @relation(fields: [siteId], references: [id])
-  occupancy    ResourceOccupancy?
-  reservations ResourceReservation[]
-  assignments  TechnicianAssignment[]
+  occupancy         ResourceOccupancy?
+  reservations      ResourceReservation[]
+  assignments       TechnicianAssignment[]
+  operationalStatus ResourceOperationalStatus?
 
   @@unique([siteId, code])
   @@map("work_resources")
+}
+
+model ResourceOperationalStatus {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  resourceId    String   @unique @map("resource_id") @db.Uuid
+  isOperational Boolean  @default(true) @map("is_operational")
+  reason        String?
+  setByUserId   String?  @map("set_by_user_id") @db.Uuid
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  resource WorkResource @relation(fields: [resourceId], references: [id])
+
+  @@map("resource_operational_status")
 }
 
 model ResourceOccupancy {

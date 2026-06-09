@@ -25,13 +25,34 @@ async function main() {
     { email: 'manager@bert.local', fullName: 'Manager User', roleCode: 'MANAGER', password: 'manager123' },
     { email: 'frontdesk@bert.local', fullName: 'Front Desk User', roleCode: 'FRONT_DESK', password: 'frontdesk123' },
     { email: 'advisor@bert.local', fullName: 'Service Advisor', roleCode: 'SERVICE_ADVISOR', password: 'advisor123' },
-    { email: 'tech1@bert.local', fullName: 'Technician One', roleCode: 'TECHNICIAN', password: 'tech123' },
-    { email: 'tech2@bert.local', fullName: 'Technician Two', roleCode: 'TECHNICIAN', password: 'tech123' },
-    { email: 'tech3@bert.local', fullName: 'Technician Three', roleCode: 'TECHNICIAN', password: 'tech123' },
-    { email: 'tech4@bert.local', fullName: 'Technician Four', roleCode: 'TECHNICIAN', password: 'tech123' },
-    { email: 'tech5@bert.local', fullName: 'Technician Five', roleCode: 'TECHNICIAN', password: 'tech123' },
     { email: 'parts@bert.local', fullName: 'Parts Staff', roleCode: 'PARTS_STAFF', password: 'parts123' },
   ];
+
+  // --- Real technician roster (extracted from SharePoint "Service Center Job Sheet"
+  //     export, Oct 2023 – Jun 2026, by job-assignment frequency). Each technician
+  //     needs a UserAccount (display name + login). Shared dev password 'tech123';
+  //     the first entry (O. Josephs) is the documented technician demo login.
+  //     NOTE (assumption): the export does NOT contain per-technician skill data, so
+  //     every technician is seeded with a baseline GENERAL+LUBE skill only. Real skill
+  //     matrices must be collected from operations — see the SharePoint re-export /
+  //     data-collection request before relying on skill-based scheduling. ---
+  const technicianRoster = [
+    { email: 'o.josephs@bert.local', fullName: 'O. Josephs', employeeCode: 'BERT-T01' },
+    { email: 'm.walker@bert.local', fullName: 'M. Walker', employeeCode: 'BERT-T02' },
+    { email: 'o.hamilton@bert.local', fullName: 'O. Hamilton', employeeCode: 'BERT-T03' },
+    { email: 'k.thomas@bert.local', fullName: 'K. Thomas', employeeCode: 'BERT-T04' },
+    { email: 'd.willis@bert.local', fullName: 'D. Willis', employeeCode: 'BERT-T05' },
+    { email: 'j.walters@bert.local', fullName: 'J. Walters', employeeCode: 'BERT-T06' },
+    { email: 'd.dennis@bert.local', fullName: 'D. Dennis', employeeCode: 'BERT-T07' },
+    { email: 'd.hibbert@bert.local', fullName: 'D. Hibbert', employeeCode: 'BERT-T08' },
+    { email: 'w.taylor@bert.local', fullName: 'W. Taylor', employeeCode: 'BERT-T09' },
+    { email: 'c.johnson@bert.local', fullName: 'C. Johnson', employeeCode: 'BERT-T10' },
+    { email: 't.lewis@bert.local', fullName: 'T. Lewis', employeeCode: 'BERT-T11' },
+    { email: 'r.walker@bert.local', fullName: 'R. Walker', employeeCode: 'BERT-T12' },
+  ];
+  for (const t of technicianRoster) {
+    users.push({ email: t.email, fullName: t.fullName, roleCode: 'TECHNICIAN', password: 'tech123' });
+  }
 
   const createdUsers: Record<string, string> = {};
   for (const u of users) {
@@ -54,26 +75,40 @@ async function main() {
 
   // --- Service Types (from data/service_catalogue.csv) ---
   const serviceTypes = [
-    { code: 'OIL-01', name: 'Oil Change', family: 'Quick Service', baseDurationMinutes: 30, quickService: true, requiredSkillCode: 'LUBE', requiredBayType: 'LUBE', partsPrepositionRequired: true, transportEligible: false, batchingFamily: 'QUICK' },
-    { code: 'TIR-01', name: 'Tire Rotation', family: 'Quick Service', baseDurationMinutes: 25, quickService: true, requiredSkillCode: 'TIRE', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: 'QUICK' },
-    { code: 'BAT-01', name: 'Battery Test / Replace', family: 'Electrical / Quick', baseDurationMinutes: 30, quickService: true, requiredSkillCode: 'ELECTRICAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: 'QUICK' },
-    { code: 'BRK-01', name: 'Brake Inspection', family: 'Brakes', baseDurationMinutes: 30, quickService: false, requiredSkillCode: 'BRAKE', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: 'BRAKES' },
-    { code: 'BRK-02', name: 'Brake Pad Replacement', family: 'Brakes', baseDurationMinutes: 90, quickService: false, requiredSkillCode: 'BRAKE', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: 'BRAKES' },
-    { code: 'TIR-02', name: 'Wheel Alignment', family: 'Tires', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'ALIGNMENT', requiredBayType: 'ALIGNMENT', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null },
-    { code: 'TIR-03', name: 'Tire Install & Balance', family: 'Tires', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'TIRE', requiredBayType: 'TIRE', partsPrepositionRequired: true, transportEligible: false, batchingFamily: null },
-    { code: 'AC-01', name: 'A/C Diagnostic', family: 'A/C', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'AC', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null },
-    { code: 'AC-02', name: 'A/C Repair', family: 'A/C', baseDurationMinutes: 180, quickService: false, requiredSkillCode: 'AC', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null },
-    { code: 'ENG-01', name: 'Engine Diagnostic', family: 'Diagnostics', baseDurationMinutes: 90, quickService: false, requiredSkillCode: 'DIAG', requiredBayType: 'DIAGNOSTIC', partsPrepositionRequired: false, transportEligible: false, batchingFamily: 'DIAG' },
-    { code: 'ENG-02', name: 'Major Tune-Up', family: 'Engine', baseDurationMinutes: 180, quickService: false, requiredSkillCode: 'ENGINE', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null },
-    { code: 'ELE-01', name: 'Electrical Diagnostic', family: 'Electrical', baseDurationMinutes: 90, quickService: false, requiredSkillCode: 'ELECTRICAL', requiredBayType: 'DIAGNOSTIC', partsPrepositionRequired: false, transportEligible: false, batchingFamily: 'DIAG' },
-    { code: 'COL-01', name: 'Cooling System Service', family: 'Cooling', baseDurationMinutes: 90, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null },
-    { code: 'SUSP-01', name: 'Suspension Inspection', family: 'Suspension', baseDurationMinutes: 45, quickService: false, requiredSkillCode: 'SUSPENSION', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null },
-    { code: 'SUSP-02', name: 'Shock / Strut Replacement', family: 'Suspension', baseDurationMinutes: 180, quickService: false, requiredSkillCode: 'SUSPENSION', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null },
-    { code: 'TRANS-01', name: 'Transmission Diagnostic', family: 'Transmission', baseDurationMinutes: 120, quickService: false, requiredSkillCode: 'TRANSMISSION', requiredBayType: 'DIAGNOSTIC', partsPrepositionRequired: false, transportEligible: true, batchingFamily: null },
-    { code: 'INSP-01', name: 'Pre-Purchase Inspection', family: 'Inspection', baseDurationMinutes: 75, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'INSPECTION', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null },
-    { code: 'GEN-01', name: 'General Diagnostic', family: 'Diagnostics', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'DIAGNOSTIC', partsPrepositionRequired: false, transportEligible: false, batchingFamily: 'DIAG' },
-    { code: 'BEL-01', name: 'Belt / Hose Replacement', family: 'Engine / Cooling', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: null },
-    { code: 'SPK-01', name: 'Spark Plug Replacement', family: 'Engine', baseDurationMinutes: 120, quickService: false, requiredSkillCode: 'ENGINE', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: null },
+    // --- DMAIC-confirmed services with operational flags ---
+    { code: 'OIL-01', name: 'Oil Change', family: 'Service', baseDurationMinutes: 30, quickService: true, requiredSkillCode: 'LUBE', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: 'QUICK', requiresMileage: true, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'OIL-FLT-01', name: 'Oil Filter Change', family: 'Service', baseDurationMinutes: 20, quickService: true, requiredSkillCode: 'LUBE', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: 'QUICK', requiresMileage: true, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'AIR-FLT-01', name: 'Air Filter Change', family: 'Service', baseDurationMinutes: 15, quickService: true, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: 'QUICK', requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'FUEL-FLT-01', name: 'Fuel Filter Change', family: 'Service', baseDurationMinutes: 30, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'BAT-01', name: 'Battery Change', family: 'Service', baseDurationMinutes: 45, quickService: false, requiredSkillCode: 'ELECTRICAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'SHOCK-01', name: 'Shocks Replacement', family: 'Service', baseDurationMinutes: 120, quickService: false, requiredSkillCode: 'SUSPENSION', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'BULB-01', name: 'Bulb Replacement', family: 'Quick Service', baseDurationMinutes: 15, quickService: true, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: 'QUICK', requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'BJOINT-01', name: 'Ball Joint Replacement', family: 'Service', baseDurationMinutes: 120, quickService: false, requiredSkillCode: 'SUSPENSION', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'BELT-01', name: 'Belt Replacement', family: 'Service', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'RACK-01', name: 'Rack & Pinion', family: 'Service', baseDurationMinutes: 180, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'DISC-01', name: 'Disc Pad Change', family: 'Service', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'BRAKE', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: 'BRAKES', requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'WIPER-01', name: 'Wiper Blade Change', family: 'Quick Service', baseDurationMinutes: 10, quickService: true, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: 'QUICK', requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'CLEAN-01', name: 'Vehicle Cleaning', family: 'Cleaning', baseDurationMinutes: 30, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: true, standPreferred: false, mobileJackAllowed: false },
+    { code: 'MSHOP-01', name: 'Machine Shop Work', family: 'External', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: true, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: false },
+    { code: 'EST-01', name: 'Estimate / Inspection', family: 'Service', baseDurationMinutes: 30, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    // --- Existing services retained with DMAIC flags ---
+    { code: 'TIR-01', name: 'Tire Rotation', family: 'Quick Service', baseDurationMinutes: 25, quickService: true, requiredSkillCode: 'TIRE', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: 'QUICK', requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'BRK-01', name: 'Brake Inspection', family: 'Brakes', baseDurationMinutes: 30, quickService: false, requiredSkillCode: 'BRAKE', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: 'BRAKES', requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'BRK-02', name: 'Brake Pad Replacement', family: 'Brakes', baseDurationMinutes: 90, quickService: false, requiredSkillCode: 'BRAKE', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: 'BRAKES', requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'TIR-02', name: 'Wheel Alignment', family: 'Tires', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'ALIGNMENT', requiredBayType: 'ALIGNMENT', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'TIR-03', name: 'Tire Install & Balance', family: 'Tires', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'TIRE', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'AC-01', name: 'A/C Diagnostic', family: 'A/C', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'AC', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'AC-02', name: 'A/C Repair', family: 'A/C', baseDurationMinutes: 180, quickService: false, requiredSkillCode: 'AC', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'ENG-01', name: 'Engine Diagnostic', family: 'Diagnostics', baseDurationMinutes: 90, quickService: false, requiredSkillCode: 'DIAG', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: 'DIAG', requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'ENG-02', name: 'Major Tune-Up', family: 'Engine', baseDurationMinutes: 180, quickService: false, requiredSkillCode: 'ENGINE', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'ELE-01', name: 'Electrical Diagnostic', family: 'Electrical', baseDurationMinutes: 90, quickService: false, requiredSkillCode: 'ELECTRICAL', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: 'DIAG', requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'COL-01', name: 'Cooling System Service', family: 'Cooling', baseDurationMinutes: 90, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'SUSP-01', name: 'Suspension Inspection', family: 'Suspension', baseDurationMinutes: 45, quickService: false, requiredSkillCode: 'SUSPENSION', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'SUSP-02', name: 'Shock / Strut Replacement', family: 'Suspension', baseDurationMinutes: 180, quickService: false, requiredSkillCode: 'SUSPENSION', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: true, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'TRANS-01', name: 'Transmission Diagnostic', family: 'Transmission', baseDurationMinutes: 120, quickService: false, requiredSkillCode: 'TRANSMISSION', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: true, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'INSP-01', name: 'Pre-Purchase Inspection', family: 'Inspection', baseDurationMinutes: 75, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: false, mobileJackAllowed: true },
+    { code: 'GEN-01', name: 'General Diagnostic', family: 'Diagnostics', baseDurationMinutes: 60, quickService: false, requiredSkillCode: 'GENERAL', requiredBayType: 'GENERAL', partsPrepositionRequired: false, transportEligible: false, batchingFamily: 'DIAG', requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
+    { code: 'SPK-01', name: 'Spark Plug Replacement', family: 'Engine', baseDurationMinutes: 120, quickService: false, requiredSkillCode: 'ENGINE', requiredBayType: 'GENERAL', partsPrepositionRequired: true, transportEligible: false, batchingFamily: null, requiresMileage: false, isExternal: false, requiresPowerWash: false, standPreferred: true, mobileJackAllowed: false },
   ];
 
   for (const st of serviceTypes) {
@@ -139,13 +174,16 @@ async function main() {
   console.warn(`Business rules: ${rules.length} seeded`);
 
   // --- Technicians ---
-  const techSpecs = [
-    { email: 'tech1@bert.local', employeeCode: 'TECH-001', skills: [{ code: 'GENERAL', level: 3 }, { code: 'LUBE', level: 3 }, { code: 'BRAKE', level: 2 }, { code: 'TIRE', level: 2 }] },
-    { email: 'tech2@bert.local', employeeCode: 'TECH-002', skills: [{ code: 'GENERAL', level: 3 }, { code: 'ELECTRICAL', level: 3 }, { code: 'ENGINE', level: 2 }, { code: 'DIAG', level: 2 }] },
-    { email: 'tech3@bert.local', employeeCode: 'TECH-003', skills: [{ code: 'GENERAL', level: 2 }, { code: 'AC', level: 3 }, { code: 'COOLING', level: 2 }] },
-    { email: 'tech4@bert.local', employeeCode: 'TECH-004', skills: [{ code: 'GENERAL', level: 3 }, { code: 'SUSPENSION', level: 3 }, { code: 'ALIGNMENT', level: 3 }] },
-    { email: 'tech5@bert.local', employeeCode: 'TECH-005', skills: [{ code: 'GENERAL', level: 1 }, { code: 'LUBE', level: 2 }] },
-  ];
+  // Seeded from the real roster above. Baseline GENERAL+LUBE skill only (assumption —
+  // real per-technician skill matrices are a pending data-collection item).
+  const techSpecs = technicianRoster.map((t) => ({
+    email: t.email,
+    employeeCode: t.employeeCode,
+    skills: [
+      { code: 'GENERAL', level: 2 },
+      { code: 'LUBE', level: 2 },
+    ],
+  }));
 
   for (const t of techSpecs) {
     const userId = createdUsers[t.email];
@@ -197,19 +235,20 @@ async function main() {
   }
   console.warn(`Work bays: ${bays.length} seeded`);
 
-  // --- v4.1: Work Resources (alongside WorkBay, migration-safe) ---
+  // --- DMAIC-confirmed Work Resources ---
   const resources = [
-    { code: 'BAY-01', name: 'Heavy Lift 1', resourceCategory: 'BAY' as const, maxVehicleWeight: 'HEAVY' as const, liftType: 'heavy', hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, displayOrder: 1, capabilities: { isIndoor: true } },
-    { code: 'BAY-02', name: 'Heavy Lift 2', resourceCategory: 'BAY' as const, maxVehicleWeight: 'HEAVY' as const, liftType: 'heavy', hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, displayOrder: 2, capabilities: { isIndoor: true } },
-    { code: 'BAY-03', name: 'Sedan Lift', resourceCategory: 'BAY' as const, maxVehicleWeight: 'STANDARD' as const, liftType: 'sedan', hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, displayOrder: 3, capabilities: { isIndoor: true } },
-    { code: 'BAY-04', name: 'Mobile Lift', resourceCategory: 'BAY' as const, maxVehicleWeight: 'STANDARD' as const, liftType: 'mobile', hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, displayOrder: 4, capabilities: { isIndoor: true } },
-    { code: 'BAY-05', name: 'Power Jack', resourceCategory: 'BAY' as const, maxVehicleWeight: 'LIGHT' as const, liftType: 'power_jack', hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, displayOrder: 5, capabilities: { isIndoor: true } },
-    { code: 'BAY-06', name: 'Bay 6 (TBD)', resourceCategory: 'BAY' as const, maxVehicleWeight: 'STANDARD' as const, liftType: null, hasAlignment: true, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, displayOrder: 6, capabilities: { isIndoor: true }, notes: 'Pending: confirm alignment or other capability' },
-    { code: 'BAY-07', name: 'Bay 7 (TBD)', resourceCategory: 'BAY' as const, maxVehicleWeight: 'STANDARD' as const, liftType: null, hasAlignment: false, hasDiagnostics: true, requiresMechanic: true, showOnDispatchBoard: true, displayOrder: 7, capabilities: { isIndoor: true }, notes: 'Pending: confirm diagnostics or other capability' },
-    { code: 'OVF-01', name: 'Overflow Slot A', resourceCategory: 'OVERFLOW' as const, maxVehicleWeight: 'STANDARD' as const, liftType: null, hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, displayOrder: 10, capabilities: { isGroundLevel: true } },
-    { code: 'OVF-02', name: 'Overflow Slot B', resourceCategory: 'OVERFLOW' as const, maxVehicleWeight: 'STANDARD' as const, liftType: null, hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, displayOrder: 11, capabilities: { isGroundLevel: true } },
-    { code: 'LT-01', name: 'Light Task Slot 1', resourceCategory: 'LIGHT_SLOT' as const, maxVehicleWeight: 'LIGHT' as const, liftType: null, hasAlignment: false, hasDiagnostics: false, requiresMechanic: false, showOnDispatchBoard: true, displayOrder: 20, capabilities: { wiperChange: true, carWash: true, quickCheck: true } },
-    { code: 'LT-02', name: 'Light Task Slot 2', resourceCategory: 'LIGHT_SLOT' as const, maxVehicleWeight: 'LIGHT' as const, liftType: null, hasAlignment: false, hasDiagnostics: false, requiresMechanic: false, showOnDispatchBoard: true, displayOrder: 21, capabilities: { wiperChange: true, carWash: true, quickCheck: true } },
+    // Active: confirmed equipment from DMAIC
+    { code: 'STAND-01', name: 'Stand 1', resourceCategory: 'BAY' as const, maxVehicleWeight: 'HEAVY' as const, liftType: 'heavy', hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, isActive: true, displayOrder: 1, capabilities: { isIndoor: true } },
+    { code: 'STAND-02', name: 'Stand 2', resourceCategory: 'BAY' as const, maxVehicleWeight: 'HEAVY' as const, liftType: 'heavy', hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, isActive: true, displayOrder: 2, capabilities: { isIndoor: true } },
+    { code: 'MJACK-01', name: 'Mobile Jack 1', resourceCategory: 'BAY' as const, maxVehicleWeight: 'STANDARD' as const, liftType: 'mobile', hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, isActive: true, displayOrder: 3, capabilities: { sedanOnly: true }, notes: 'Sedan-only: LIGHT + STANDARD vehicles. No HEAVY.' },
+    { code: 'MJACK-02', name: 'Mobile Jack 2', resourceCategory: 'BAY' as const, maxVehicleWeight: 'STANDARD' as const, liftType: 'mobile', hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: true, isActive: true, displayOrder: 4, capabilities: { sedanOnly: true }, notes: 'Sedan-only: LIGHT + STANDARD vehicles. No HEAVY.' },
+    { code: 'PWASH-01', name: 'Power Wash', resourceCategory: 'POWER_WASH' as const, maxVehicleWeight: 'HEAVY' as const, liftType: null, hasAlignment: false, hasDiagnostics: false, requiresMechanic: false, showOnDispatchBoard: true, isActive: true, displayOrder: 5, capabilities: { cleaning: true }, notes: 'Cleaning only. Requires operational status check before dispatch.' },
+    { code: 'MSHOP-EXT', name: 'External Machine Shop', resourceCategory: 'EXTERNAL' as const, maxVehicleWeight: 'HEAVY' as const, liftType: null, hasAlignment: false, hasDiagnostics: false, requiresMechanic: false, showOnDispatchBoard: true, isActive: true, displayOrder: 6, capabilities: {}, notes: 'External facility. Jobs logged but not bay-scheduled.' },
+    // Inactive: placeholders until confirmed by operations
+    { code: 'OVF-01', name: 'Overflow Slot A', resourceCategory: 'OVERFLOW' as const, maxVehicleWeight: 'STANDARD' as const, liftType: null, hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: false, isActive: false, displayOrder: 10, capabilities: { isGroundLevel: true }, notes: 'Placeholder — not confirmed as live capacity' },
+    { code: 'OVF-02', name: 'Overflow Slot B', resourceCategory: 'OVERFLOW' as const, maxVehicleWeight: 'STANDARD' as const, liftType: null, hasAlignment: false, hasDiagnostics: false, requiresMechanic: true, showOnDispatchBoard: false, isActive: false, displayOrder: 11, capabilities: { isGroundLevel: true }, notes: 'Placeholder — not confirmed as live capacity' },
+    { code: 'LT-01', name: 'Light Task Slot 1', resourceCategory: 'LIGHT_SLOT' as const, maxVehicleWeight: 'LIGHT' as const, liftType: null, hasAlignment: false, hasDiagnostics: false, requiresMechanic: false, showOnDispatchBoard: false, isActive: false, displayOrder: 20, capabilities: {}, notes: 'Placeholder — not confirmed as live capacity' },
+    { code: 'LT-02', name: 'Light Task Slot 2', resourceCategory: 'LIGHT_SLOT' as const, maxVehicleWeight: 'LIGHT' as const, liftType: null, hasAlignment: false, hasDiagnostics: false, requiresMechanic: false, showOnDispatchBoard: false, isActive: false, displayOrder: 21, capabilities: {}, notes: 'Placeholder — not confirmed as live capacity' },
   ];
 
   for (const r of resources) {
@@ -244,14 +283,23 @@ async function main() {
     { ruleKey: 'eta_band_wide_min', valueJson: 30, notes: 'Wide ETA band width in minutes (positions 3+)' },
     { ruleKey: 'reminder_lead_days', valueJson: 14, notes: 'Days before due date to send maintenance reminder' },
     { ruleKey: 'reminder_mileage_threshold', valueJson: 500, notes: 'Miles before due mileage to send maintenance reminder' },
-    { ruleKey: 'oil_brand_options', valueJson: ['Amsoil', 'Liqui Moly', 'Valvoline', 'Castrol', 'Mobil 1', 'Other'], notes: 'Oil brand dropdown options for intake' },
+    { ruleKey: 'oil_brand_options', valueJson: ['Regular Oil', 'Liqui Moly', 'Amsoil', 'Other'], notes: 'Oil brand/type dropdown options for intake. Aligned to the values actually used in the SharePoint job sheet (Regular Oil, Liqui Moly, Amsoil); "Not Servicing" is represented by leaving oil empty / non-service job, not a brand option.' },
     { ruleKey: 'oil_grade_presets', valueJson: ['0W-20', '5W-20', '5W-30', '10W-30', '10W-40', '15W-40', '0W-40'], notes: 'Oil grade preset options for intake' },
     { ruleKey: 'blocked_return_policy', valueJson: 'ORIGINAL_POSITION', notes: 'Where unblocked tickets return: ORIGINAL_POSITION or END_OF_LINE' },
     { ruleKey: 'completion_requires_front_desk_action', valueJson: true, notes: 'Whether tech completion requires front desk to notify customer' },
+    { ruleKey: 'display_board_enabled', valueJson: true, notes: 'Whether the public waiting-room display board (/display/:token) is active' },
+    { ruleKey: 'display_board_token', valueJson: 'bert-display-7f3a9c2e4b81d6', notes: 'Unguessable token gating the public waiting-room display board URL (/display/:token). No login is required on the screen; rotate this value if the URL leaks.' },
     { ruleKey: 'notification_provider_sms', valueJson: 'stub', notes: 'SMS provider: stub | twilio' },
     { ruleKey: 'notification_provider_email', valueJson: 'stub', notes: 'Email provider: stub | sendgrid | smtp' },
     { ruleKey: 'overflow_mechanic_required', valueJson: true, notes: 'Whether overflow slots require a mechanic assignment' },
     { ruleKey: 'light_slot_mechanic_required', valueJson: false, notes: 'Whether light task slots require a mechanic assignment' },
+    { ruleKey: 'reminder_eligible_service_types', valueJson: ['OIL-01'], notes: 'Service type codes eligible for automated maintenance reminders' },
+    // DMAIC alignment rules
+    { ruleKey: 'same_day_appointment_cutoff_time', valueJson: '10:00', notes: 'Time after which same-day appointments require manager override (HH:mm site-local)' },
+    { ruleKey: 'same_day_walkin_policy', valueJson: 'ALLOW', notes: 'Walk-in policy after cutoff: ALLOW | REQUIRE_OVERRIDE | BLOCK' },
+    { ruleKey: 'manager_override_required_after_cutoff', valueJson: true, notes: 'Whether same-day cutoff is enforced (true) or advisory (false)' },
+    { ruleKey: 'midday_followup_enabled', valueJson: true, notes: 'DMAIC Rule 2: send a same-day follow-up for jobs COMPLETED before noon' },
+    { ruleKey: 'midday_followup_run_time', valueJson: '12:15', notes: 'When the (idempotent) midday follow-up batch should run, HH:mm site-local (after the noon cutoff)' },
   ];
 
   for (const r of v41Rules) {
