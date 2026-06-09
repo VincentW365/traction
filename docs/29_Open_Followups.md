@@ -10,7 +10,7 @@ Owner: Vincent Wilson unless noted. Status: **Decision pending** / **Approved** 
 | # | Item | Status | Lean / Proposed approach |
 | --- | --- | --- | --- |
 | 1.1 | **Fallback for 10 unmatched customers / ~33 jobs** (jobs reference contact Ids absent from the Contact DB). | Decision pending | **Lean:** for those jobs only, attach a **historical-only placeholder** customer+vehicle, clearly flagged as an unresolved source reference (e.g. external ref marked `UNRESOLVED`). Do **not** block the whole jobs import for ~33 rows. |
-| 1.2 | **Model/import the dropped contact fields** before layering job history: `Loyalty No.` (Customer), `Fuel Type`, `Transmission`, `Drivetrain`, `Engine No.` (Vehicle). | Decision pending | **Lean:** **add all of them** (additive schema fields + re-run customer/vehicle import to backfill) before jobs import. Requires a small additive migration + importer update. |
+| 1.2 | **Model/import the dropped contact fields** before layering job history. | ✅ **Approved → CR-2026-004** | **Add all, before jobs import:** `Loyalty No.`→Customer; `Fuel Type`, `Transmission`, `Drivetrain`, `Engine No.`→Vehicle. Additive nullable fields + idempotent backfill of the existing import. **`Engine No.` treated as sensitive** (authenticated-only, no logs, no raw values in dry-run/reports). See `docs/30`. |
 
 ## 2. Operational follow-ups before pilot
 
