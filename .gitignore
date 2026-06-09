@@ -33,3 +33,27 @@ pnpm-debug.log*
 
 # Test
 coverage/
+
+# SharePoint raw extraction dumps + extracted data (large + contain real customer PII — NEVER commit)
+*.iqy
+jobs*.xml
+jobs*.csv
+jobs.csv
+customers*.xml
+customers*.csv
+customer-fields.xml
+sample.xml
+sample.csv
+lists.xml
+fields.xml
+master.xml
+proj.xml
+proj.csv
+expand.xml
+# Raw source exports (DMAIC doc + SharePoint CSV/XLSX) and analysis outputs
+Service Center*.csv
+*.docx
+demo-output/
+
+# Build caches
+*.tsbuildinfo
