@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../../../lib/api-client';
 import { useSiteId } from '../../../../hooks/use-site';
-import { PageHeader } from '../../../../components/page-header';
+import { PageHeader } from '../../../../components/ui/page-header';
 
 interface CustomerResult {
   id: string;

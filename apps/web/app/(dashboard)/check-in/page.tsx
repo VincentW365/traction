@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api-client';
 import { StatusBadge } from '../../../components/status-badge';
+import { PageHeader } from '../../../components/ui/page-header';
 import { useSiteId } from '../../../hooks/use-site';
 
 /* ---------- Types (matching actual API response shapes) ---------- */
@@ -68,6 +69,7 @@ export default function CheckInPage() {
   const [oilBrand, setOilBrand] = useState('');
   const [oilGrade, setOilGrade] = useState('');
   const [vehicleWeightClass, setVehicleWeightClass] = useState('STANDARD');
+  const [vehicleColor, setVehicleColor] = useState('');
   const [successResult, setSuccessResult] = useState<{
     ticketNumber: string;
     priorityClass: string;
@@ -123,6 +125,7 @@ export default function CheckInPage() {
         oilBrand: oilBrand || undefined,
         oilGrade: oilGrade || undefined,
         vehicleWeightClass: vehicleWeightClass || undefined,
+        color: vehicleColor || undefined,
       }),
     onSuccess: (data) => {
       setSuccessResult({
@@ -147,6 +150,7 @@ export default function CheckInPage() {
       oilBrand?: string;
       oilGrade?: string;
       vehicleWeightClass?: string;
+      color?: string;
     }) => api.post<CheckInResponse>('/walk-ins', payload),
     onSuccess: (data) => {
       setSuccessResult({
@@ -185,6 +189,7 @@ export default function CheckInPage() {
     setOilBrand('');
     setOilGrade('');
     setVehicleWeightClass('STANDARD');
+    setVehicleColor('');
   }
 
   function handleWalkInSubmit() {
@@ -198,6 +203,7 @@ export default function CheckInPage() {
       oilBrand: oilBrand || undefined,
       oilGrade: oilGrade || undefined,
       vehicleWeightClass: vehicleWeightClass || undefined,
+      color: vehicleColor || undefined,
     });
   }
 
@@ -206,28 +212,28 @@ export default function CheckInPage() {
   /* ---------- Render: Success ---------- */
   if (successResult) {
     return (
-      <div className="max-w-lg mx-auto mt-12">
-        <div className="rounded-xl bg-white border border-gray-200 shadow-sm p-8 text-center">
+      <div className="page-container max-w-lg mx-auto">
+        <div className="card p-8 text-center">
           <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
             <svg className="w-7 h-7 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">
+          <h2 className="text-xl font-bold text-slate-900 mb-1">
             {successResult.type === 'check-in' ? 'Checked In' : 'Walk-In Registered'}
           </h2>
           <div className="mt-6 space-y-3">
             <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wider">Ticket Number</p>
-              <p className="text-2xl font-mono font-bold text-gray-900 mt-0.5">{successResult.ticketNumber}</p>
+              <p className="text-xs text-slate-500 uppercase tracking-wider">Ticket Number</p>
+              <p className="text-2xl font-mono font-bold text-slate-900 mt-0.5">{successResult.ticketNumber}</p>
             </div>
             <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wider">Priority</p>
+              <p className="text-xs text-slate-500 uppercase tracking-wider">Priority</p>
               <div className="mt-1"><StatusBadge status={successResult.priorityClass} /></div>
             </div>
             <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wider">Estimated Start</p>
-              <p className="text-lg font-semibold text-gray-900 mt-0.5">
+              <p className="text-xs text-slate-500 uppercase tracking-wider">Estimated Start</p>
+              <p className="text-lg font-semibold text-slate-900 mt-0.5">
                 {successResult.etaStartAt
                   ? new Date(successResult.etaStartAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
                   : 'Pending'}
@@ -244,7 +250,7 @@ export default function CheckInPage() {
             </div>
           )}
           <button onClick={handleReset}
-            className="mt-8 w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700 transition-colors">
+            className="mt-8 w-full btn-primary px-4 py-3 text-sm font-semibold">
             Next Customer
           </button>
         </div>
@@ -254,36 +260,47 @@ export default function CheckInPage() {
 
   /* ---------- Render: Main ---------- */
   return (
-    <div className="max-w-4xl">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Check-In</h1>
+    <div className="page-container max-w-4xl">
+      <PageHeader
+        title="Check-In"
+        subtitle="Process arrivals and walk-ins"
+        breadcrumbs={[
+          { label: 'Dashboard', href: '/' },
+          { label: 'Check-In' },
+        ]}
+      />
 
       {/* Search */}
       <div className="relative mb-6">
-        <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
         <input type="text" placeholder="Search by phone, plate, or name..."
           value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-          className="block w-full rounded-xl border border-gray-300 bg-white pl-11 pr-4 py-3 text-sm
-            focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none placeholder:text-gray-400 shadow-sm" />
+          className="input-field pl-11 pr-4 py-3" />
       </div>
 
       {/* Search results */}
       {debouncedTerm.length >= 2 && !selectedCustomer && (
-        <div className="rounded-xl bg-white border border-gray-200 shadow-sm mb-6">
+        <div className="card mb-6">
           <div className="px-4 py-3 border-b">
-            <h2 className="text-sm font-semibold text-gray-700">Search Results</h2>
+            <h2 className="text-sm font-semibold text-slate-700">Search Results</h2>
           </div>
-          {customersQuery.isLoading && <div className="p-6 text-center text-sm text-gray-500">Searching...</div>}
-          {customersQuery.data?.length === 0 && <div className="p-6 text-center text-sm text-gray-500">No customers found</div>}
+          {customersQuery.isLoading && <div className="p-6 text-center text-sm text-slate-500">Searching...</div>}
+          {customersQuery.data?.length === 0 && (
+            <div className="p-6 text-center">
+              <p className="text-sm text-slate-500">No customers found</p>
+              <a href="/customers" className="text-xs text-blue-600 hover:underline mt-2 inline-block">Create New Customer</a>
+            </div>
+          )}
           {customersQuery.data && customersQuery.data.length > 0 && (
             <ul className="divide-y">
               {customersQuery.data.map((c) => (
                 <li key={c.id}>
                   <button onClick={() => handleSelectCustomer(c)}
-                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors">
-                    <p className="text-sm font-medium text-gray-900">{c.firstName} {c.lastName}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{c.phone} &middot; {c.customerNumber}</p>
+                    className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors">
+                    <p className="text-sm font-medium text-slate-900">{c.firstName} {c.lastName}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{c.phone} &middot; {c.customerNumber}</p>
                   </button>
                 </li>
               ))}
@@ -295,27 +312,27 @@ export default function CheckInPage() {
       {/* Selected customer */}
       {selectedCustomer && (
         <div className="space-y-4">
-          <div className="rounded-xl bg-white border border-gray-200 shadow-sm p-4">
+          <div className="card p-4">
             <div className="flex items-center justify-between mb-3">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">
+                <h2 className="text-lg font-semibold text-slate-900">
                   {selectedCustomer.firstName} {selectedCustomer.lastName}
                 </h2>
-                <p className="text-sm text-gray-500">{selectedCustomer.phone} &middot; {selectedCustomer.customerNumber}</p>
+                <p className="text-sm text-slate-500">{selectedCustomer.phone} &middot; {selectedCustomer.customerNumber}</p>
               </div>
-              <button onClick={handleReset} className="text-sm text-gray-500 hover:text-gray-700 underline">Change</button>
+              <button onClick={handleReset} className="text-sm text-slate-500 hover:text-slate-700 underline">Change</button>
             </div>
 
             {/* Vehicle selection */}
             {vehicles.length > 1 && !selectedVehicle && (
               <div>
-                <p className="text-sm font-medium text-gray-700 mb-2">Select a vehicle:</p>
+                <p className="text-sm font-medium text-slate-700 mb-2">Select a vehicle:</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {vehicles.map((v) => (
                     <button key={v.id} onClick={() => setSelectedVehicle(v)}
-                      className="rounded-lg border border-gray-200 px-4 py-3 text-left hover:border-blue-400 hover:bg-blue-50 transition-colors">
-                      <p className="text-sm font-mono font-medium text-gray-900">{v.plateNumber}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">
+                      className="rounded-lg border border-slate-200 px-4 py-3 text-left hover:border-blue-400 hover:bg-blue-50 transition-colors">
+                      <p className="text-sm font-mono font-medium text-slate-900">{v.plateNumber}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">
                         {[v.modelYear, v.make, v.model].filter(Boolean).join(' ') || 'Unknown'}
                       </p>
                     </button>
@@ -329,9 +346,9 @@ export default function CheckInPage() {
             )}
 
             {selectedVehicle && (
-              <div className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2">
-                <span className="text-sm font-mono font-medium text-gray-900">{selectedVehicle.plateNumber}</span>
-                <span className="text-xs text-gray-500">
+              <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                <span className="text-sm font-mono font-medium text-slate-900">{selectedVehicle.plateNumber}</span>
+                <span className="text-xs text-slate-500">
                   {[selectedVehicle.modelYear, selectedVehicle.make, selectedVehicle.model].filter(Boolean).join(' ')}
                 </span>
               </div>
@@ -340,15 +357,15 @@ export default function CheckInPage() {
 
           {/* Today's appointments */}
           {selectedVehicle && appointmentsQuery.data && appointmentsQuery.data.length > 0 && (
-            <div className="rounded-xl bg-white border border-gray-200 shadow-sm">
+            <div className="card">
               <div className="px-4 py-3 border-b">
-                <h3 className="text-sm font-semibold text-gray-700">Today&apos;s Appointments</h3>
+                <h3 className="text-sm font-semibold text-slate-700">Today&apos;s Appointments</h3>
               </div>
               <ul className="divide-y">
                 {appointmentsQuery.data.map((appt) => (
                   <li key={appt.id} className="px-4 py-3 flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-gray-900">
+                      <p className="text-sm font-medium text-slate-900">
                         {new Date(appt.scheduledStartAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                         {' — '}
                         {appt.services.map((s) => s.serviceType.name).join(', ')}
@@ -358,7 +375,7 @@ export default function CheckInPage() {
                     {appt.status === 'CONFIRMED' && (
                       <button onClick={() => checkInMutation.mutate(appt.id)}
                         disabled={checkInMutation.isPending}
-                        className="rounded-xl bg-green-600 px-6 py-3 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-50 transition-colors shadow-sm">
+                        className="btn-success px-6 py-3 text-sm font-bold disabled:opacity-50">
                         {checkInMutation.isPending ? 'Checking in...' : 'Check In'}
                       </button>
                     )}
@@ -375,28 +392,28 @@ export default function CheckInPage() {
 
           {/* v4.1 Intake Fields (shown when vehicle is selected) */}
           {selectedVehicle && (
-            <div className="rounded-xl bg-white border border-gray-200 shadow-sm p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-gray-700">Intake Details</h3>
+            <div className="card p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-700">Intake Details</h3>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Mileage In *</label>
+                  <label className="input-label">Mileage In *</label>
                   <input type="number" value={mileageIn} onChange={(e) => setMileageIn(e.target.value)}
                     placeholder="e.g., 45230" min="0"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
+                    className="input-field" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Vehicle Weight</label>
+                  <label className="input-label">Vehicle Weight</label>
                   <select value={vehicleWeightClass} onChange={(e) => setVehicleWeightClass(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                    className="input-field">
                     <option value="LIGHT">Light</option>
                     <option value="STANDARD">Standard</option>
                     <option value="HEAVY">Heavy</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Oil Brand</label>
+                  <label className="input-label">Oil Brand</label>
                   <select value={oilBrand} onChange={(e) => setOilBrand(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                    className="input-field">
                     <option value="">-- Select --</option>
                     <option value="Amsoil">Amsoil</option>
                     <option value="Liqui Moly">Liqui Moly</option>
@@ -407,9 +424,9 @@ export default function CheckInPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Oil Grade</label>
+                  <label className="input-label">Oil Grade</label>
                   <select value={oilGrade} onChange={(e) => setOilGrade(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                    className="input-field">
                     <option value="">-- Select --</option>
                     <option value="0W-20">0W-20</option>
                     <option value="5W-20">5W-20</option>
@@ -419,6 +436,12 @@ export default function CheckInPage() {
                     <option value="15W-40">15W-40</option>
                     <option value="0W-40">0W-40</option>
                   </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="input-label">Vehicle Color</label>
+                  <input type="text" value={vehicleColor} onChange={(e) => setVehicleColor(e.target.value)}
+                    placeholder="e.g., Silver, White, Black"
+                    className="input-field" />
                 </div>
               </div>
             </div>
@@ -434,27 +457,27 @@ export default function CheckInPage() {
 
           {/* Walk-in form */}
           {selectedVehicle && showWalkInForm && (
-            <div className="rounded-xl bg-white border border-gray-200 shadow-sm">
+            <div className="card">
               <div className="px-4 py-3 border-b flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-gray-700">Walk-In Service Selection</h3>
+                <h3 className="text-sm font-semibold text-slate-700">Walk-In Service Selection</h3>
                 <button onClick={() => { setShowWalkInForm(false); setSelectedServiceCodes([]); }}
-                  className="text-xs text-gray-500 hover:text-gray-700 underline">Cancel</button>
+                  className="text-xs text-slate-500 hover:text-slate-700 underline">Cancel</button>
               </div>
               <div className="p-4">
-                {serviceTypesQuery.isLoading && <p className="text-sm text-gray-500">Loading services...</p>}
+                {serviceTypesQuery.isLoading && <p className="text-sm text-slate-500">Loading services...</p>}
                 {serviceTypesQuery.data && (
                   <div className="space-y-2 mb-4 max-h-80 overflow-y-auto">
                     {serviceTypesQuery.data.map((st) => (
                       <label key={st.code}
                         className={`flex items-center gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
-                          selectedServiceCodes.includes(st.code) ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                          selectedServiceCodes.includes(st.code) ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}>
                         <input type="checkbox" checked={selectedServiceCodes.includes(st.code)}
                           onChange={() => setSelectedServiceCodes((prev) =>
                             prev.includes(st.code) ? prev.filter((c) => c !== st.code) : [...prev, st.code])}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                         <div className="flex-1">
-                          <p className="text-sm font-medium text-gray-900">{st.name}</p>
-                          <p className="text-xs text-gray-500">~{st.baseDurationMinutes} min &middot; {st.family}</p>
+                          <p className="text-sm font-medium text-slate-900">{st.name}</p>
+                          <p className="text-xs text-slate-500">~{st.baseDurationMinutes} min &middot; {st.family}</p>
                         </div>
                       </label>
                     ))}
@@ -462,7 +485,7 @@ export default function CheckInPage() {
                 )}
                 <button onClick={handleWalkInSubmit}
                   disabled={selectedServiceCodes.length === 0 || walkInMutation.isPending}
-                  className="w-full rounded-xl bg-blue-600 px-6 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-sm">
+                  className="w-full btn-primary px-6 py-3 text-sm font-bold disabled:opacity-50">
                   {walkInMutation.isPending ? 'Registering...' : `Register Walk-In (${selectedServiceCodes.length} service${selectedServiceCodes.length !== 1 ? 's' : ''})`}
                 </button>
                 {walkInMutation.isError && (

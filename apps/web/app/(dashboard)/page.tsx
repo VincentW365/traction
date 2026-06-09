@@ -21,8 +21,10 @@ export default function DashboardHomePage() {
       <PageHeader
         title={`Welcome back, ${user?.fullName?.split(' ')[0] ?? 'there'}`}
         subtitle="Traction — Service Operations"
+        breadcrumbs={[{ label: 'Dashboard' }]}
       />
 
+      <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Quick Actions</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {QUICK_ACTIONS.map((action) => (
           <Link

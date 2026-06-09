@@ -1,12 +1,16 @@
 'use client';
 
+import { useState } from 'react';
 import { useParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { api } from '../../../../lib/api-client';
-import { PageHeader } from '../../../../components/page-header';
-import { LoadingState } from '../../../../components/loading-state';
+import { PageHeader } from '../../../../components/ui/page-header';
+import { LoadingState } from '../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../components/status-badge';
+import { useSiteId } from '../../../../hooks/use-site';
+
+/* ---------- Types ---------- */
 
 interface TicketDetail {
   id: string;
@@ -48,10 +52,80 @@ interface TicketDetail {
   }>;
 }
 
+interface ServiceOrder {
+  id: string;
+  status: string;
+  notes: string | null;
+  promisedCompletionAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  items: Array<{
+    id: string;
+    serviceType: { name: string; code: string };
+    estimateMinutes: number | null;
+    actualMinutes: number | null;
+    status: string;
+  }>;
+  assignments: Array<{
+    id: string;
+    isPrimary: boolean;
+    status: string;
+    technician: { id: string; userAccount: { fullName: string }; employeeCode: string };
+    bay: { id: string; code: string; bayType: string } | null;
+  }>;
+}
+
+interface TechOption {
+  id: string;
+  employeeCode: string;
+  userAccount: { fullName: string };
+}
+
+const OVERRIDE_REASONS = ['CUSTOMER_REQUEST', 'MANAGER_ESCALATION', 'VIP', 'URGENT_REPAIR', 'OTHER'];
+const DISPATCHABLE_STATUSES = ['WAITING', 'ISSUED', 'PENDING_RANK', 'BLOCKED'];
+
+const ORDER_ACTIONS: Record<string, Array<{ label: string; toStatus: string; style: string }>> = {
+  DRAFT: [{ label: 'Approve', toStatus: 'APPROVED', style: 'btn-primary' }],
+  APPROVED: [],
+  ASSIGNED: [{ label: 'Start Work', toStatus: 'IN_PROGRESS', style: 'btn-success' }],
+  IN_PROGRESS: [
+    { label: 'Send to QC', toStatus: 'QC', style: 'btn-primary' },
+    { label: 'Wait Parts', toStatus: 'WAITING_PARTS', style: 'btn-secondary' },
+    { label: 'Wait Customer', toStatus: 'WAITING_CUSTOMER', style: 'btn-secondary' },
+  ],
+  WAITING_PARTS: [{ label: 'Resume Work', toStatus: 'IN_PROGRESS', style: 'btn-success' }],
+  WAITING_CUSTOMER: [{ label: 'Resume Work', toStatus: 'IN_PROGRESS', style: 'btn-success' }],
+  QC: [{ label: 'Ready to Invoice', toStatus: 'READY_TO_INVOICE', style: 'btn-primary' }],
+  READY_TO_INVOICE: [{ label: 'Close Order', toStatus: 'CLOSED', style: 'btn-success' }],
+};
+
+/* ---------- Component ---------- */
+
 export default function QueueTicketDetailPage() {
   const params = useParams();
   const ticketId = params.id as string;
+  const siteId = useSiteId();
+  const queryClient = useQueryClient();
 
+  // Override form state
+  const [showOverrideForm, setShowOverrideForm] = useState(false);
+  const [ovrPosition, setOvrPosition] = useState(1);
+  const [ovrReason, setOvrReason] = useState('CUSTOMER_REQUEST');
+  const [ovrNotes, setOvrNotes] = useState('');
+  const [clearReason, setClearReason] = useState('');
+
+  // Assign form state
+  const [assigningOrderId, setAssigningOrderId] = useState<string | null>(null);
+  const [assignTechId, setAssignTechId] = useState('');
+  const [assignBayId, setAssignBayId] = useState('');
+
+  // Completion form state
+  const [showCompletion, setShowCompletion] = useState(false);
+  const [mileageOut, setMileageOut] = useState('');
+  const [oilBrandInstalled, setOilBrandInstalled] = useState('');
+  const [oilGradeInstalled, setOilGradeInstalled] = useState('');
+
+  // --- Queries ---
   const { data: ticket, isLoading, error } = useQuery<TicketDetail>({
     queryKey: ['queue-ticket', ticketId],
     queryFn: () => api.get(`/queue-tickets/${ticketId}`),
@@ -59,6 +133,82 @@ export default function QueueTicketDetailPage() {
     refetchInterval: 10000,
   });
 
+  const ordersQuery = useQuery<ServiceOrder[]>({
+    queryKey: ['service-orders', ticket?.serviceVisit?.id],
+    queryFn: () => api.get(`/service-orders/by-visit/${ticket!.serviceVisit.id}`),
+    enabled: !!ticket?.serviceVisit?.id,
+    refetchInterval: 10000,
+  });
+
+  const techsQuery = useQuery<TechOption[]>({
+    queryKey: ['technicians-list', siteId],
+    queryFn: () => api.get(`/technicians?siteId=${siteId}`),
+    enabled: !!assigningOrderId,
+  });
+
+  // --- Mutations ---
+  const applyOverride = useMutation({
+    mutationFn: () => api.post(`/queue-tickets/${ticketId}/override`, {
+      reasonCode: ovrReason,
+      targetPosition: ovrPosition,
+      notes: ovrNotes || undefined,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queue-ticket', ticketId] });
+      setShowOverrideForm(false);
+      setOvrNotes('');
+    },
+  });
+
+  const clearOverride = useMutation({
+    mutationFn: () => api.post(`/queue-tickets/${ticketId}/clear-override`, { reason: clearReason || undefined }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queue-ticket', ticketId] });
+      setClearReason('');
+    },
+  });
+
+  const changeOrderStatus = useMutation({
+    mutationFn: ({ orderId, toStatus }: { orderId: string; toStatus: string }) =>
+      api.post(`/service-orders/${orderId}/status`, { toStatus }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['queue-ticket', ticketId] });
+    },
+  });
+
+  const approveOrder = useMutation({
+    mutationFn: (orderId: string) => api.post(`/service-orders/${orderId}/approve`, {}),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['service-orders'] }),
+  });
+
+  const assignOrder = useMutation({
+    mutationFn: ({ orderId }: { orderId: string }) =>
+      api.post(`/service-orders/${orderId}/assign`, {
+        technicianId: assignTechId,
+        bayId: assignBayId || undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-orders'] });
+      setAssigningOrderId(null);
+      setAssignTechId('');
+      setAssignBayId('');
+    },
+  });
+
+  const completeVisit = useMutation({
+    mutationFn: () => api.patch(`/service-visits/${ticket!.serviceVisit.id}/completion`, {
+      mileageOut: mileageOut ? parseInt(mileageOut, 10) : undefined,
+      oilBrandInstalled: oilBrandInstalled || undefined,
+      oilGradeInstalled: oilGradeInstalled || undefined,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queue-ticket', ticketId] });
+      setShowCompletion(false);
+    },
+  });
+
+  // --- Render ---
   if (isLoading) {
     return (
       <div className="page-container">
@@ -70,13 +220,7 @@ export default function QueueTicketDetailPage() {
   if (error) {
     return (
       <div className="page-container">
-        <PageHeader
-          title="Queue Ticket"
-          breadcrumbs={[
-            { label: 'Queue Board', href: '/queue' },
-            { label: 'Error' },
-          ]}
-        />
+        <PageHeader title="Queue Ticket" breadcrumbs={[{ label: 'Queue Board', href: '/queue' }, { label: 'Error' }]} />
         <div className="card">
           <div className="card-body">
             <div className="flex items-center gap-3 text-red-700">
@@ -95,15 +239,15 @@ export default function QueueTicketDetailPage() {
 
   const sv = ticket.serviceVisit;
   const services = sv.appointment?.services?.map((s) => s.serviceType.name).join(', ') ?? 'Walk-in service';
+  const orders = ordersQuery.data ?? [];
+  const canOverride = !ticket.overrideActive && DISPATCHABLE_STATUSES.includes(ticket.displayStatus);
+  const showCompletionSection = sv.status === 'READY_FOR_PICKUP' || sv.status === 'QC';
 
   return (
     <div className="page-container">
       <PageHeader
         title={ticket.ticketNumber}
-        breadcrumbs={[
-          { label: 'Queue Board', href: '/queue' },
-          { label: ticket.ticketNumber },
-        ]}
+        breadcrumbs={[{ label: 'Queue Board', href: '/queue' }, { label: ticket.ticketNumber }]}
         actions={
           <div className="flex items-center gap-2">
             <StatusBadge status={ticket.displayStatus} />
@@ -136,14 +280,62 @@ export default function QueueTicketDetailPage() {
       {ticket.overrideActive && (
         <div className="card mb-4 border-amber-200 bg-amber-50">
           <div className="card-body">
-            <div className="flex items-center gap-3">
-              <svg className="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div>
-                <p className="text-sm font-semibold text-amber-800">Override Active</p>
-                <p className="text-sm text-amber-700">{ticket.overrideReasonCode}</p>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <svg className="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p className="text-sm font-semibold text-amber-800">Override Active</p>
+                  <p className="text-sm text-amber-700">{ticket.overrideReasonCode}</p>
+                </div>
               </div>
+              <div className="flex items-center gap-2">
+                <input type="text" value={clearReason} onChange={(e) => setClearReason(e.target.value)} placeholder="Reason (optional)" className="input-field w-40 text-xs" />
+                <button onClick={() => clearOverride.mutate()} disabled={clearOverride.isPending} className="btn-secondary text-xs">
+                  {clearOverride.isPending ? 'Clearing...' : 'Clear Override'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Override Controls */}
+      {canOverride && !showOverrideForm && (
+        <div className="mb-4">
+          <button onClick={() => setShowOverrideForm(true)} className="text-xs text-violet-600 hover:underline font-medium">
+            Set Queue Override
+          </button>
+        </div>
+      )}
+
+      {showOverrideForm && (
+        <div className="card mb-4 border-violet-200 bg-violet-50">
+          <div className="card-body space-y-3">
+            <h3 className="text-sm font-semibold text-violet-900">Set Queue Override</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="input-label">Target Position *</label>
+                <input type="number" min={1} value={ovrPosition} onChange={(e) => setOvrPosition(Number(e.target.value))} className="input-field" />
+              </div>
+              <div>
+                <label className="input-label">Reason *</label>
+                <select value={ovrReason} onChange={(e) => setOvrReason(e.target.value)} className="input-field">
+                  {OVERRIDE_REASONS.map((r) => <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="input-label">Notes</label>
+              <input type="text" value={ovrNotes} onChange={(e) => setOvrNotes(e.target.value)} className="input-field" placeholder="Optional" />
+            </div>
+            {applyOverride.isError && <p className="text-xs text-red-600">{applyOverride.error instanceof Error ? applyOverride.error.message : 'Failed'}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => applyOverride.mutate()} disabled={applyOverride.isPending} className="btn-primary text-xs">
+                {applyOverride.isPending ? 'Applying...' : 'Apply Override'}
+              </button>
+              <button onClick={() => setShowOverrideForm(false)} className="btn-secondary text-xs">Cancel</button>
             </div>
           </div>
         </div>
@@ -215,6 +407,183 @@ export default function QueueTicketDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Service Orders Section */}
+      <div className="card mb-6">
+        <div className="card-header">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Service Orders
+            {orders.length > 0 && <span className="ml-2 badge bg-slate-100 text-slate-600">{orders.length}</span>}
+          </h2>
+        </div>
+        <div className="card-body">
+          {orders.length === 0 ? (
+            <p className="text-sm text-slate-500">No service orders created yet.</p>
+          ) : (
+            <div className="space-y-4">
+              {orders.map((order) => (
+                <div key={order.id} className="border border-slate-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <StatusBadge status={order.status} />
+                      {order.promisedCompletionAt && (
+                        <span className="text-[10px] text-slate-400">
+                          Promised: {new Date(order.promisedCompletionAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {/* Status transition buttons */}
+                      {order.status === 'DRAFT' && (
+                        <button onClick={() => approveOrder.mutate(order.id)} disabled={approveOrder.isPending} className="btn-primary text-xs py-1 px-2">
+                          Approve
+                        </button>
+                      )}
+                      {order.status === 'APPROVED' && (
+                        <button onClick={() => setAssigningOrderId(order.id)} className="btn-primary text-xs py-1 px-2">
+                          Assign
+                        </button>
+                      )}
+                      {(ORDER_ACTIONS[order.status] ?? []).map((action) => (
+                        <button
+                          key={action.toStatus}
+                          onClick={() => changeOrderStatus.mutate({ orderId: order.id, toStatus: action.toStatus })}
+                          disabled={changeOrderStatus.isPending}
+                          className={`${action.style} text-xs py-1 px-2`}
+                        >
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Line items */}
+                  <div className="space-y-1">
+                    {order.items.map((item) => (
+                      <div key={item.id} className="flex items-center justify-between text-xs">
+                        <span className="text-slate-700">{item.serviceType.name}</span>
+                        <span className="text-slate-400">
+                          {item.estimateMinutes != null ? `~${item.estimateMinutes} min` : ''}
+                          {item.actualMinutes != null ? ` (actual: ${item.actualMinutes} min)` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Assignments */}
+                  {order.assignments.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-slate-100 flex flex-wrap gap-2">
+                      {order.assignments.map((a) => (
+                        <span key={a.id} className="badge bg-blue-50 text-blue-700 text-[10px]">
+                          {a.technician.employeeCode} {a.isPrimary ? '(Primary)' : '(Helper)'}
+                          {a.bay ? ` — ${a.bay.code}` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Assign form (inline) */}
+                  {assigningOrderId === order.id && (
+                    <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="input-label">Technician *</label>
+                          <select value={assignTechId} onChange={(e) => setAssignTechId(e.target.value)} className="input-field text-xs">
+                            <option value="">Select...</option>
+                            {(techsQuery.data ?? []).map((t) => (
+                              <option key={t.id} value={t.id}>{t.employeeCode} — {t.userAccount.fullName}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="input-label">Bay (optional)</label>
+                          <input type="text" value={assignBayId} onChange={(e) => setAssignBayId(e.target.value)} className="input-field text-xs" placeholder="Bay UUID or leave blank" />
+                        </div>
+                      </div>
+                      {assignOrder.isError && <p className="text-xs text-red-600">{assignOrder.error instanceof Error ? assignOrder.error.message : 'Failed'}</p>}
+                      <div className="flex gap-2">
+                        <button onClick={() => assignOrder.mutate({ orderId: order.id })} disabled={!assignTechId || assignOrder.isPending} className="btn-primary text-xs">
+                          {assignOrder.isPending ? 'Assigning...' : 'Assign'}
+                        </button>
+                        <button onClick={() => setAssigningOrderId(null)} className="btn-secondary text-xs">Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Visit Completion Section */}
+      {showCompletionSection && (
+        <div className="card mb-6 border-emerald-200">
+          <div className="card-header bg-emerald-50/50">
+            <h2 className="text-sm font-semibold text-emerald-900">Complete Visit</h2>
+          </div>
+          <div className="card-body">
+            {!showCompletion ? (
+              <button onClick={() => setShowCompletion(true)} className="btn-success text-sm">
+                Record Completion Details
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="input-label">Mileage Out</label>
+                    <input type="number" value={mileageOut} onChange={(e) => setMileageOut(e.target.value)} className="input-field" placeholder={sv.mileageIn != null ? `Min: ${sv.mileageIn}` : ''} />
+                    {sv.mileageIn != null && mileageOut && parseInt(mileageOut, 10) < sv.mileageIn && (
+                      <p className="text-[10px] text-red-500 mt-1">Must be ≥ mileage in ({sv.mileageIn.toLocaleString()})</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="input-label">Oil Brand Installed</label>
+                    <select value={oilBrandInstalled} onChange={(e) => setOilBrandInstalled(e.target.value)} className="input-field">
+                      <option value="">-- Select --</option>
+                      <option value="Amsoil">Amsoil</option>
+                      <option value="Liqui Moly">Liqui Moly</option>
+                      <option value="Valvoline">Valvoline</option>
+                      <option value="Castrol">Castrol</option>
+                      <option value="Mobil 1">Mobil 1</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="input-label">Oil Grade Installed</label>
+                    <select value={oilGradeInstalled} onChange={(e) => setOilGradeInstalled(e.target.value)} className="input-field">
+                      <option value="">-- Select --</option>
+                      <option value="0W-20">0W-20</option>
+                      <option value="5W-20">5W-20</option>
+                      <option value="5W-30">5W-30</option>
+                      <option value="10W-30">10W-30</option>
+                      <option value="10W-40">10W-40</option>
+                      <option value="15W-40">15W-40</option>
+                      <option value="0W-40">0W-40</option>
+                    </select>
+                  </div>
+                </div>
+                {completeVisit.isError && (
+                  <p className="text-xs text-red-600">{completeVisit.error instanceof Error ? completeVisit.error.message : 'Failed to complete'}</p>
+                )}
+                {completeVisit.isSuccess && (
+                  <p className="text-xs text-emerald-600 font-medium">Visit completed successfully.</p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => completeVisit.mutate()}
+                    disabled={completeVisit.isPending || (!!mileageOut && sv.mileageIn != null && parseInt(mileageOut, 10) < sv.mileageIn)}
+                    className="btn-success text-xs"
+                  >
+                    {completeVisit.isPending ? 'Completing...' : 'Complete & Close Visit'}
+                  </button>
+                  <button onClick={() => setShowCompletion(false)} className="btn-secondary text-xs">Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Event History Table */}
       <div className="table-container">

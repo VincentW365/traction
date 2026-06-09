@@ -34,6 +34,18 @@ const ROUTE_INVENTORY = [
   { route: '/technician', file: '(dashboard)/technician/page.tsx', access: 'auth', description: 'Technician work view' },
   { route: '/reports', file: '(dashboard)/reports/page.tsx', access: 'auth', description: 'Reports/KPI' },
   { route: '/admin/settings', file: '(dashboard)/admin/settings/page.tsx', access: 'auth', description: 'Admin settings' },
+  { route: '/admin/dashboard', file: '(dashboard)/admin/dashboard/page.tsx', access: 'auth', description: 'Manager control center' },
+  { route: '/admin/staff', file: '(dashboard)/admin/staff/page.tsx', access: 'auth', description: 'Staff directory' },
+  { route: '/admin/staff/[id]', file: '(dashboard)/admin/staff/[id]/page.tsx', access: 'auth', description: 'Staff detail' },
+  { route: '/admin/staff/new', file: '(dashboard)/admin/staff/new/page.tsx', access: 'auth', description: 'Create staff' },
+  { route: '/admin/availability', file: '(dashboard)/admin/availability/page.tsx', access: 'auth', description: 'Availability calendar' },
+  { route: '/admin/audit-logs', file: '(dashboard)/admin/audit-logs/page.tsx', access: 'auth', description: 'Audit log viewer' },
+  { route: '/admin/performance', file: '(dashboard)/admin/performance/page.tsx', access: 'auth', description: 'Performance dashboard' },
+  { route: '/admin/performance/[id]', file: '(dashboard)/admin/performance/[id]/page.tsx', access: 'auth', description: 'Technician performance detail' },
+  { route: '/admin/assignments', file: '(dashboard)/admin/assignments/page.tsx', access: 'auth', description: 'Assignment management' },
+  { route: '/admin/service-catalogue', file: '(dashboard)/admin/service-catalogue/page.tsx', access: 'auth', description: 'Service catalogue' },
+  { route: '/admin/resources', file: '(dashboard)/admin/resources/page.tsx', access: 'auth', description: 'Resource configuration' },
+  { route: '/admin/integrations', file: '(dashboard)/admin/integrations/page.tsx', access: 'auth', description: 'Integration status' },
   { route: '/status/[token]', file: 'status/[token]/page.tsx', access: 'public', description: 'Customer status (public)' },
 ];
 
@@ -48,6 +60,15 @@ const SIDEBAR_NAV = [
   { href: '/technician', file: '(dashboard)/technician/page.tsx' },
   { href: '/reports', file: '(dashboard)/reports/page.tsx' },
   { href: '/admin/settings', file: '(dashboard)/admin/settings/page.tsx' },
+  { href: '/admin/dashboard', file: '(dashboard)/admin/dashboard/page.tsx' },
+  { href: '/admin/staff', file: '(dashboard)/admin/staff/page.tsx' },
+  { href: '/admin/availability', file: '(dashboard)/admin/availability/page.tsx' },
+  { href: '/admin/performance', file: '(dashboard)/admin/performance/page.tsx' },
+  { href: '/admin/assignments', file: '(dashboard)/admin/assignments/page.tsx' },
+  { href: '/admin/service-catalogue', file: '(dashboard)/admin/service-catalogue/page.tsx' },
+  { href: '/admin/resources', file: '(dashboard)/admin/resources/page.tsx' },
+  { href: '/admin/integrations', file: '(dashboard)/admin/integrations/page.tsx' },
+  { href: '/admin/audit-logs', file: '(dashboard)/admin/audit-logs/page.tsx' },
 ];
 
 // Dashboard quick action links

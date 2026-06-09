@@ -16,12 +16,51 @@ interface BusinessRule {
   createdBy: { fullName: string } | null;
 }
 
+const RULE_CATEGORIES: Record<string, { label: string; keys: string[] }> = {
+  operating: {
+    label: 'Operating Hours',
+    keys: ['operating_hours'],
+  },
+  queue: {
+    label: 'Queue Tuning',
+    keys: ['protected_window_early_min', 'protected_window_late_min', 'missed_threshold_min', 'lateness_penalty_per_min', 'wait_time_bonus_per_min', 'wait_time_bonus_cap_min', 'fairness_threshold_min', 'quick_service_bonus', 'batching_bonus', 'max_protected_delay_min', 'blocked_return_policy'],
+  },
+  weights: {
+    label: 'Priority Weights',
+    keys: ['base_weight_APPT_PROTECTED', 'base_weight_APPT_LATE_SOFT', 'base_weight_WALKIN_STANDARD', 'base_weight_WALKIN_FASTTRACK'],
+  },
+  maintenance: {
+    label: 'Maintenance',
+    keys: ['default_oil_interval_miles', 'default_oil_interval_months', 'oil_brand_options', 'oil_grade_presets', 'reminder_lead_days', 'reminder_mileage_threshold', 'reminder_eligible_service_types'],
+  },
+  appointments: {
+    label: 'Appointments',
+    keys: ['reservation_activation_min', 'reservation_expiry_min', 'eta_band_narrow_min', 'eta_band_wide_min'],
+  },
+  notifications: {
+    label: 'Notifications',
+    keys: ['notification_provider_sms', 'notification_provider_email', 'completion_requires_front_desk_action'],
+  },
+  operations: {
+    label: 'Operations',
+    keys: ['overflow_mechanic_required', 'light_slot_mechanic_required'],
+  },
+};
+
+function categorizeRule(ruleKey: string): string {
+  for (const [cat, def] of Object.entries(RULE_CATEGORIES)) {
+    if (def.keys.includes(ruleKey)) return cat;
+  }
+  return 'other';
+}
+
 export default function SettingsPage() {
   const siteId = useSiteId();
   const queryClient = useQueryClient();
   const [editingRule, setEditingRule] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [activeTab, setActiveTab] = useState('all');
 
   const rulesQuery = useQuery({
     queryKey: ['business-rules', siteId],
@@ -99,6 +138,32 @@ export default function SettingsPage() {
       )}
 
       {rulesQuery.data && (
+        <>
+          {/* Category Tabs */}
+          <div className="flex gap-0 border-b border-slate-200 mb-5 overflow-x-auto">
+            <button
+              onClick={() => setActiveTab('all')}
+              className={`px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider border-b-2 transition-colors whitespace-nowrap ${activeTab === 'all' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+            >All Rules</button>
+            {Object.entries(RULE_CATEGORIES).map(([key, def]) => (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                className={`px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider border-b-2 transition-colors whitespace-nowrap ${activeTab === key ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+              >{def.label}</button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {rulesQuery.data && (() => {
+        const filteredRules = activeTab === 'all'
+          ? rulesQuery.data
+          : activeTab === 'other'
+            ? rulesQuery.data.filter((r) => categorizeRule(r.ruleKey) === 'other')
+            : rulesQuery.data.filter((r) => RULE_CATEGORIES[activeTab]?.keys.includes(r.ruleKey));
+        return filteredRules;
+      })().length > 0 && (
         <div className="table-container">
           <table className="w-full text-sm">
             <thead className="table-header">
@@ -110,7 +175,14 @@ export default function SettingsPage() {
               </tr>
             </thead>
             <tbody>
-              {rulesQuery.data.map((rule) => (
+              {(activeTab === 'all'
+                ? rulesQuery.data!
+                : rulesQuery.data!.filter((r) =>
+                    activeTab === 'other'
+                      ? categorizeRule(r.ruleKey) === 'other'
+                      : RULE_CATEGORIES[activeTab]?.keys.includes(r.ruleKey)
+                  )
+              ).map((rule) => (
                 <tr key={rule.id} className="table-row">
                   <td>
                     <span className="font-mono font-medium text-slate-900">{rule.ruleKey}</span>

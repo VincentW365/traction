@@ -16,6 +16,14 @@ interface KpiMetric {
   target: string | null;
 }
 
+function kpiColor(code: string): 'blue' | 'green' | 'amber' | 'red' | 'slate' {
+  const c = code.toLowerCase();
+  if (c.includes('completed') || c.includes('on_time') || c.includes('success')) return 'green';
+  if (c.includes('blocked') || c.includes('missed') || c.includes('error') || c.includes('overdue')) return 'red';
+  if (c.includes('wait') || c.includes('late') || c.includes('pending') || c.includes('avg')) return 'amber';
+  return 'blue';
+}
+
 export default function ReportsPage() {
   const siteId = useSiteId();
   const today = new Date().toISOString().split('T')[0];
@@ -98,7 +106,7 @@ export default function ReportsPage() {
               key={kpi.code}
               value={kpi.value !== null ? String(kpi.value) : '--'}
               label={kpi.name}
-              color="blue"
+              color={kpiColor(kpi.code)}
               icon={
                 kpi.target ? (
                   <span className="text-xs font-medium text-slate-400">

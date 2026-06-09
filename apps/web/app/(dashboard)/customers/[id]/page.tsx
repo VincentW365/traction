@@ -1,11 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import { useParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { api } from '../../../../lib/api-client';
-import { PageHeader } from '../../../../components/page-header';
-import { LoadingState } from '../../../../components/loading-state';
+import { PageHeader } from '../../../../components/ui/page-header';
+import { LoadingState } from '../../../../components/ui/loading-state';
 
 interface Vehicle {
   id: string;
@@ -37,10 +38,40 @@ export default function CustomerDetailPage() {
   const params = useParams();
   const customerId = params.id as string;
 
+  const queryClient = useQueryClient();
+  const [showAddVehicle, setShowAddVehicle] = useState(false);
+  const [vPlate, setVPlate] = useState('');
+  const [vVin, setVVin] = useState('');
+  const [vMake, setVMake] = useState('');
+  const [vModel, setVModel] = useState('');
+  const [vYear, setVYear] = useState('');
+  const [vColor, setVColor] = useState('');
+  const [vOdometer, setVOdometer] = useState('');
+
   const { data: customer, isLoading, error } = useQuery<CustomerDetail>({
     queryKey: ['customer', customerId],
     queryFn: () => api.get(`/customers/${customerId}`),
     enabled: !!customerId,
+  });
+
+  const addVehicleMutation = useMutation({
+    mutationFn: () =>
+      api.post('/vehicles', {
+        customerId,
+        plateNumber: vPlate,
+        vin: vVin || undefined,
+        make: vMake || undefined,
+        model: vModel || undefined,
+        modelYear: vYear ? parseInt(vYear, 10) : undefined,
+        color: vColor || undefined,
+        odometer: vOdometer ? parseInt(vOdometer, 10) : undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['customer', customerId] });
+      setShowAddVehicle(false);
+      setVPlate(''); setVVin(''); setVMake(''); setVModel('');
+      setVYear(''); setVColor(''); setVOdometer('');
+    },
   });
 
   if (isLoading) {
@@ -151,9 +182,53 @@ export default function CustomerDetailPage() {
             Vehicles
             <span className="ml-2 badge bg-slate-100 text-slate-600">{customer.vehicles.length}</span>
           </h2>
+          <button onClick={() => setShowAddVehicle(!showAddVehicle)} className={showAddVehicle ? 'text-xs text-slate-500 hover:text-slate-700' : 'text-xs text-blue-600 hover:underline font-medium'}>
+            {showAddVehicle ? 'Cancel' : '+ Add Vehicle'}
+          </button>
         </div>
         <div className="card-body">
-          {customer.vehicles.length === 0 ? (
+          {showAddVehicle && (
+            <div className="mb-4 pb-4 border-b border-slate-100 space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="input-label">Plate Number *</label>
+                  <input type="text" value={vPlate} onChange={(e) => setVPlate(e.target.value.toUpperCase())} className="input-field" placeholder="e.g., 1234AB" />
+                </div>
+                <div>
+                  <label className="input-label">Make</label>
+                  <input type="text" value={vMake} onChange={(e) => setVMake(e.target.value)} className="input-field" placeholder="e.g., Toyota" />
+                </div>
+                <div>
+                  <label className="input-label">Model</label>
+                  <input type="text" value={vModel} onChange={(e) => setVModel(e.target.value)} className="input-field" placeholder="e.g., Corolla" />
+                </div>
+                <div>
+                  <label className="input-label">Year</label>
+                  <input type="number" value={vYear} onChange={(e) => setVYear(e.target.value)} className="input-field" placeholder="e.g., 2020" />
+                </div>
+                <div>
+                  <label className="input-label">Color</label>
+                  <input type="text" value={vColor} onChange={(e) => setVColor(e.target.value)} className="input-field" placeholder="e.g., Silver" />
+                </div>
+                <div>
+                  <label className="input-label">Odometer</label>
+                  <input type="number" value={vOdometer} onChange={(e) => setVOdometer(e.target.value)} className="input-field" placeholder="e.g., 45000" />
+                </div>
+              </div>
+              <div>
+                <label className="input-label">VIN</label>
+                <input type="text" value={vVin} onChange={(e) => setVVin(e.target.value.toUpperCase())} className="input-field" placeholder="Optional" />
+              </div>
+              {addVehicleMutation.isError && (
+                <p className="text-xs text-red-600">{addVehicleMutation.error instanceof Error ? addVehicleMutation.error.message : 'Failed to add vehicle'}</p>
+              )}
+              <button onClick={() => addVehicleMutation.mutate()} disabled={!vPlate.trim() || addVehicleMutation.isPending} className="btn-primary text-xs">
+                {addVehicleMutation.isPending ? 'Adding...' : 'Add Vehicle'}
+              </button>
+            </div>
+          )}
+
+          {customer.vehicles.length === 0 && !showAddVehicle ? (
             <p className="text-sm text-slate-500">No vehicles registered.</p>
           ) : (
             <div className="space-y-3">

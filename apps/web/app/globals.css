@@ -124,16 +124,4 @@
     @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold tracking-wide;
   }
 
-  /* Stat card */
-  .stat-card {
-    @apply bg-white rounded-lg border border-slate-200 p-4;
-  }
-
-  .stat-value {
-    @apply text-2xl font-bold text-slate-900;
-  }
-
-  .stat-label {
-    @apply text-xs font-medium text-slate-500 uppercase tracking-wide mt-1;
-  }
 }

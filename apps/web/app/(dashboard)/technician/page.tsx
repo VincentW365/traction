@@ -3,8 +3,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api-client';
 import { useSiteId } from '../../../hooks/use-site';
-import { EmptyState } from '../../../components/empty-state';
-import { LoadingState } from '../../../components/loading-state';
+import { PageHeader } from '../../../components/ui/page-header';
+import { EmptyState } from '../../../components/ui/empty-state';
+import { LoadingState } from '../../../components/ui/loading-state';
 import { StatusBadge } from '../../../components/status-badge';
 
 interface QueueItem {
@@ -58,10 +59,10 @@ export default function TechnicianWorkView() {
     <div className="min-h-screen bg-slate-100 p-4">
       <div className="max-w-md mx-auto space-y-4">
         {/* Header */}
-        <div className="text-center pt-2 pb-1">
-          <h1 className="text-xl font-bold text-slate-900">My Work</h1>
-          <p className="text-xs text-slate-500 mt-0.5">Technician View</p>
-        </div>
+        <PageHeader
+          title="My Work"
+          subtitle="Technician View"
+        />
 
         {/* No active job */}
         {!currentJob && (

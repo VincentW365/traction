@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api-client';
 import { PageHeader } from '../../../components/ui/page-header';
 import { LoadingState } from '../../../components/ui/loading-state';
@@ -18,8 +19,33 @@ interface CustomerResult {
 }
 
 export default function CustomersPage() {
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedTerm, setDebouncedTerm] = useState('');
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newFirstName, setNewFirstName] = useState('');
+  const [newLastName, setNewLastName] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newNotes, setNewNotes] = useState('');
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      api.post<{ id: string }>('/customers', {
+        firstName: newFirstName,
+        lastName: newLastName,
+        phone: newPhone,
+        email: newEmail || undefined,
+        notes: newNotes || undefined,
+      }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['customers-list'] });
+      router.push(`/customers/${data.id}`);
+    },
+  });
+
+  const canCreate = newFirstName.trim() && newLastName.trim() && newPhone.trim();
 
   useEffect(() => {
     if (searchTerm.length < 2) { setDebouncedTerm(''); return; }
@@ -42,7 +68,59 @@ export default function CustomersPage() {
           { label: 'Dashboard', href: '/' },
           { label: 'Customers' },
         ]}
+        actions={
+          <button
+            onClick={() => setShowCreateForm(!showCreateForm)}
+            className={showCreateForm ? 'btn-secondary' : 'btn-primary'}
+          >
+            {showCreateForm ? 'Cancel' : '+ New Customer'}
+          </button>
+        }
       />
+
+      {/* Create Customer Form */}
+      {showCreateForm && (
+        <div className="card mb-6">
+          <div className="card-header">
+            <h2 className="text-sm font-semibold text-slate-900">New Customer</h2>
+          </div>
+          <div className="card-body space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="input-label">First Name *</label>
+                <input type="text" value={newFirstName} onChange={(e) => setNewFirstName(e.target.value)} className="input-field" placeholder="e.g., John" />
+              </div>
+              <div>
+                <label className="input-label">Last Name *</label>
+                <input type="text" value={newLastName} onChange={(e) => setNewLastName(e.target.value)} className="input-field" placeholder="e.g., Smith" />
+              </div>
+              <div>
+                <label className="input-label">Phone *</label>
+                <input type="tel" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} className="input-field" placeholder="e.g., 876-555-0123" />
+              </div>
+              <div>
+                <label className="input-label">Email</label>
+                <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} className="input-field" placeholder="Optional" />
+              </div>
+            </div>
+            <div>
+              <label className="input-label">Notes</label>
+              <input type="text" value={newNotes} onChange={(e) => setNewNotes(e.target.value)} className="input-field" placeholder="Optional" />
+            </div>
+            {createMutation.isError && (
+              <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                {createMutation.error instanceof Error ? createMutation.error.message : 'Failed to create customer'}
+              </div>
+            )}
+            <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
+              <button onClick={() => createMutation.mutate()} disabled={!canCreate || createMutation.isPending} className="btn-primary">
+                {createMutation.isPending ? 'Creating...' : 'Create Customer'}
+              </button>
+              <button onClick={() => setShowCreateForm(false)} className="btn-secondary">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mb-6">
         <div className="relative max-w-md">
