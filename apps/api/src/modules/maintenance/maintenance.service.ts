@@ -4,9 +4,11 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { MaintenanceReminderService } from './maintenance-reminder.service';
 import {
   VehicleIdentityProvider,
   VEHICLE_IDENTITY_PROVIDER,
@@ -33,6 +35,8 @@ export class MaintenanceService {
     private readonly vehicleIdentityProvider: VehicleIdentityProvider,
     @Inject(FLUID_SPEC_PROVIDER)
     private readonly fluidSpecProvider: FluidSpecProvider,
+    @Inject(forwardRef(() => MaintenanceReminderService))
+    private readonly reminderService: MaintenanceReminderService,
   ) {}
 
   // ─── Vehicle Decode ────────────────────────────────────────────
@@ -50,10 +54,14 @@ export class MaintenanceService {
       throw new NotFoundException(`Vehicle ${vehicleId} not found`);
     }
 
-    // Return existing snapshot unless force-redecode requested
+    // Cache check: return existing snapshot matching VIN + year unless force-redecode
     if (!forceRedecode) {
       const existing = await this.prisma.vehicleSpecSnapshot.findFirst({
-        where: { vehicleId },
+        where: {
+          vehicleId,
+          ...(vehicle.vin ? { vin: vehicle.vin } : {}),
+          ...(vehicle.modelYear ? { year: vehicle.modelYear } : {}),
+        },
         orderBy: { decodedAt: 'desc' },
       });
       if (existing) {
@@ -90,6 +98,25 @@ export class MaintenanceService {
         decodedAt: new Date(),
       },
     });
+
+    // Auto-populate vehicle fields from decode ONLY where currently null/empty
+    // Never overwrite manually corrected data
+    if (decoded && snapshot.decodeConfidence !== 'ESTIMATE') {
+      const autoUpdate: Record<string, unknown> = {};
+      if (!vehicle.make && decoded.make) autoUpdate.make = decoded.make;
+      if (!vehicle.model && decoded.model) autoUpdate.model = decoded.model;
+      if (!vehicle.modelYear && decoded.year) autoUpdate.modelYear = decoded.year;
+
+      if (Object.keys(autoUpdate).length > 0) {
+        await this.prisma.vehicle.update({
+          where: { id: vehicleId },
+          data: autoUpdate,
+        });
+        this.logger.log(
+          `Auto-populated vehicle ${vehicleId} fields: ${Object.keys(autoUpdate).join(', ')}`,
+        );
+      }
+    }
 
     this.logger.log(
       `Vehicle ${vehicleId} decoded — confidence=${snapshot.decodeConfidence}`,
@@ -372,6 +399,25 @@ export class MaintenanceService {
       `Post-service recommendation created for SO ${serviceOrderId} ` +
         `[${serviceTypeCode}] — next due ${result.nextDueOdometer ?? '?'} mi / ${result.nextDueDate?.toISOString() ?? '?'}`,
     );
+
+    // Auto-create maintenance reminder for eligible service types
+    try {
+      await this.reminderService.autoCreateFromRecommendation(
+        {
+          id: recommendation.id,
+          vehicleId,
+          serviceTypeCode,
+          nextDueOdometer: result.nextDueOdometer,
+          nextDueDate: result.nextDueDate,
+          confidence: confidence as string,
+        },
+        serviceOrder.serviceVisit.customerId,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Failed to auto-create reminder for recommendation ${recommendation.id}: ${(err as Error).message}`,
+      );
+    }
 
     return recommendation;
   }

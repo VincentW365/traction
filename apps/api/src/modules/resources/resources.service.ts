@@ -1,11 +1,15 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 
 @Injectable()
 export class ResourcesService {
   private readonly logger = new Logger(ResourcesService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private audit: AuditService,
+  ) {}
 
   async getDispatchBoard(siteId: string) {
     const resources = await this.prisma.workResource.findMany({
@@ -86,6 +90,7 @@ export class ResourcesService {
     queueTicketId: string,
     technicianId: string | null,
     userId: string,
+    options?: { mobileJackOverride?: boolean; overrideReason?: string },
   ) {
     const resource = await this.prisma.workResource.findUnique({
       where: { id: resourceId },
@@ -98,11 +103,34 @@ export class ResourcesService {
 
     const ticket = await this.prisma.queueTicket.findUnique({
       where: { id: queueTicketId },
-      include: { serviceVisit: true },
+      include: { serviceVisit: { include: { vehicle: { select: { serviceClass: true } } } } },
     });
     if (!ticket) throw new NotFoundException(`Queue ticket ${queueTicketId} not found`);
     if (!['WAITING', 'PENDING_RANK'].includes(ticket.displayStatus)) {
       throw new BadRequestException(`Ticket is in status ${ticket.displayStatus}, cannot assign`);
+    }
+
+    // --- DMAIC Rule 3: mobile-jack sedan-only gate (with audited manager override) ---
+    if (resource.liftType === 'mobile') {
+      const serviceClass = ticket.serviceVisit.vehicle?.serviceClass ?? null;
+      if (serviceClass !== 'SEDAN_CLASS') {
+        const override = options?.mobileJackOverride === true;
+        if (!override) {
+          throw new BadRequestException(
+            `Mobile jack ${resource.code} is sedan-only (DMAIC Rule 3); vehicle class is ${serviceClass ?? 'UNKNOWN'}. ` +
+              `Use a stand, or apply a manager override.`,
+          );
+        }
+        await this.audit.log({
+          actorUserId: userId,
+          action: AUDIT_ACTIONS.MOBILE_JACK_OVERRIDE,
+          entityType: 'QueueTicket',
+          entityId: queueTicketId,
+          afterJson: { resourceCode: resource.code, resourceId, serviceClass: serviceClass ?? 'UNKNOWN' },
+          reasonCode: 'MOBILE_JACK_OVERRIDE',
+          notes: options?.overrideReason,
+        });
+      }
     }
 
     await this.prisma.$transaction(async (tx) => {

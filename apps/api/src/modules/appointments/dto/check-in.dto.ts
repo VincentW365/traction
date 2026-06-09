@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsDateString, IsString, IsInt, Min, MaxLength } from 'class-validator';
+import { IsOptional, IsDateString, IsString, IsInt, Min, MaxLength, IsBoolean, IsEnum } from 'class-validator';
+import { VehicleServiceClass } from '@prisma/client';
 
 export class CheckInDto {
   @ApiPropertyOptional({
@@ -42,4 +43,31 @@ export class CheckInDto {
   @IsOptional()
   @IsString()
   vehicleWeightClass?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Vehicle service class (SEDAN_CLASS, SUV_LIGHT, SUV_HEAVY, PICKUP, VAN, TRUCK, UNKNOWN_REQUIRES_REVIEW). Drives mobile-jack eligibility (DMAIC Rule 3).',
+    enum: VehicleServiceClass,
+  })
+  @IsOptional()
+  @IsEnum(VehicleServiceClass)
+  vehicleServiceClass?: VehicleServiceClass;
+
+  @ApiPropertyOptional({ description: 'Vehicle color (confirmation or entry)' })
+  @IsOptional()
+  @IsString()
+  color?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Manager override for the mileage gate (DMAIC Rule 5). Allows recording mileage on a non-service job, or omitting it on a service job. Audited.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  mileageOverride?: boolean;
+
+  @ApiPropertyOptional({ description: 'Reason for the mileage manager override (recorded in audit)' })
+  @IsOptional()
+  @IsString()
+  overrideReason?: string;
 }

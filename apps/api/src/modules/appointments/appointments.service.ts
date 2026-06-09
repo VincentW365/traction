@@ -10,7 +10,7 @@ import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { UpdateAppointmentDto } from './dto/update-appointment.dto';
 import { toZonedTime } from 'date-fns-tz';
-import { getDay, getHours, getMinutes, startOfDay, isBefore } from 'date-fns';
+import { getDay, getHours, getMinutes, startOfDay, isBefore, isSameDay } from 'date-fns';
 
 /**
  * Expected shape of the operating_hours BusinessRuleConfig value_json.
@@ -60,6 +60,14 @@ export class AppointmentsService {
         'Scheduled start time must be in the future',
       );
     }
+
+    // 1b. DMAIC Rule 1: same-day appointment cutoff (site-local time; override audited)
+    await this.enforceSameDayCutoff(
+      scheduledStartAt,
+      data.siteId,
+      !!(data as any).managerOverride,
+      userId,
+    );
 
     // 2. Validate: within operating hours
     await this.validateOperatingHours(scheduledStartAt, data.siteId);
@@ -428,6 +436,70 @@ export class AppointmentsService {
   // ---------------------------------------------------------------------------
   // PRIVATE HELPERS
   // ---------------------------------------------------------------------------
+
+  /**
+   * DMAIC Rule 1 — Same-day scheduling cutoff.
+   *
+   * Blocks creating a same-day appointment once the current site-local time is at/after
+   * the configured cutoff (`same_day_appointment_cutoff_time`, default 10:00), unless a
+   * manager override is supplied — in which case the override is audited. The cutoff value
+   * and enforcement flag come from BusinessRuleConfig (not hard-coded). All comparisons are
+   * done in the SITE's timezone. `now` is injectable for deterministic testing.
+   */
+  async enforceSameDayCutoff(
+    scheduledStartAt: Date,
+    siteId: string,
+    managerOverride: boolean,
+    userId: string,
+    now: Date = new Date(),
+  ): Promise<void> {
+    const site = await this.prisma.site.findUnique({
+      where: { id: siteId },
+      select: { timezone: true },
+    });
+    const tz = site?.timezone ?? 'America/Jamaica';
+    const nowLocal = toZonedTime(now, tz);
+    const scheduledLocal = toZonedTime(scheduledStartAt, tz);
+
+    // Rule applies only to same-day (site-local) bookings.
+    if (!isSameDay(nowLocal, scheduledLocal)) return;
+
+    const enforceRule = await this.prisma.businessRuleConfig.findFirst({
+      where: { ruleKey: 'manager_override_required_after_cutoff', effectiveTo: null },
+    });
+    const enforced = (enforceRule?.valueJson as boolean) ?? true;
+    if (!enforced) return;
+
+    const cutoffRule = await this.prisma.businessRuleConfig.findFirst({
+      where: { ruleKey: 'same_day_appointment_cutoff_time', effectiveTo: null },
+    });
+    const cutoffTime = (cutoffRule?.valueJson as string) ?? '10:00';
+    const [cutH, cutM] = cutoffTime.split(':').map(Number);
+
+    const nowMinutes = getHours(nowLocal) * 60 + getMinutes(nowLocal);
+    const cutoffMinutes = cutH * 60 + cutM;
+    if (nowMinutes < cutoffMinutes) return; // before cutoff — allowed
+
+    if (!managerOverride) {
+      throw new BadRequestException(
+        `Same-day appointments after ${cutoffTime} require manager approval. Set managerOverride: true to proceed.`,
+      );
+    }
+
+    // Override bypassed the cutoff — audit it.
+    await this.auditService.log({
+      actorUserId: userId,
+      action: AUDIT_ACTIONS.SAME_DAY_CUTOFF_OVERRIDE,
+      entityType: 'Appointment',
+      afterJson: {
+        siteId,
+        cutoffTime,
+        scheduledStartAt: scheduledStartAt.toISOString(),
+        bookedAt: now.toISOString(),
+      },
+      reasonCode: 'SAME_DAY_CUTOFF_OVERRIDE',
+    });
+  }
 
   /**
    * Validate that the requested datetime falls within the site's operating hours.

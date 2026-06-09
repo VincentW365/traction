@@ -51,6 +51,24 @@ export const PERMISSIONS = {
 
   // Transport (Phase 4)
   TRANSPORT_MANAGE: 'transport:manage',
+
+  // Staff Management (Manager Control Center)
+  STAFF_VIEW: 'staff:view',
+  STAFF_CREATE: 'staff:create',
+  STAFF_UPDATE: 'staff:update',
+  STAFF_DEACTIVATE: 'staff:deactivate',
+
+  // Technician Profile Management
+  TECHNICIAN_MANAGE: 'technician:manage',
+
+  // Availability Management
+  AVAILABILITY_MANAGE: 'availability:manage',
+
+  // Service Catalogue Management
+  SERVICE_TYPE_MANAGE: 'service_type:manage',
+
+  // Resource/Bay Management
+  RESOURCE_MANAGE: 'resource:manage',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -107,6 +125,12 @@ const MANAGER_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.CONFIG_EDIT,
   PERMISSIONS.AUDIT_VIEW,
   PERMISSIONS.REPORT_VIEW,
+  // Manager Control Center
+  PERMISSIONS.STAFF_VIEW,
+  PERMISSIONS.TECHNICIAN_MANAGE,
+  PERMISSIONS.AVAILABILITY_MANAGE,
+  PERMISSIONS.SERVICE_TYPE_MANAGE,
+  PERMISSIONS.RESOURCE_MANAGE,
 ];
 
 export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {

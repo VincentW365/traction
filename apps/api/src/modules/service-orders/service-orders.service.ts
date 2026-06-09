@@ -11,6 +11,11 @@ import { SchedulingService } from '../scheduling/scheduling.service';
 import { CreateServiceOrderDto } from './dto/create-service-order.dto';
 import { AssignTechnicianDto } from './dto/assign-technician.dto';
 import { ChangeStatusDto } from './dto/change-status.dto';
+import {
+  PauseServiceOrderDto,
+  ResumeServiceOrderDto,
+  ReworkServiceOrderDto,
+} from './dto/pause-rework.dto';
 import { ServiceOrderStatus } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
@@ -21,9 +26,11 @@ const VALID_TRANSITIONS: Record<string, ServiceOrderStatus[]> = {
   DRAFT: ['APPROVED', 'CANCELLED'],
   APPROVED: ['ASSIGNED', 'CANCELLED'],
   ASSIGNED: ['IN_PROGRESS', 'CANCELLED'],
-  IN_PROGRESS: ['WAITING_PARTS', 'QC', 'CANCELLED'],
+  IN_PROGRESS: ['PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER', 'QC', 'CANCELLED'],
+  PAUSED: ['IN_PROGRESS', 'CANCELLED'],
   WAITING_PARTS: ['IN_PROGRESS', 'CANCELLED'],
-  QC: ['READY_TO_INVOICE', 'CANCELLED'],
+  WAITING_CUSTOMER: ['IN_PROGRESS', 'CANCELLED'],
+  QC: ['READY_TO_INVOICE', 'IN_PROGRESS', 'CANCELLED'],
   READY_TO_INVOICE: ['CLOSED', 'CANCELLED'],
   CLOSED: [],
   CANCELLED: [],
@@ -42,6 +49,7 @@ const RECOMPUTE_TRIGGERS = new Set<ServiceOrderStatus>([
   'ASSIGNED' as ServiceOrderStatus,
   'IN_PROGRESS' as ServiceOrderStatus,
   'WAITING_PARTS' as ServiceOrderStatus,
+  'WAITING_CUSTOMER' as ServiceOrderStatus,
   'QC' as ServiceOrderStatus,
   'CANCELLED' as ServiceOrderStatus,
 ]);
@@ -456,6 +464,294 @@ export class ServiceOrdersService {
     this.logger.log(
       `ServiceOrder ${id} status changed: ${fromStatus} -> ${toStatus} by ${userId}`,
     );
+
+    return updated;
+  }
+
+  // ---------------------------------------------------------------------------
+  // PAUSE / RESUME  (CR-2026-001, recording-only — NO scheduling/ETA/rank impact)
+  // ---------------------------------------------------------------------------
+
+  async pause(id: string, dto: PauseServiceOrderDto, userId: string) {
+    const order = await this.findById(id);
+    if (!(VALID_TRANSITIONS[order.status] ?? []).includes('PAUSED' as ServiceOrderStatus)) {
+      throw new BadRequestException(
+        `Cannot pause a service order in status ${order.status} — must be IN_PROGRESS`,
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const so = await tx.serviceOrder.update({ where: { id }, data: { status: 'PAUSED' } });
+      await tx.serviceOrderPause.create({
+        data: {
+          serviceOrderId: id,
+          reasonCode: dto.reasonCode,
+          pausedByUserId: userId,
+          notes: dto.notes,
+        },
+      });
+      return so;
+    });
+
+    await this.statusHistory.record({
+      entityType: 'ServiceOrder',
+      entityId: id,
+      fromStatus: order.status,
+      toStatus: 'PAUSED',
+      changedByUserId: userId,
+      reasonCode: dto.reasonCode,
+      notes: dto.notes,
+    });
+
+    // Recording-only scope: do NOT sync ServiceVisit status and do NOT recompute
+    // the queue — a pause must not affect rank/ETA (deferred to a follow-up CR).
+    this.logger.log(`ServiceOrder ${id} paused (${dto.reasonCode}) by ${userId}`);
+    return updated;
+  }
+
+  async resume(id: string, dto: ResumeServiceOrderDto, userId: string) {
+    const order = await this.findById(id);
+    if (order.status !== 'PAUSED') {
+      throw new BadRequestException(
+        `Cannot resume a service order in status ${order.status} — must be PAUSED`,
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const so = await tx.serviceOrder.update({ where: { id }, data: { status: 'IN_PROGRESS' } });
+      // Close the open pause interval — there should be exactly one.
+      await tx.serviceOrderPause.updateMany({
+        where: { serviceOrderId: id, endedAt: null },
+        data: { endedAt: new Date(), resumedByUserId: userId },
+      });
+      return so;
+    });
+
+    await this.statusHistory.record({
+      entityType: 'ServiceOrder',
+      entityId: id,
+      fromStatus: 'PAUSED',
+      toStatus: 'IN_PROGRESS',
+      changedByUserId: userId,
+      reasonCode: 'RESUME',
+      notes: dto.notes,
+    });
+
+    // The visit was never changed on pause, so there is nothing to re-sync and no recompute.
+    this.logger.log(`ServiceOrder ${id} resumed by ${userId}`);
+    return updated;
+  }
+
+  // ---------------------------------------------------------------------------
+  // REWORK / RECTIFY  (CR-2026-001) — QC failure re-opens work, preserving history
+  // ---------------------------------------------------------------------------
+
+  async openRework(id: string, dto: ReworkServiceOrderDto, userId: string) {
+    const order = await this.findById(id);
+    if (order.status !== 'QC') {
+      throw new BadRequestException(
+        `Cannot open rework on a service order in status ${order.status} — must be QC`,
+      );
+    }
+
+    const priorCount = await this.prisma.serviceOrderRework.count({
+      where: { serviceOrderId: id },
+    });
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const so = await tx.serviceOrder.update({
+        where: { id },
+        // Re-opening: clear completedAt (set on entry to QC) — no longer complete.
+        data: { status: 'IN_PROGRESS', completedAt: null },
+      });
+      await tx.serviceOrderRework.create({
+        data: {
+          serviceOrderId: id,
+          reasonCode: dto.reasonCode,
+          description: dto.description,
+          reworkCount: priorCount + 1,
+          openedByUserId: userId,
+        },
+      });
+      return so;
+    });
+
+    await this.statusHistory.record({
+      entityType: 'ServiceOrder',
+      entityId: id,
+      fromStatus: 'QC',
+      toStatus: 'IN_PROGRESS',
+      changedByUserId: userId,
+      reasonCode: `REWORK:${dto.reasonCode}`,
+      notes: dto.description,
+    });
+
+    // Returning to active work reuses the EXISTING IN_PROGRESS semantics (not a new
+    // scheduling behaviour): sync the visit back to IN_SERVICE and recompute.
+    const visitStatus = ORDER_TO_VISIT_STATUS['IN_PROGRESS' as ServiceOrderStatus];
+    if (visitStatus) {
+      await this.prisma.serviceVisit.update({
+        where: { id: order.serviceVisitId },
+        data: { status: visitStatus as any },
+      });
+      await this.statusHistory.record({
+        entityType: 'ServiceVisit',
+        entityId: order.serviceVisitId,
+        fromStatus: order.serviceVisit.status,
+        toStatus: visitStatus,
+        changedByUserId: userId,
+        reasonCode: 'REWORK_REOPEN',
+        notes: `ServiceOrder ${id} sent back to rework`,
+      });
+    }
+    if (RECOMPUTE_TRIGGERS.has('IN_PROGRESS' as ServiceOrderStatus)) {
+      await this.triggerQueueRecompute(order.serviceVisit.siteId);
+    }
+
+    this.logger.log(
+      `ServiceOrder ${id} sent to rework (#${priorCount + 1}, ${dto.reasonCode}) by ${userId}`,
+    );
+    return updated;
+  }
+
+  // ---------------------------------------------------------------------------
+  // MULTI-TECH ASSIGNMENT MANAGEMENT
+  // ---------------------------------------------------------------------------
+
+  async assignAdditional(orderId: string, technicianId: string, bayId?: string, resourceId?: string, userId?: string) {
+    const order = await this.findById(orderId);
+    if (!['APPROVED', 'ASSIGNED', 'IN_PROGRESS'].includes(order.status)) {
+      throw new BadRequestException(`Cannot add technician to order in status ${order.status}`);
+    }
+
+    // Double-booking check
+    const active = await this.prisma.technicianAssignment.findFirst({
+      where: { technicianId, status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, endedAt: null },
+    });
+    if (active) {
+      throw new BadRequestException(`Technician already has an active assignment (${active.id})`);
+    }
+
+    const assignment = await this.prisma.technicianAssignment.create({
+      data: {
+        serviceOrderId: orderId,
+        technicianId,
+        bayId: bayId ?? null,
+        resourceId: resourceId ?? null,
+        isPrimary: false,
+        status: 'ASSIGNED',
+      },
+    });
+
+    await this.auditService.log({
+      actorUserId: userId ?? 'SYSTEM',
+      action: 'ASSIGNMENT_ADD_HELPER',
+      entityType: 'TechnicianAssignment',
+      entityId: assignment.id,
+      afterJson: { serviceOrderId: orderId, technicianId, isPrimary: false },
+    });
+
+    return assignment;
+  }
+
+  async removeAssignment(orderId: string, assignmentId: string, userId: string) {
+    const assignment = await this.prisma.technicianAssignment.findFirst({
+      where: { id: assignmentId, serviceOrderId: orderId },
+    });
+    if (!assignment) {
+      throw new NotFoundException(`Assignment ${assignmentId} not found on order ${orderId}`);
+    }
+
+    await this.prisma.technicianAssignment.update({
+      where: { id: assignmentId },
+      data: { endedAt: new Date(), status: 'REMOVED' },
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: 'ASSIGNMENT_REMOVED',
+      entityType: 'TechnicianAssignment',
+      entityId: assignmentId,
+      beforeJson: { technicianId: assignment.technicianId, isPrimary: assignment.isPrimary },
+    });
+
+    return { removed: true };
+  }
+
+  async updateAssignment(orderId: string, assignmentId: string, data: { technicianId?: string; isPrimary?: boolean; bayId?: string }, userId: string) {
+    const assignment = await this.prisma.technicianAssignment.findFirst({
+      where: { id: assignmentId, serviceOrderId: orderId },
+    });
+    if (!assignment) {
+      throw new NotFoundException(`Assignment ${assignmentId} not found on order ${orderId}`);
+    }
+
+    const updateData: any = {};
+    if (data.technicianId) updateData.technicianId = data.technicianId;
+    if (data.bayId !== undefined) updateData.bayId = data.bayId || null;
+
+    // If setting isPrimary=true, clear isPrimary on all other assignments for this order
+    if (data.isPrimary === true) {
+      await this.prisma.technicianAssignment.updateMany({
+        where: { serviceOrderId: orderId, id: { not: assignmentId } },
+        data: { isPrimary: false },
+      });
+      updateData.isPrimary = true;
+    } else if (data.isPrimary === false) {
+      updateData.isPrimary = false;
+    }
+
+    const updated = await this.prisma.technicianAssignment.update({
+      where: { id: assignmentId },
+      data: updateData,
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: 'ASSIGNMENT_UPDATED',
+      entityType: 'TechnicianAssignment',
+      entityId: assignmentId,
+      beforeJson: { technicianId: assignment.technicianId, isPrimary: assignment.isPrimary },
+      afterJson: updateData,
+    });
+
+    return updated;
+  }
+
+  async startAssignment(orderId: string, assignmentId: string, userId: string) {
+    const assignment = await this.prisma.technicianAssignment.findFirst({
+      where: { id: assignmentId, serviceOrderId: orderId },
+    });
+    if (!assignment) {
+      throw new NotFoundException(`Assignment ${assignmentId} not found`);
+    }
+
+    const updated = await this.prisma.technicianAssignment.update({
+      where: { id: assignmentId },
+      data: { startedAt: new Date(), status: 'IN_PROGRESS' },
+    });
+
+    // If this is the first started assignment and order is ASSIGNED, transition to IN_PROGRESS
+    const order = await this.prisma.serviceOrder.findUnique({ where: { id: orderId } });
+    if (order && order.status === 'ASSIGNED') {
+      await this.changeStatus(orderId, { toStatus: 'IN_PROGRESS' as any }, userId);
+    }
+
+    return updated;
+  }
+
+  async endAssignment(orderId: string, assignmentId: string, userId: string) {
+    const assignment = await this.prisma.technicianAssignment.findFirst({
+      where: { id: assignmentId, serviceOrderId: orderId },
+    });
+    if (!assignment) {
+      throw new NotFoundException(`Assignment ${assignmentId} not found`);
+    }
+
+    const updated = await this.prisma.technicianAssignment.update({
+      where: { id: assignmentId },
+      data: { endedAt: new Date(), status: 'COMPLETED' },
+    });
 
     return updated;
   }

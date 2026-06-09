@@ -1,10 +1,13 @@
-import { Controller, Get, Patch, Param, Body, NotFoundException, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Patch, Param, Body, NotFoundException, BadRequestException, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { assertMileageGate } from '../../common/helpers/mileage-gate';
 
 /**
  * Public customer status endpoint — NO authentication required.
@@ -133,7 +136,10 @@ export class StatusController {
 @UseGuards(JwtAuthGuard, RbacGuard)
 @ApiBearerAuth()
 export class ServiceVisitCompletionController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private audit: AuditService,
+  ) {}
 
   @Patch(':id/completion')
   @RequirePermission(PERMISSIONS.CHECKIN_PERFORM)
@@ -144,14 +150,52 @@ export class ServiceVisitCompletionController {
       mileageOut?: number;
       oilBrandInstalled?: string;
       oilGradeInstalled?: string;
+      mileageOverride?: boolean;
+      overrideReason?: string;
     },
+    @CurrentUser() user: JwtPayload,
   ) {
     const visit = await this.prisma.serviceVisit.findUnique({
       where: { id },
-      include: { vehicle: true },
+      include: {
+        vehicle: true,
+        appointment: { include: { services: { include: { serviceType: { select: { requiresMileage: true } } } } } },
+        serviceOrders: { include: { items: { include: { serviceType: { select: { requiresMileage: true } } } } } },
+      },
     });
 
     if (!visit) throw new NotFoundException(`ServiceVisit ${id} not found`);
+
+    // DMAIC Rule 5: mileage gate (bidirectional + manager override) on mileageOut.
+    const requiresMileage =
+      (visit.appointment?.services ?? []).some((s) => s.serviceType.requiresMileage === true) ||
+      (visit.serviceOrders ?? []).some((so) => so.items.some((i) => i.serviceType.requiresMileage === true));
+    const mileageProvided = body.mileageOut != null;
+    const mileageOverride = body.mileageOverride === true;
+    assertMileageGate({ requiresMileage, mileageProvided, override: mileageOverride });
+
+    const gateWouldBlock =
+      (requiresMileage && !mileageProvided) || (!requiresMileage && mileageProvided);
+    if (mileageOverride && gateWouldBlock) {
+      await this.audit.log({
+        actorUserId: user.sub,
+        action: AUDIT_ACTIONS.MILEAGE_GATE_OVERRIDE,
+        entityType: 'ServiceVisit',
+        entityId: id,
+        afterJson: { requiresMileage, mileageProvided, mileageOut: body.mileageOut ?? null, boundary: 'COMPLETION' },
+        reasonCode: 'MILEAGE_GATE_OVERRIDE',
+        notes: body.overrideReason,
+      });
+    }
+
+    // Validate mileage out >= mileage in
+    if (body.mileageOut != null && visit.mileageIn != null) {
+      if (body.mileageOut < visit.mileageIn) {
+        throw new BadRequestException(
+          `Mileage out (${body.mileageOut}) cannot be less than mileage in (${visit.mileageIn})`,
+        );
+      }
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const sv = await tx.serviceVisit.update({

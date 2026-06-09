@@ -425,4 +425,123 @@ export class NotificationsService {
       take: 50,
     });
   }
+
+  /**
+   * DMAIC Rule 2 — Midday completion follow-up.
+   *
+   * Sends a same-day follow-up to customers whose job was COMPLETED before 12:00 PM
+   * (site-local time) — NOT merely in queue before noon. Completion is detected via
+   * the `COMPLETED` QueueEvent written when a technician marks work done.
+   *
+   * Idempotent: each visit is followed up at most once (deduped on NotificationLog
+   * templateKey `midday_followup`), so the same completion never sends duplicates and
+   * the batch is safe to run repeatedly (e.g. on a schedule around noon).
+   *
+   * Touches no scheduling/ETA/rank/bay logic — read-only over completion events.
+   *
+   * @param now injectable clock for testability (defaults to current time)
+   */
+  async sendMiddayCompletionFollowUp(
+    siteId: string,
+    now: Date = new Date(),
+  ): Promise<{ sent: number; skipped: number }> {
+    const site = await this.prisma.site.findUnique({
+      where: { id: siteId },
+      select: { timezone: true },
+    });
+    const tz = site?.timezone || 'America/Jamaica';
+    const todayKey = this.zonedParts(now, tz).date;
+
+    // Look back far enough to cover "today" in any timezone; filter precisely below.
+    const since = new Date(now.getTime() - 36 * 60 * 60 * 1000);
+
+    const completions = await this.prisma.queueEvent.findMany({
+      where: {
+        eventType: 'COMPLETED',
+        createdAt: { gte: since, lte: now },
+        serviceVisit: { siteId },
+      },
+      select: {
+        createdAt: true,
+        serviceVisit: {
+          select: {
+            id: true,
+            customer: {
+              select: { firstName: true, phone: true, email: true, notificationOptInSms: true, notificationOptInEmail: true },
+            },
+            vehicle: { select: { plateNumber: true, make: true, model: true, modelYear: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    let sent = 0;
+    let skipped = 0;
+    const handled = new Set<string>();
+
+    for (const ev of completions) {
+      const visit = ev.serviceVisit;
+      if (!visit || handled.has(visit.id)) continue;
+
+      // Rule 2: completed TODAY and BEFORE 12:00 PM site-local.
+      const parts = this.zonedParts(ev.createdAt, tz);
+      if (parts.date !== todayKey || parts.hour >= 12) continue;
+      handled.add(visit.id);
+
+      // Idempotency: already followed up for this visit?
+      const already = await this.prisma.notificationLog.count({
+        where: { entityType: 'ServiceVisit', entityId: visit.id, templateKey: 'midday_followup' },
+      });
+      if (already > 0) { skipped++; continue; }
+
+      const { customer, vehicle } = visit;
+      if (!customer.notificationOptInSms && !customer.notificationOptInEmail) { skipped++; continue; }
+
+      const vehicleDesc = [vehicle.modelYear, vehicle.make, vehicle.model].filter(Boolean).join(' ') || vehicle.plateNumber;
+      const message = `Hi ${customer.firstName}! Your ${vehicleDesc} was completed this morning at Bert's. Thank you for choosing us — we hope everything's running smoothly, and we'll see you next service!`;
+
+      if (customer.notificationOptInSms && customer.phone) {
+        await this.queue({
+          entityType: 'ServiceVisit',
+          entityId: visit.id,
+          channel: 'SMS',
+          templateKey: 'midday_followup',
+          recipient: customer.phone,
+          templateData: { message, customerFirstName: customer.firstName, vehicleDescription: vehicleDesc },
+        });
+      }
+
+      if (customer.notificationOptInEmail && customer.email) {
+        await this.queue({
+          entityType: 'ServiceVisit',
+          entityId: visit.id,
+          channel: 'EMAIL',
+          templateKey: 'midday_followup',
+          recipient: customer.email,
+          templateData: { message, customerFirstName: customer.firstName, vehicleDescription: vehicleDesc },
+        });
+      }
+
+      sent++;
+    }
+
+    this.logger.log(`Midday completion follow-up: ${sent} sent, ${skipped} skipped for site ${siteId}`);
+    return { sent, skipped };
+  }
+
+  /** Year-month-day and hour of a timestamp in a given IANA timezone. */
+  private zonedParts(date: Date, tz: string): { date: string; hour: number } {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hour12: false,
+    }).formatToParts(date);
+    const o: Record<string, string> = {};
+    for (const p of parts) o[p.type] = p.value;
+    return { date: `${o.year}-${o.month}-${o.day}`, hour: Number(o.hour) % 24 };
+  }
 }

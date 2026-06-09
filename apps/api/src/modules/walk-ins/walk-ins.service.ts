@@ -126,6 +126,20 @@ export class WalkInsService {
     }
 
     // -----------------------------------------------------------------------
+    // 2b. DMAIC: Mileage gating — reject if any service requires mileage and none provided
+    // -----------------------------------------------------------------------
+    const resolvedTypes = await this.prisma.serviceType.findMany({
+      where: { code: { in: uniqueCodes } },
+      select: { requiresMileage: true },
+    });
+    const requiresMileage = resolvedTypes.some((st) => st.requiresMileage);
+    if (requiresMileage && !data.mileageIn) {
+      throw new BadRequestException(
+        'Mileage reading is required for the selected service(s). Please provide mileageIn.',
+      );
+    }
+
+    // -----------------------------------------------------------------------
     // 3–5. Create ServiceVisit + QueueTicket in a serializable transaction
     // -----------------------------------------------------------------------
     const siteCode = site.code;
@@ -205,6 +219,13 @@ export class WalkInsService {
           await tx.vehicle.update({
             where: { id: data.vehicleId },
             data: { odometer: data.mileageIn },
+          });
+        }
+        // Update vehicle color if provided
+        if (data.color) {
+          await tx.vehicle.update({
+            where: { id: data.vehicleId },
+            data: { color: data.color },
           });
         }
 

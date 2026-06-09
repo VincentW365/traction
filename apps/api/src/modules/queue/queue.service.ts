@@ -222,7 +222,7 @@ export class QueueService {
       include: {
         serviceVisit: {
           include: {
-            vehicle: { select: { weightClass: true } },
+            vehicle: { select: { weightClass: true, serviceClass: true } },
             appointment: {
               include: { services: { include: { serviceType: true } } },
             },
@@ -265,7 +265,13 @@ export class QueueService {
       const canUseOverflow = serviceTypes.every((st) => st.canUseOverflow);
       const canUseLightSlot = serviceTypes.every((st) => st.canUseLightSlot);
 
+      const vehicleServiceClass = sv.vehicle?.serviceClass ?? null;
+
       for (const resource of candidateResources) {
+        // DMAIC Rule 3: mobile jacks are sedan-only — auto-dispatch never picks one
+        // for a non-sedan/unknown-class vehicle (explicit assignment can override).
+        if (resource.liftType === 'mobile' && vehicleServiceClass !== 'SEDAN_CLASS') continue;
+
         // Weight check
         const weightOrder = { LIGHT: 1, STANDARD: 2, HEAVY: 3 };
         const resCapacity = weightOrder[resource.maxVehicleWeight ?? 'HEAVY'];
@@ -423,6 +429,99 @@ export class QueueService {
       ticketNumber: ticket.ticketNumber,
       serviceVisitId: ticket.serviceVisitId,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // PUBLIC DISPLAY BOARD — sanitized, PII-free projection for the waiting-room
+  // screen. NEVER include customer names, phones, emails, or full plates here:
+  // this is rendered on a public screen visible to everyone in the lobby
+  // (CLAUDE.md §10). Tickets are identified only by their (immutable) number.
+  // ---------------------------------------------------------------------------
+
+  async getPublicDisplayBoard(siteId: string) {
+    const now = new Date();
+
+    const [site, tickets, occupancies, readyVisits, avgServiceMinutes] =
+      await Promise.all([
+        this.prisma.site.findUnique({ where: { id: siteId }, select: { name: true } }),
+        this.prisma.queueTicket.findMany({
+          where: {
+            serviceVisit: {
+              siteId,
+              status: { in: ['CHECKED_IN', 'QUEUED', 'CALLED', 'IN_SERVICE'] },
+            },
+            displayStatus: {
+              in: ['PENDING_RANK', 'WAITING', 'CALLED', 'IN_SERVICE', 'BLOCKED'],
+            },
+          },
+          select: {
+            ticketNumber: true,
+            queueRank: true,
+            displayStatus: true,
+            serviceVisitId: true,
+          },
+          orderBy: [{ queueRank: { sort: 'asc', nulls: 'last' } }],
+        }),
+        this.prisma.resourceOccupancy.findMany({
+          where: { status: 'OCCUPIED', serviceVisit: { siteId } },
+          select: { serviceVisitId: true, resource: { select: { name: true } } },
+        }),
+        this.prisma.serviceVisit.findMany({
+          where: { siteId, status: 'READY_FOR_PICKUP' },
+          select: { queueTicket: { select: { ticketNumber: true } }, updatedAt: true },
+          orderBy: { updatedAt: 'desc' },
+          take: 20,
+        }),
+        this.getAvgServiceMinutes(siteId),
+      ]);
+
+    // serviceVisitId -> bay/resource display name
+    const bayByVisit = new Map<string, string>();
+    for (const occ of occupancies) {
+      if (occ.serviceVisitId && occ.resource?.name) {
+        bayByVisit.set(occ.serviceVisitId, occ.resource.name);
+      }
+    }
+
+    const inService = tickets
+      .filter((t) => t.displayStatus === 'CALLED' || t.displayStatus === 'IN_SERVICE')
+      .map((t) => ({
+        ticketNumber: t.ticketNumber,
+        bay: bayByVisit.get(t.serviceVisitId) ?? null,
+      }));
+
+    const inQueue = tickets
+      .filter((t) =>
+        ['WAITING', 'PENDING_RANK', 'BLOCKED'].includes(t.displayStatus),
+      )
+      .map((t) => ({
+        ticketNumber: t.ticketNumber,
+        position: t.queueRank,
+        eta: this.getDisplayEtaLabel(t.queueRank, avgServiceMinutes),
+      }));
+
+    const ready = readyVisits
+      .filter((v) => v.queueTicket?.ticketNumber)
+      .map((v) => ({ ticketNumber: v.queueTicket!.ticketNumber }));
+
+    return {
+      siteId,
+      siteName: site?.name ?? 'Service Centre',
+      generatedAt: now.toISOString(),
+      inQueue,
+      inService,
+      ready,
+    };
+  }
+
+  private getDisplayEtaLabel(rank: number | null, avgMinutes: number): string {
+    if (rank == null) return 'Shortly';
+    const mins = rank * avgMinutes;
+    if (mins <= 15) return '~15 min';
+    if (mins <= 30) return '~30 min';
+    if (mins <= 45) return '~45 min';
+    if (mins <= 60) return '~1 hr';
+    return '1 hr+';
   }
 
   private getBlockedReason(sv: { queuePriorityClass: string | null }): string {

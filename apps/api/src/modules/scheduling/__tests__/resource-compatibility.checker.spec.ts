@@ -3,6 +3,7 @@ import {
   isResourceCompatible,
   isResourceAvailableForDispatch,
   findAvailableResources,
+  MOBILE_JACK_NON_SEDAN_REASON,
   ResourceState,
   JobRequirements,
 } from '../engine/resource-compatibility.checker';
@@ -20,6 +21,7 @@ function makeResource(overrides: Partial<ResourceState> = {}): ResourceState {
     isOccupied: false,
     hasImminentReservation: false,
     reservedForAppointmentId: null,
+    isOperational: true,
     ...overrides,
   };
 }
@@ -27,12 +29,17 @@ function makeResource(overrides: Partial<ResourceState> = {}): ResourceState {
 function makeJob(overrides: Partial<JobRequirements> = {}): JobRequirements {
   return {
     vehicleWeightClass: 'STANDARD',
+    vehicleServiceClass: 'SEDAN_CLASS',
     requiresAlignment: false,
     requiresDiagnostics: false,
     requiredLiftType: null,
     canUseOverflow: false,
     canUseLightSlot: false,
     appointmentId: null,
+    requiresPowerWash: false,
+    isExternal: false,
+    mobileJackAllowed: true,
+    standPreferred: false,
     ...overrides,
   };
 }
@@ -195,5 +202,129 @@ describe('findAvailableResources', () => {
     ];
     const result = findAvailableResources(resources, makeJob());
     expect(result).toEqual([]);
+  });
+});
+
+// --- DMAIC-alignment tests ---
+
+describe('DMAIC: mobile jack sedan restriction', () => {
+  it('mobile jack rejects HEAVY vehicle', () => {
+    const r = makeResource({ liftType: 'mobile', maxVehicleWeight: 'STANDARD' });
+    const j = makeJob({ vehicleWeightClass: 'HEAVY' });
+    expect(isResourceCompatible(r, j).compatible).toBe(false);
+    // Weight check fires first (HEAVY exceeds STANDARD capacity)
+    expect(isResourceCompatible(r, j).reason).toContain('exceeds resource capacity');
+  });
+
+  it('mobile jack accepts LIGHT vehicle', () => {
+    const r = makeResource({ liftType: 'mobile', maxVehicleWeight: 'STANDARD' });
+    const j = makeJob({ vehicleWeightClass: 'LIGHT' });
+    expect(isResourceCompatible(r, j).compatible).toBe(true);
+  });
+
+  it('mobile jack accepts STANDARD vehicle', () => {
+    const r = makeResource({ liftType: 'mobile', maxVehicleWeight: 'STANDARD' });
+    const j = makeJob({ vehicleWeightClass: 'STANDARD' });
+    expect(isResourceCompatible(r, j).compatible).toBe(true);
+  });
+
+  it('service with mobileJackAllowed=false rejects mobile jack', () => {
+    const r = makeResource({ liftType: 'mobile', maxVehicleWeight: 'STANDARD' });
+    const j = makeJob({ vehicleWeightClass: 'STANDARD', mobileJackAllowed: false });
+    expect(isResourceCompatible(r, j).compatible).toBe(false);
+    expect(isResourceCompatible(r, j).reason).toContain('mobile jack not allowed');
+  });
+});
+
+// DMAIC Rule 3 — mobile jack is sedan-CLASS only (serviceClass-based gate)
+describe('DMAIC Rule 3: mobile jack sedan-class gate', () => {
+  const mobile = () => makeResource({ liftType: 'mobile', maxVehicleWeight: 'STANDARD' });
+
+  it('eligible: SEDAN_CLASS vehicle is allowed on a mobile jack', () => {
+    const res = isResourceCompatible(mobile(), makeJob({ vehicleServiceClass: 'SEDAN_CLASS' }));
+    expect(res.compatible).toBe(true);
+  });
+
+  it('ineligible: non-sedan (SUV_HEAVY) is blocked with the Rule 3 reason code', () => {
+    const res = isResourceCompatible(mobile(), makeJob({ vehicleServiceClass: 'SUV_HEAVY' }));
+    expect(res.compatible).toBe(false);
+    expect(res.reasonCode).toBe(MOBILE_JACK_NON_SEDAN_REASON);
+  });
+
+  it('ineligible: PICKUP / VAN / TRUCK are all blocked on a mobile jack', () => {
+    for (const cls of ['PICKUP', 'VAN', 'TRUCK'] as const) {
+      const res = isResourceCompatible(mobile(), makeJob({ vehicleServiceClass: cls }));
+      expect(res.compatible, cls).toBe(false);
+      expect(res.reasonCode, cls).toBe(MOBILE_JACK_NON_SEDAN_REASON);
+    }
+  });
+
+  it('ineligible: UNKNOWN_REQUIRES_REVIEW is blocked (fail-safe)', () => {
+    const res = isResourceCompatible(mobile(), makeJob({ vehicleServiceClass: 'UNKNOWN_REQUIRES_REVIEW' }));
+    expect(res.compatible).toBe(false);
+    expect(res.reasonCode).toBe(MOBILE_JACK_NON_SEDAN_REASON);
+  });
+
+  it('ineligible: missing/null service class is blocked (fail-safe)', () => {
+    const res = isResourceCompatible(mobile(), makeJob({ vehicleServiceClass: null }));
+    expect(res.compatible).toBe(false);
+    expect(res.reasonCode).toBe(MOBILE_JACK_NON_SEDAN_REASON);
+  });
+
+  it('non-mobile resources are unaffected by service class (SUV on a stand is fine)', () => {
+    const stand = makeResource({ liftType: 'heavy', maxVehicleWeight: 'HEAVY' });
+    const res = isResourceCompatible(stand, makeJob({ vehicleServiceClass: 'SUV_HEAVY', vehicleWeightClass: 'HEAVY' }));
+    expect(res.compatible).toBe(true);
+  });
+});
+
+describe('DMAIC: cleaning → power wash gate', () => {
+  it('cleaning job only dispatches to POWER_WASH resource', () => {
+    const bayR = makeResource({ resourceCategory: 'BAY' });
+    const washR = makeResource({ resourceCategory: 'POWER_WASH', liftType: null, isOperational: true });
+    const j = makeJob({ requiresPowerWash: true });
+    expect(isResourceCompatible(bayR, j).compatible).toBe(false);
+    expect(isResourceCompatible(washR, j).compatible).toBe(true);
+  });
+
+  it('power wash not operational blocks cleaning', () => {
+    const r = makeResource({ resourceCategory: 'POWER_WASH', liftType: null, isOperational: false });
+    const j = makeJob({ requiresPowerWash: true });
+    expect(isResourceCompatible(r, j).compatible).toBe(false);
+    expect(isResourceCompatible(r, j).reason).toContain('not operational');
+  });
+
+  it('non-cleaning job cannot use POWER_WASH resource', () => {
+    const r = makeResource({ resourceCategory: 'POWER_WASH', liftType: null, isOperational: true });
+    const j = makeJob({ requiresPowerWash: false });
+    expect(isResourceCompatible(r, j).compatible).toBe(false);
+  });
+});
+
+describe('DMAIC: machine shop isolation', () => {
+  it('external job only uses EXTERNAL resource', () => {
+    const bayR = makeResource({ resourceCategory: 'BAY' });
+    const extR = makeResource({ resourceCategory: 'EXTERNAL', liftType: null });
+    const j = makeJob({ isExternal: true });
+    expect(isResourceCompatible(bayR, j).compatible).toBe(false);
+    expect(isResourceCompatible(extR, j).compatible).toBe(true);
+  });
+
+  it('internal job cannot use EXTERNAL resource', () => {
+    const r = makeResource({ resourceCategory: 'EXTERNAL', liftType: null });
+    const j = makeJob({ isExternal: false });
+    expect(isResourceCompatible(r, j).compatible).toBe(false);
+  });
+});
+
+describe('DMAIC: stand preference', () => {
+  it('stand-preferred job sorts stands first', () => {
+    const resources: ResourceState[] = [
+      makeResource({ resourceId: 'mj', liftType: 'mobile', maxVehicleWeight: 'STANDARD', isOccupied: false }),
+      makeResource({ resourceId: 'st', liftType: 'heavy', maxVehicleWeight: 'HEAVY', isOccupied: false }),
+    ];
+    const j = makeJob({ standPreferred: true });
+    const result = findAvailableResources(resources, j);
+    expect(result[0]).toBe('st'); // stand sorted first
   });
 });

@@ -118,6 +118,10 @@ export class AppointmentsController {
       oilBrand: dto.oilBrand,
       oilGrade: dto.oilGrade,
       vehicleWeightClass: dto.vehicleWeightClass,
+      vehicleServiceClass: dto.vehicleServiceClass,
+      color: dto.color,
+      mileageOverride: dto.mileageOverride,
+      overrideReason: dto.overrideReason,
     });
   }
 }

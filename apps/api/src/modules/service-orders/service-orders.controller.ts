@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
+  Patch,
   ParseUUIDPipe,
   Post,
   UseGuards,
@@ -11,7 +13,14 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ServiceOrdersService } from './service-orders.service';
 import { CreateServiceOrderDto } from './dto/create-service-order.dto';
 import { AssignTechnicianDto } from './dto/assign-technician.dto';
+import { AssignAdditionalDto } from './dto/assign-additional.dto';
+import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 import { ChangeStatusDto } from './dto/change-status.dto';
+import {
+  PauseServiceOrderDto,
+  ResumeServiceOrderDto,
+  ReworkServiceOrderDto,
+} from './dto/pause-rework.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -81,5 +90,98 @@ export class ServiceOrdersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.serviceOrdersService.changeStatus(id, dto, user.sub);
+  }
+
+  // --- Pause / Resume / Rework (CR-2026-001) ---
+
+  @Post(':id/pause')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: 'Pause an in-progress service order (records reason + interval)' })
+  async pause(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: PauseServiceOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.pause(id, dto, user.sub);
+  }
+
+  @Post(':id/resume')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: 'Resume a paused service order (closes the pause interval)' })
+  async resume(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ResumeServiceOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.resume(id, dto, user.sub);
+  }
+
+  @Post(':id/rework')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: 'Send a service order in QC back for rework (preserves history)' })
+  async rework(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReworkServiceOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.openRework(id, dto, user.sub);
+  }
+
+  // --- Multi-Tech Assignment ---
+
+  @Post(':id/assign-additional')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_ASSIGN)
+  @ApiOperation({ summary: 'Add an additional (helper) technician to a service order' })
+  async assignAdditional(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AssignAdditionalDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.assignAdditional(id, dto.technicianId, dto.bayId, dto.resourceId, user.sub);
+  }
+
+  @Delete(':id/assignments/:assignmentId')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_ASSIGN)
+  @ApiOperation({ summary: 'Remove a technician assignment' })
+  async removeAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('assignmentId', ParseUUIDPipe) assignmentId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.removeAssignment(id, assignmentId, user.sub);
+  }
+
+  @Patch(':id/assignments/:assignmentId')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_ASSIGN)
+  @ApiOperation({ summary: 'Update a technician assignment (swap tech, change primary)' })
+  async updateAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('assignmentId', ParseUUIDPipe) assignmentId: string,
+    @Body() dto: UpdateAssignmentDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.updateAssignment(id, assignmentId, dto, user.sub);
+  }
+
+  @Post(':id/assignments/:assignmentId/start')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: 'Record assignment start time' })
+  async startAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('assignmentId', ParseUUIDPipe) assignmentId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.startAssignment(id, assignmentId, user.sub);
+  }
+
+  @Post(':id/assignments/:assignmentId/end')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: 'Record assignment end time' })
+  async endAssignment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('assignmentId', ParseUUIDPipe) assignmentId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.endAssignment(id, assignmentId, user.sub);
   }
 }

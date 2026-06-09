@@ -1,9 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { AddSkillDto } from './dto/add-skill.dto';
+import { UpdateSkillDto } from './dto/update-skill.dto';
 
 @Injectable()
 export class TechniciansService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   /**
    * List all active technicians for a site, including skills and user account name.
@@ -144,5 +150,91 @@ export class TechniciansService {
         },
       },
     });
+  }
+
+  // --- Skill CRUD ---
+
+  async addSkill(technicianId: string, dto: AddSkillDto, actorUserId: string) {
+    // Verify technician exists
+    await this.findById(technicianId);
+
+    // Check for duplicate
+    const existing = await this.prisma.technicianSkill.findUnique({
+      where: { technicianId_skillCode: { technicianId, skillCode: dto.skillCode } },
+    });
+    if (existing) {
+      throw new ConflictException(`Technician already has skill ${dto.skillCode}`);
+    }
+
+    const skill = await this.prisma.technicianSkill.create({
+      data: {
+        technicianId,
+        skillCode: dto.skillCode,
+        proficiencyLevel: dto.proficiencyLevel ?? 1,
+        isPrimary: dto.isPrimary ?? false,
+      },
+    });
+
+    await this.audit.log({
+      actorUserId,
+      action: 'SKILL_ADD',
+      entityType: 'TechnicianSkill',
+      entityId: skill.id,
+      afterJson: { technicianId, skillCode: dto.skillCode, proficiencyLevel: dto.proficiencyLevel },
+    });
+
+    return skill;
+  }
+
+  async updateSkill(technicianId: string, skillId: string, dto: UpdateSkillDto, actorUserId: string) {
+    const skill = await this.prisma.technicianSkill.findFirst({
+      where: { id: skillId, technicianId },
+    });
+    if (!skill) {
+      throw new NotFoundException(`Skill ${skillId} not found for technician ${technicianId}`);
+    }
+
+    const data: any = {};
+    if (dto.proficiencyLevel !== undefined) data.proficiencyLevel = dto.proficiencyLevel;
+    if (dto.isPrimary !== undefined) data.isPrimary = dto.isPrimary;
+
+    const updated = await this.prisma.technicianSkill.update({
+      where: { id: skillId },
+      data,
+    });
+
+    await this.audit.log({
+      actorUserId,
+      action: 'SKILL_UPDATE',
+      entityType: 'TechnicianSkill',
+      entityId: skillId,
+      beforeJson: { proficiencyLevel: skill.proficiencyLevel, isPrimary: skill.isPrimary },
+      afterJson: data,
+    });
+
+    return updated;
+  }
+
+  async removeSkill(technicianId: string, skillId: string, actorUserId: string) {
+    const skill = await this.prisma.technicianSkill.findFirst({
+      where: { id: skillId, technicianId },
+    });
+    if (!skill) {
+      throw new NotFoundException(`Skill ${skillId} not found for technician ${technicianId}`);
+    }
+
+    await this.prisma.technicianSkill.delete({
+      where: { id: skillId },
+    });
+
+    await this.audit.log({
+      actorUserId,
+      action: 'SKILL_REMOVE',
+      entityType: 'TechnicianSkill',
+      entityId: skillId,
+      beforeJson: { technicianId, skillCode: skill.skillCode },
+    });
+
+    return { deleted: true };
   }
 }

@@ -1,11 +1,20 @@
-import { Controller, Get, Param, NotFoundException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiParam } from '@nestjs/swagger';
+import { Controller, Get, Post, Patch, Body, Param, NotFoundException, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiParam, ApiBearerAuth } from '@nestjs/swagger';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RbacGuard } from '../../common/guards/rbac.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
+import { PERMISSIONS } from '../../common/constants/permissions';
 
 @ApiTags('Service Types')
 @Controller('service-types')
 export class ServiceTypesController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private audit: AuditService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List all active service types (public)' })
@@ -26,6 +35,13 @@ export class ServiceTypesController {
         partsPrepositionRequired: true,
         transportEligible: true,
         batchingFamily: true,
+        canUseOverflow: true,
+        canUseLightSlot: true,
+        requiresMileage: true,
+        isExternal: true,
+        requiresPowerWash: true,
+        standPreferred: true,
+        mobileJackAllowed: true,
       },
     });
   }
@@ -58,5 +74,45 @@ export class ServiceTypesController {
     }
 
     return serviceType;
+  }
+
+  // --- Guarded CRUD endpoints (ADMIN/MANAGER) ---
+
+  @Post()
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @ApiBearerAuth()
+  @RequirePermission(PERMISSIONS.SERVICE_TYPE_MANAGE)
+  @ApiOperation({ summary: 'Create a new service type' })
+  async create(@Body() body: any, @CurrentUser() user: JwtPayload) {
+    const st = await this.prisma.serviceType.create({ data: body });
+    await this.audit.log({
+      actorUserId: user.sub,
+      action: 'SERVICE_TYPE_CREATE',
+      entityType: 'ServiceType',
+      entityId: st.id,
+      afterJson: body,
+    });
+    return st;
+  }
+
+  @Patch(':code')
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @ApiBearerAuth()
+  @RequirePermission(PERMISSIONS.SERVICE_TYPE_MANAGE)
+  @ApiOperation({ summary: 'Update a service type' })
+  async update(@Param('code') code: string, @Body() body: any, @CurrentUser() user: JwtPayload) {
+    const existing = await this.prisma.serviceType.findUnique({ where: { code } });
+    if (!existing) throw new NotFoundException(`Service type "${code}" not found`);
+
+    const updated = await this.prisma.serviceType.update({ where: { code }, data: body });
+    await this.audit.log({
+      actorUserId: user.sub,
+      action: 'SERVICE_TYPE_UPDATE',
+      entityType: 'ServiceType',
+      entityId: updated.id,
+      beforeJson: { name: existing.name, baseDurationMinutes: existing.baseDurationMinutes, isActive: existing.isActive },
+      afterJson: body,
+    });
+    return updated;
   }
 }

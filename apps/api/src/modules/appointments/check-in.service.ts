@@ -10,6 +10,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { generateTicketNumber } from '../../common/helpers/ticket-generator';
+import { assertMileageGate } from '../../common/helpers/mileage-gate';
 
 /**
  * Check-in service for appointment-based arrivals.
@@ -53,6 +54,10 @@ export class CheckInService {
       oilBrand?: string;
       oilGrade?: string;
       vehicleWeightClass?: string;
+      vehicleServiceClass?: string;
+      color?: string;
+      mileageOverride?: boolean;
+      overrideReason?: string;
     },
   ) {
     const now = arrivalAt ?? new Date();
@@ -116,6 +121,31 @@ export class CheckInService {
       throw new ConflictException(
         'An active service visit already exists for this customer, vehicle, and site today (ARR-007)',
       );
+    }
+
+    // -----------------------------------------------------------------------
+    // 3b. DMAIC Rule 5: mileage gate (bidirectional + manager override)
+    // -----------------------------------------------------------------------
+    const requiresMileage = appointment.services.some(
+      (s) => (s.serviceType as any).requiresMileage === true,
+    );
+    const mileageProvided = intake?.mileageIn != null;
+    const mileageOverride = intake?.mileageOverride === true;
+    assertMileageGate({ requiresMileage, mileageProvided, override: mileageOverride });
+
+    // Audit any override that actually bypassed the gate.
+    const gateWouldBlock =
+      (requiresMileage && !mileageProvided) || (!requiresMileage && mileageProvided);
+    if (mileageOverride && gateWouldBlock) {
+      await this.auditService.log({
+        actorUserId: userId,
+        action: AUDIT_ACTIONS.MILEAGE_GATE_OVERRIDE,
+        entityType: 'Appointment',
+        entityId: appointment.id,
+        afterJson: { requiresMileage, mileageProvided, mileageIn: intake?.mileageIn ?? null, boundary: 'CHECK_IN' },
+        reasonCode: 'MILEAGE_GATE_OVERRIDE',
+        notes: intake?.overrideReason,
+      });
     }
 
     // -----------------------------------------------------------------------
@@ -201,11 +231,27 @@ export class CheckInService {
           });
         }
 
+        // 7b-ii. Update vehicle service class if provided (DMAIC Rule 3 — mobile-jack eligibility)
+        if (intake?.vehicleServiceClass) {
+          await tx.vehicle.update({
+            where: { id: appointment.vehicleId },
+            data: { serviceClass: intake.vehicleServiceClass as any },
+          });
+        }
+
         // 7c. Update vehicle odometer if mileage provided
         if (intake?.mileageIn) {
           await tx.vehicle.update({
             where: { id: appointment.vehicleId },
             data: { odometer: intake.mileageIn },
+          });
+        }
+
+        // 7d. Update vehicle color if provided
+        if (intake?.color) {
+          await tx.vehicle.update({
+            where: { id: appointment.vehicleId },
+            data: { color: intake.color },
           });
         }
 

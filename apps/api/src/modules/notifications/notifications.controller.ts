@@ -30,6 +30,13 @@ export class NotificationsController {
     );
   }
 
+  @Post('midday-followup')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'DMAIC Rule 2: trigger midday follow-up for jobs completed before noon (idempotent)' })
+  async middayFollowUp(@Body() body: { siteId: string }) {
+    return this.notificationsService.sendMiddayCompletionFollowUp(body.siteId);
+  }
+
   @Get('log')
   @RequirePermission(PERMISSIONS.QUEUE_VIEW)
   @ApiOperation({ summary: 'Get notification log for an entity' })

@@ -1,8 +1,12 @@
 import {
   Controller,
   Get,
+  Post,
+  Patch,
+  Delete,
   Param,
   Query,
+  Body,
   UseGuards,
   ParseUUIDPipe,
 } from '@nestjs/common';
@@ -11,7 +15,10 @@ import { TechniciansService } from './technicians.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
+import { AddSkillDto } from './dto/add-skill.dto';
+import { UpdateSkillDto } from './dto/update-skill.dto';
 
 @ApiTags('Technicians')
 @Controller('technicians')
@@ -79,5 +86,41 @@ export class TechniciansController {
   })
   async getActiveAssignment(@Param('id', ParseUUIDPipe) id: string) {
     return this.techniciansService.getActiveAssignment(id);
+  }
+
+  // --- Skill CRUD ---
+
+  @Post(':id/skills')
+  @RequirePermission(PERMISSIONS.TECHNICIAN_MANAGE)
+  @ApiOperation({ summary: 'Add a skill to a technician' })
+  async addSkill(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AddSkillDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.techniciansService.addSkill(id, dto, user.sub);
+  }
+
+  @Patch(':id/skills/:skillId')
+  @RequirePermission(PERMISSIONS.TECHNICIAN_MANAGE)
+  @ApiOperation({ summary: 'Update a technician skill' })
+  async updateSkill(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('skillId', ParseUUIDPipe) skillId: string,
+    @Body() dto: UpdateSkillDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.techniciansService.updateSkill(id, skillId, dto, user.sub);
+  }
+
+  @Delete(':id/skills/:skillId')
+  @RequirePermission(PERMISSIONS.TECHNICIAN_MANAGE)
+  @ApiOperation({ summary: 'Remove a skill from a technician' })
+  async removeSkill(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('skillId', ParseUUIDPipe) skillId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.techniciansService.removeSkill(id, skillId, user.sub);
   }
 }

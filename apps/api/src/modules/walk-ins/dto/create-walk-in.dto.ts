@@ -86,4 +86,9 @@ export class CreateWalkInDto {
   @IsOptional()
   @IsString()
   vehicleWeightClass?: string;
+
+  @ApiPropertyOptional({ description: 'Vehicle color (confirmation or entry)' })
+  @IsOptional()
+  @IsString()
+  color?: string;
 }
