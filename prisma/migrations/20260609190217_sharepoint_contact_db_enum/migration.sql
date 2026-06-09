@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "IntegrationSystem" ADD VALUE 'SHAREPOINT_CONTACT_DB';

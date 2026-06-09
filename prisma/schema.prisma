@@ -200,6 +200,7 @@ enum VehicleServiceClass {
 enum IntegrationSystem {
   AUTOMATE
   SAGE
+  SHAREPOINT_CONTACT_DB
 }
 
 enum ReminderStatus {
