@@ -8,8 +8,10 @@ import {
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { CreateWalkInDto } from './dto/create-walk-in.dto';
 import { generateTicketNumber } from '../../common/helpers/ticket-generator';
+import { assertMileageGate } from '../../common/helpers/mileage-gate';
 
 /**
  * Walk-in registration service.
@@ -30,6 +32,7 @@ export class WalkInsService {
   constructor(
     private prisma: PrismaService,
     private statusHistory: StatusHistoryService,
+    private audit: AuditService,
   ) {}
 
   /**
@@ -85,7 +88,7 @@ export class WalkInsService {
 
     const serviceTypes = await this.prisma.serviceType.findMany({
       where: { code: { in: uniqueCodes }, isActive: true },
-      select: { id: true, code: true, baseDurationMinutes: true },
+      select: { id: true, code: true, baseDurationMinutes: true, requiresMileage: true },
     });
 
     const serviceTypeMap = new Map(
@@ -126,17 +129,39 @@ export class WalkInsService {
     }
 
     // -----------------------------------------------------------------------
-    // 2b. DMAIC: Mileage gating — reject if any service requires mileage and none provided
+    // 2b. DMAIC Rule 5: mileage gate (shared helper — matches check-in/completion)
     // -----------------------------------------------------------------------
-    const resolvedTypes = await this.prisma.serviceType.findMany({
-      where: { code: { in: uniqueCodes } },
-      select: { requiresMileage: true },
-    });
-    const requiresMileage = resolvedTypes.some((st) => st.requiresMileage);
-    if (requiresMileage && !data.mileageIn) {
+    const requiresMileage = serviceTypes.some((st) => st.requiresMileage);
+    const mileageProvided = data.mileageIn != null;
+    const mileageOverride = data.mileageOverride === true;
+
+    // Walk-in intake control: an override must carry a reason.
+    if (mileageOverride && !data.overrideReason?.trim()) {
       throw new BadRequestException(
-        'Mileage reading is required for the selected service(s). Please provide mileageIn.',
+        'A manager override reason is required to bypass the mileage gate.',
       );
+    }
+    assertMileageGate({ requiresMileage, mileageProvided, override: mileageOverride });
+
+    // Audit any override that actually bypassed the gate.
+    const gateWouldBlock =
+      (requiresMileage && !mileageProvided) || (!requiresMileage && mileageProvided);
+    if (mileageOverride && gateWouldBlock) {
+      await this.audit.log({
+        actorUserId: userId,
+        action: AUDIT_ACTIONS.MILEAGE_GATE_OVERRIDE,
+        entityType: 'ServiceVisit',
+        afterJson: {
+          customerId: data.customerId,
+          vehicleId: data.vehicleId,
+          requiresMileage,
+          mileageProvided,
+          mileageIn: data.mileageIn ?? null,
+          boundary: 'WALK_IN',
+        },
+        reasonCode: 'MILEAGE_GATE_OVERRIDE',
+        notes: data.overrideReason,
+      });
     }
 
     // -----------------------------------------------------------------------

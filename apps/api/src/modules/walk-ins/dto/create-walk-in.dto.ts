@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
+  IsBoolean,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -91,4 +92,17 @@ export class CreateWalkInDto {
   @IsOptional()
   @IsString()
   color?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Manager override for the mileage gate (DMAIC Rule 5). Allows recording mileage on a non-service walk-in, or omitting it on a service walk-in. Requires overrideReason. Audited.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  mileageOverride?: boolean;
+
+  @ApiPropertyOptional({ description: 'Reason for the mileage manager override (required when mileageOverride is set; recorded in audit)' })
+  @IsOptional()
+  @IsString()
+  overrideReason?: string;
 }
