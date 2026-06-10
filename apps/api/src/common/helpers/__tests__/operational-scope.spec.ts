@@ -5,6 +5,7 @@ import {
   isHistoricalVisit, isPlaceholderCustomer, isPlaceholderVehicle,
   liveVisitWhere, liveCustomerWhere, liveVehicleWhere, serviceVisitIsLive,
   liveVisitSql, liveVisitSqlText, liveVehicleSqlText, liveCustomerSqlText,
+  historicalVisitWhere, historicalVisitSqlText,
 } from '../operational-scope';
 
 describe('operational-scope predicates', () => {
@@ -53,5 +54,15 @@ describe('raw-SQL fragments', () => {
   it('rejects unsafe (user-controlled) aliases', () => {
     expect(() => liveVisitSqlText('sv; DROP TABLE customers;--')).toThrow(/Unsafe SQL alias/);
     expect(() => liveVisitSqlText('a b')).toThrow(/Unsafe SQL alias/);
+  });
+});
+
+describe('historical-only helpers (CR-2026-013)', () => {
+  it('historicalVisitWhere selects only HISTORICAL_IMPORT', () => {
+    expect(historicalVisitWhere()).toEqual({ sourceType: HISTORICAL_VISIT_SOURCE_TYPE });
+  });
+  it('historicalVisitSqlText is the equality predicate (and rejects unsafe alias)', () => {
+    expect(historicalVisitSqlText('sv')).toBe("AND sv.source_type = 'HISTORICAL_IMPORT'");
+    expect(() => historicalVisitSqlText('a b')).toThrow(/Unsafe SQL alias/);
   });
 });

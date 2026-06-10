@@ -107,4 +107,16 @@ export class ReportingController {
   ) {
     return this.reportingService.getQueuePerformanceSummary(siteId, startDate, endDate, includeHistorical === 'true');
   }
+
+  @Get('historical-analytics')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'Read-only historical-import analytics (managers; HISTORICAL_IMPORT only)' })
+  @ApiQuery({ name: 'from', required: false, type: String, description: 'ISO date (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'to', required: false, type: String, description: 'ISO date (YYYY-MM-DD)' })
+  async getHistoricalAnalytics(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.reportingService.getHistoricalAnalytics({ from, to });
+  }
 }

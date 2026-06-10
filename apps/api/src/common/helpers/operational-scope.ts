@@ -45,6 +45,12 @@ export function serviceVisitIsLive(includeHistorical = false): Prisma.ServiceVis
   return liveVisitWhere(includeHistorical);
 }
 
+// --- Inverse: HISTORICAL-ONLY (CR-2026-013 historical analytics) -------------
+// Selects ONLY the imported historical visits. Reuses the same marker constant.
+export function historicalVisitWhere(): Prisma.ServiceVisitWhereInput {
+  return { sourceType: HISTORICAL_VISIT_SOURCE_TYPE };
+}
+
 // --- Raw-SQL fragments -------------------------------------------------------
 // Aliases MUST be hard-coded literals at the call site (never user input).
 function assertAlias(alias: string): void {
@@ -75,4 +81,13 @@ export function liveVehicleSql(alias: string, includeHistorical = false): Prisma
 }
 export function liveCustomerSql(alias: string, includeHistorical = false): Prisma.Sql {
   return includeHistorical ? Prisma.empty : Prisma.raw(liveCustomerSqlText(alias));
+}
+
+/** HISTORICAL-ONLY raw fragment (CR-2026-013). Alias must be a hard-coded literal. */
+export function historicalVisitSqlText(alias: string): string {
+  assertAlias(alias);
+  return `AND ${alias}.source_type = '${HISTORICAL_VISIT_SOURCE_TYPE}'`;
+}
+export function historicalVisitSql(alias: string): Prisma.Sql {
+  return Prisma.raw(historicalVisitSqlText(alias));
 }

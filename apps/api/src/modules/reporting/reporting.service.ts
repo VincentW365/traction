@@ -1,6 +1,12 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
-import { liveVisitWhere, liveVisitSql } from '../../common/helpers/operational-scope';
+import {
+  liveVisitWhere,
+  liveVisitSql,
+  historicalVisitWhere,
+  historicalVisitSql,
+} from '../../common/helpers/operational-scope';
 
 export interface KpiResult {
   code: string;
@@ -609,6 +615,112 @@ export class ReportingService {
       overrideRate,
       totalVisits,
       totalOverrides,
+    };
+  }
+
+  /**
+   * CR-2026-013 — Historical analytics (read-only, HISTORICAL-ONLY).
+   * Aggregates the imported historical jobs (sourceType = HISTORICAL_IMPORT) for
+   * management insight; never touches live operational views. Optional date
+   * window (defaults to the full historical span). Service-family mix is omitted
+   * (the import stored no structured order-items); avg duration is reported with
+   * its sample size (only a subset of orders has both start + end timestamps).
+   */
+  async getHistoricalAnalytics(opts: { from?: string; to?: string } = {}) {
+    const from = opts.from ? new Date(opts.from) : null;
+    const to = opts.to ? new Date(opts.to) : null;
+    if (to) to.setHours(23, 59, 59, 999);
+    const hist = historicalVisitWhere();
+    const dateWhere =
+      from || to
+        ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }
+        : {};
+    const fromSql = from ? Prisma.sql`AND sv.created_at >= ${from}` : Prisma.empty;
+    const toSql = to ? Prisma.sql`AND sv.created_at <= ${to}` : Prisma.empty;
+
+    const [span, statusRows, totalOrders, pausedRows, reworkedRows, monthlyRows, techRows, durRows] =
+      await Promise.all([
+        this.prisma.serviceVisit.aggregate({
+          _min: { createdAt: true },
+          _max: { createdAt: true },
+          where: hist,
+        }),
+        this.prisma.serviceVisit.groupBy({
+          by: ['status'],
+          where: { ...hist, ...dateWhere },
+          _count: { _all: true },
+        }),
+        this.prisma.serviceOrder.count({ where: { serviceVisit: { ...hist, ...dateWhere } } }),
+        this.prisma.serviceOrderPause.findMany({
+          where: { serviceOrder: { serviceVisit: { ...hist, ...dateWhere } } },
+          select: { serviceOrderId: true },
+          distinct: ['serviceOrderId'],
+        }),
+        this.prisma.serviceOrderRework.findMany({
+          where: { serviceOrder: { serviceVisit: { ...hist, ...dateWhere } } },
+          select: { serviceOrderId: true },
+          distinct: ['serviceOrderId'],
+        }),
+        this.prisma.$queryRaw<Array<{ month: Date; jobs: number }>>`
+          SELECT date_trunc('month', sv.created_at) AS month, COUNT(*)::int AS jobs
+          FROM service_visits sv
+          WHERE true ${historicalVisitSql('sv')} ${fromSql} ${toSql}
+          GROUP BY 1 ORDER BY 1`,
+        this.prisma.$queryRaw<Array<{ technicianId: string; name: string; jobs: number }>>`
+          SELECT t.id AS "technicianId", ua.full_name AS name, COUNT(*)::int AS jobs
+          FROM technician_assignments ta
+          INNER JOIN service_orders so ON so.id = ta.service_order_id
+          INNER JOIN service_visits sv ON sv.id = so.service_visit_id
+          INNER JOIN technicians t ON t.id = ta.technician_id
+          INNER JOIN user_accounts ua ON ua.id = t.user_account_id
+          WHERE true ${historicalVisitSql('sv')} ${fromSql} ${toSql}
+          GROUP BY t.id, ua.full_name ORDER BY jobs DESC LIMIT 15`,
+        this.prisma.$queryRaw<Array<{ avg_minutes: number | null; sample: number }>>`
+          SELECT AVG(EXTRACT(EPOCH FROM (so.completed_at - so.started_at)) / 60)::int AS avg_minutes,
+                 COUNT(*)::int AS sample
+          FROM service_orders so
+          INNER JOIN service_visits sv ON sv.id = so.service_visit_id
+          WHERE so.started_at IS NOT NULL AND so.completed_at IS NOT NULL
+            AND so.completed_at > so.started_at
+            ${historicalVisitSql('sv')} ${fromSql} ${toSql}`,
+      ]);
+
+    const byStatus: Record<string, number> = {};
+    for (const r of statusRows) byStatus[r.status] = r._count._all;
+    const totalJobs = statusRows.reduce((s, r) => s + r._count._all, 0);
+    const completed = byStatus['CLOSED'] ?? 0; // historical terminal completed → CLOSED
+    const cancelled = byStatus['CANCELLED'] ?? 0;
+    const other = totalJobs - completed - cancelled;
+    const pct = (n: number) => (totalJobs > 0 ? Math.round((n / totalJobs) * 1000) / 10 : 0);
+    const rate = (n: number) => (totalOrders > 0 ? Math.round((n / totalOrders) * 1000) / 10 : 0);
+
+    return {
+      span: {
+        from: span._min.createdAt ? span._min.createdAt.toISOString().slice(0, 10) : null,
+        to: span._max.createdAt ? span._max.createdAt.toISOString().slice(0, 10) : null,
+      },
+      headline: {
+        totalJobs,
+        completed,
+        cancelled,
+        other,
+        completionRate: pct(completed),
+        cancellationRate: pct(cancelled),
+      },
+      totalOrders,
+      pauseRate: rate(pausedRows.length),
+      reworkRate: rate(reworkedRows.length),
+      avgDurationMinutes: durRows[0]?.avg_minutes != null ? Number(durRows[0].avg_minutes) : null,
+      durationSampleSize: durRows[0] ? Number(durRows[0].sample) : 0,
+      monthlyVolume: monthlyRows.map((r) => ({
+        month: new Date(r.month).toISOString().slice(0, 7),
+        jobs: Number(r.jobs),
+      })),
+      byTechnician: techRows.map((r) => ({
+        technicianId: r.technicianId,
+        name: r.name,
+        jobs: Number(r.jobs),
+      })),
     };
   }
 }
