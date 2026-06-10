@@ -78,7 +78,7 @@ export default function ClassificationProgressPage() {
 
       {statsQuery.isError && (
         <div className="card p-6 text-center border-red-200 bg-red-50">
-          <p className="text-sm text-red-700">Failed to load classification progress.</p>
+          <p className="text-sm text-red-700">Failed to load this report.</p>
         </div>
       )}
 

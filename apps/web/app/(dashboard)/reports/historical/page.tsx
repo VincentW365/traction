@@ -117,7 +117,7 @@ export default function HistoricalAnalyticsPage() {
 
       {q.isError && (
         <div className="card p-6 text-center border-red-200 bg-red-50">
-          <p className="text-sm text-red-700">Failed to load historical analytics.</p>
+          <p className="text-sm text-red-700">Failed to load this report.</p>
         </div>
       )}
 
