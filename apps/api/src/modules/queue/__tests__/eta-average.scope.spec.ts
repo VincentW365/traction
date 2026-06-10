@@ -46,6 +46,11 @@ function buildService() {
   return { service, prisma };
 }
 
+// Concatenate the SQL text of all Prisma.Sql fragments interpolated into a
+// $queryRaw call (liveVisitSql, capSql, ...), and collect their bound values.
+const sqlOf = (call: any[]) => call.filter((a) => a && a.strings).map((a) => a.strings.join('')).join(' ');
+const valuesOf = (call: any[]) => call.filter((a) => a && Array.isArray(a.values)).flatMap((a) => a.values);
+
 describe('QueueService ETA average isolation (CR-2026-007)', () => {
   let h: ReturnType<typeof buildService>;
   beforeEach(() => { h = buildService(); });
@@ -63,9 +68,7 @@ describe('QueueService ETA average isolation (CR-2026-007)', () => {
     expect(board.items[0].estimatedWaitMinutes).toBe(84);
 
     // The live query must carry the operational-scope live-visit fragment.
-    const liveCall = h.prisma.$queryRaw.mock.calls[0];
-    const fragment = liveCall[liveCall.length - 1];
-    expect(fragment.strings.join('')).toContain('source_type');
+    expect(sqlOf(h.prisma.$queryRaw.mock.calls[0])).toContain('source_type');
     // Only ONE query ran (no fallback needed).
     expect(h.prisma.$queryRaw).toHaveBeenCalledTimes(1);
   });
@@ -103,6 +106,34 @@ describe('QueueService ETA average isolation (CR-2026-007)', () => {
     );
     expect(keys).toContain('eta_avg_live_window_days');
     expect(keys).toContain('eta_avg_min_live_sample');
+  });
+
+  it('CR-2026-015: applies the outlier cap to BOTH tiers when configured', async () => {
+    h.prisma.businessRuleConfig.findFirst.mockImplementation(async ({ where }: any) =>
+      where.ruleKey === 'eta_avg_outlier_cap_minutes' ? { valueJson: 90 } : null,
+    );
+    h.prisma.$queryRaw
+      .mockResolvedValueOnce([{ count: 5n, avg: 40 }])     // tier 1 (small) → fallback
+      .mockResolvedValueOnce([{ count: 9000n, avg: 95 }]); // tier 2
+
+    await h.service.getBoard('site-1');
+
+    const keys = h.prisma.businessRuleConfig.findFirst.mock.calls.map((c: any) => c[0].where.ruleKey);
+    expect(keys).toContain('eta_avg_outlier_cap_minutes');
+
+    for (const call of h.prisma.$queryRaw.mock.calls) {
+      expect(sqlOf(call)).toContain('started_at)) / 60 <='); // cap predicate present
+      expect(valuesOf(call)).toContain(90); // cap value bound (parameterized)
+    }
+  });
+
+  it('CR-2026-015: no cap clause when the key is absent (default behavior unchanged)', async () => {
+    h.prisma.$queryRaw.mockResolvedValueOnce([{ count: 25n, avg: 42 }]); // LIVE path
+    await h.service.getBoard('site-1');
+
+    const call = h.prisma.$queryRaw.mock.calls[0];
+    expect(sqlOf(call)).not.toContain('started_at)) / 60 <=');
+    expect(valuesOf(call)).not.toContain(90);
   });
 
   it('PUBLIC display board never exposes etaBasis (behavior unchanged)', async () => {

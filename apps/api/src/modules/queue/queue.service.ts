@@ -5,6 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { differenceInMinutes } from 'date-fns';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { SchedulingService } from '../scheduling/scheduling.service';
@@ -22,6 +23,8 @@ interface AvgServiceResult {
 const ETA_DEFAULT_MINUTES = 30;
 const ETA_DEFAULT_WINDOW_DAYS = 30;
 const ETA_DEFAULT_MIN_LIVE_SAMPLE = 20;
+// CR-2026-015 — outlier trimming. 0 = disabled (no trimming; default behavior).
+const ETA_DEFAULT_OUTLIER_CAP_MINUTES = 0;
 
 @Injectable()
 export class QueueService {
@@ -591,6 +594,22 @@ export class QueueService {
       );
       const windowStart = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
 
+      // CR-2026-015 — optional outlier trimming. When configured (>0), restrict the
+      // average to valid durations in (0, cap]; absent/0 ⇒ no clause ⇒ unchanged.
+      const outlierCap = await this.readEtaConfigNumber(
+        siteId,
+        'eta_avg_outlier_cap_minutes',
+        ETA_DEFAULT_OUTLIER_CAP_MINUTES,
+      );
+      const capSql =
+        outlierCap > 0
+          ? Prisma.sql`AND EXTRACT(EPOCH FROM (so.completed_at - so.started_at)) / 60 > 0
+              AND EXTRACT(EPOCH FROM (so.completed_at - so.started_at)) / 60 <= ${outlierCap}`
+          : Prisma.empty;
+      if (outlierCap > 0) {
+        this.logger.log(`ETA avg: outlier cap ${outlierCap}m applied for site ${siteId}`);
+      }
+
       // Tier 1 — live completed orders within the rolling window.
       const live = await this.prisma.$queryRaw<Array<{ count: bigint; avg: number | null }>>`
         SELECT COUNT(*)::bigint AS count,
@@ -602,6 +621,7 @@ export class QueueService {
           AND so.completed_at IS NOT NULL
           AND so.completed_at >= ${windowStart}
           ${liveVisitSql('sv')}
+          ${capSql}
       `;
       const liveCount = Number(live[0]?.count ?? 0);
       const liveAvg = live[0]?.avg != null ? Number(live[0].avg) : null;
@@ -619,6 +639,7 @@ export class QueueService {
         WHERE sv.site_id = ${siteId}::uuid
           AND so.started_at IS NOT NULL
           AND so.completed_at IS NOT NULL
+          ${capSql}
       `;
       const histCount = Number(hist[0]?.count ?? 0);
       const histAvg = hist[0]?.avg != null ? Number(hist[0].avg) : null;

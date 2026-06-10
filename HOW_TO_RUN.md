@@ -126,6 +126,7 @@ pnpm db:studio     # Open Prisma Studio GUI to browse/edit the DB
 - **Seeded operational data** (verified from a clean `pnpm db:seed`): **17 users** (incl. the **12-technician roster** `BERT-T01`–`BERT-T12`), **32 service types**, **39 business-rule configs** (17 core + 22 v4.1), **6 work bays**, **10 work resources** (incl. 2 stands, 2 mobile jacks, power wash, external machine shop), **10 resource occupancies**, and **23 vehicle weight/serviceClass suggestions**.
 - **Business rules live in the DB**, not in code — edit them via `BusinessRuleConfig` (Prisma Studio or admin settings), keyed per site. Don't hard-code rule values.
   - Optional: `classification_daily_target` (`valueJson` `{ "target": <number> }`) sets the daily classification target shown on Reports → Classification Progress → Productivity. Absent → default **50/day**.
+  - Optional: `eta_avg_outlier_cap_minutes` (`valueJson` a positive number) trims queue-board ETA outliers — orders with duration ≤0 or above the cap are excluded from the ETA average. Absent → **no trimming** (default). Also: `eta_avg_live_window_days` (30), `eta_avg_min_live_sample` (20).
 - **Notifications are stubbed** in dev (`NOTIFICATION_PROVIDER=stub`). No real SMS/email is sent; logs are written to `NotificationLog`.
 - **Login redirect:** successful login always lands on `/check-in`. Use the role-appropriate account to see the right screens (front desk vs. technician vs. manager).
 - **JWT tokens** are short-lived (`15m` access, `7d` refresh). If the UI logs you out quickly, that's expected in dev.
