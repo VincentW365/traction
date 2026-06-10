@@ -10,6 +10,24 @@ The design principle is simple:
 
 > **One core scheduling brain, multiple operational modules, one shared source of truth.**
 
+## Getting started (run locally)
+
+Full details — prerequisites, login credentials, troubleshooting — are in **[HOW_TO_RUN.md](HOW_TO_RUN.md)**. Quickstart from the repo root:
+
+```bash
+# Node >= 20; pnpm pinned via corepack
+corepack enable && corepack prepare pnpm@10.33.0 --activate
+
+pnpm install
+cp .env.example .env          # then set DATABASE_URL and JWT_SECRET (Windows: Copy-Item .env.example .env)
+docker compose up -d          # Postgres 16 + Redis 7
+pnpm db:migrate               # apply migrations
+pnpm db:seed                  # seed site, users, services, bays, rules, suggestions
+pnpm dev                      # API :3001/api/v1 + web :3000
+```
+
+> Safe by default: VIN decode is STUB (no outbound calls) and notifications are stubbed. A fresh seed contains reference/demo data only — customers, vehicles, historical jobs, and the classification queue require the gated import/backfill scripts (their PII source files are **not** in the repo). See [HOW_TO_RUN.md](HOW_TO_RUN.md).
+
 ## What is inside
 
 | file | purpose |

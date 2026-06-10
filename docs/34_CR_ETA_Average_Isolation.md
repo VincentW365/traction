@@ -2,7 +2,7 @@
 
 **CR ID:** CR-2026-007
 **Author:** Vincent Wilson · **Date:** 2026-06-09
-**Status:** **APPROVED FOR IMPLEMENTATION (2026-06-09) — not yet implemented.** Approved by Vincent Wilson; satisfies the ETA Mandatory Review Trigger under `docs/21_Approval_Gates.md`. Implementation to be scheduled as a separate, reviewable change.
+**Status:** **IMPLEMENTED (2026-06-09)** — commit `99f0ef3` (tag `save-point-post-eta-average-isolation`). Approved by Vincent Wilson; satisfied the ETA Mandatory Review Trigger under `docs/21_Approval_Gates.md`. **Deferred follow-ups only:** outlier trimming (`eta_avg_outlier_cap_minutes`) and threshold/window tuning once live volume accrues.
 **Builds on:** CR-2026-006 (operational scope filtering). Resolves the deferred follow-up `docs/29` item 2.5 (and `docs/33` §3a).
 
 > ⚠️ This is an **ETA / queue-display change** and therefore a **Mandatory Review Trigger** (CLAUDE.md §9: "any change to ETA"). It was reviewed and approved **before** any code is written. No implementation has been done yet.

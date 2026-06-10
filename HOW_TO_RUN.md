@@ -2,7 +2,7 @@
 
 **Bert's Service Operations Platform (BSOP / "Traction")** — local development quick-start, login credentials, and operational notes.
 
-> Last updated: 2026-06-09. If commands stop matching reality, check `package.json`, `docker-compose.yml`, and `prisma/seed.ts` — those are the source of truth.
+> Last updated: 2026-06-10. If commands stop matching reality, check `package.json`, `docker-compose.yml`, and `prisma/seed.ts` — those are the source of truth.
 
 ---
 
@@ -19,7 +19,7 @@
 
 ## 2. First-Time Setup (run once)
 
-From the repo root (`c:\Users\vwilson\Desktop\Projects\Traction`):
+From the repo root:
 
 ```powershell
 # 1. Install dependencies
@@ -35,6 +35,9 @@ docker compose up -d
 pnpm db:migrate
 
 # 5. Seed the database (creates site, users, services, rules, techs, bays)
+#    NOTE: seed = reference/demo data only. Customers, vehicles, historical jobs,
+#    and the classification queue come from the gated import/backfill scripts —
+#    see "Seed data vs. imported data" below.
 pnpm db:seed
 ```
 
@@ -120,7 +123,7 @@ pnpm db:studio     # Open Prisma Studio GUI to browse/edit the DB
 
 - **Infra must be running first.** The API needs both Postgres and Redis up, or it won't boot. Start `docker compose up -d` (or the Redis batch script) before `pnpm dev`.
 - **Default site is `BERT-01`** ("Bert's Auto Parts Service Centre — Main"), timezone `America/Jamaica`. Operating hours: Mon–Fri 08:00–17:00, Sat 08:00–13:00, closed Sunday.
-- **Seeded operational data:** 31 service types, 5 technicians (with skills), 6 work bays, work resources (2 stands, 2 mobile jacks, power wash, external machine shop), and ~40 business-rule configs.
+- **Seeded operational data:** service types, the **12-technician roster** (`BERT-T01`–`BERT-T12`, plus the skilled tech specs), work bays, work resources (2 stands, 2 mobile jacks, power wash, external machine shop), business-rule configs, and **23 vehicle weight/serviceClass suggestions**. Exact service-type and rule counts are seed-output dependent — check the `pnpm db:seed` output / `prisma/seed.ts`.
 - **Business rules live in the DB**, not in code — edit them via `BusinessRuleConfig` (Prisma Studio or admin settings), keyed per site. Don't hard-code rule values.
 - **Notifications are stubbed** in dev (`NOTIFICATION_PROVIDER=stub`). No real SMS/email is sent; logs are written to `NotificationLog`.
 - **Login redirect:** successful login always lands on `/check-in`. Use the role-appropriate account to see the right screens (front desk vs. technician vs. manager).
@@ -146,3 +149,40 @@ pnpm db:studio     # Open Prisma Studio GUI to browse/edit the DB
 ## 9. Project Phase Context
 
 Per the project blueprint, BSOP is built in phases (0 → 5). This is a **modular monolith** (NestJS API + Next.js web, shared Postgres, one scheduling brain). Core domain truth lives in the API + DB — never write core domain logic in the UI or bury business-rule values in frontend code.
+
+---
+
+## 10. Seed data vs. imported data
+
+`pnpm db:seed` is **reference/demo data only** and is all a fresh clone needs to boot and log in.
+
+**Seed includes:**
+- Site `BERT-01`, all login users (incl. the **12-technician roster**), service types, work bays, work resources, business-rule configs, and the **23 vehicle weight/serviceClass suggestions** (advisory lookup for classification).
+
+**NOT in seed — only present after running the gated scripts below:**
+- **Customers & vehicles** → `import-customers`
+- **Historical jobs / service visits** → `import-jobs`
+- **The ~7,157 `PENDING` `VehicleClassification` rows** → `backfill-vehicle-classifications --commit`
+
+> Consequence on a fresh clone: **Customers search, the Vehicle Classification queue, and the Classification Progress report will be empty / zero** until the relevant import + backfill are run. The **source data files for the imports are gitignored and are NOT in the repo** (they contain real customer PII), so imports can only be run where that source data is available.
+
+---
+
+## 11. Optional data scripts (advanced)
+
+Run from the repo root with `VIN_DECODE_PROVIDER=STUB` (default). All default to a **dry-run** (no writes); pass `--commit` to write.
+
+| Script | Purpose | Modes |
+| --- | --- | --- |
+| `apps/api/scripts/import-customers.ts` | Import customers + vehicles from the SharePoint export | dry-run / `--commit` / `--rollback <batchId>` |
+| `apps/api/scripts/import-jobs.ts` | Import historical jobs as terminal service visits/orders | dry-run / `--commit` / `--rollback <batchId>` |
+| `apps/api/scripts/backfill-vehicle-classifications.ts` | Seed `PENDING` classification rows w/ advisory suggestions | dry-run / `--commit` / `--rollback` (deletes only unreviewed PENDING rows; preserves CONFIRMED) |
+
+Example (dry-run, then commit):
+
+```powershell
+npx tsx apps/api/scripts/backfill-vehicle-classifications.ts            # dry-run report
+npx tsx apps/api/scripts/backfill-vehicle-classifications.ts --commit   # write PENDING rows
+```
+
+> Read-only verification helpers also exist: `verify-import.ts`, `verify-jobs.ts`, `verify-classification-backfill.ts`. None of these scripts change `Vehicle.serviceClass` or scheduling behavior.
