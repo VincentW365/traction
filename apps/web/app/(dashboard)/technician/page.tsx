@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api-client';
 import { useSiteId } from '../../../hooks/use-site';
@@ -7,6 +8,7 @@ import { PageHeader } from '../../../components/ui/page-header';
 import { EmptyState } from '../../../components/ui/empty-state';
 import { LoadingState } from '../../../components/ui/loading-state';
 import { StatusBadge } from '../../../components/status-badge';
+import { PAUSE_REASONS } from '../../../lib/service-order-actions';
 
 interface QueueItem {
   queueTicketId: string;
@@ -44,6 +46,35 @@ export default function TechnicianWorkView() {
   ) ?? [];
 
   const currentJob = inServiceItems[0] ?? null;
+
+  // CR-2026-011: resolve the current job's active service order (ticket -> visit -> orders)
+  const ticketDetailQuery = useQuery<{ serviceVisit: { id: string } }>({
+    queryKey: ['tech-ticket', currentJob?.queueTicketId],
+    queryFn: () => api.get(`/queue-tickets/${currentJob!.queueTicketId}`),
+    enabled: !!currentJob,
+  });
+  const visitId = ticketDetailQuery.data?.serviceVisit?.id;
+  const ordersQuery = useQuery<Array<{ id: string; status: string }>>({
+    queryKey: ['tech-orders', visitId],
+    queryFn: () => api.get(`/service-orders/by-visit/${visitId}`),
+    enabled: !!visitId,
+  });
+  const activeOrder = ordersQuery.data?.find((o) => o.status === 'IN_PROGRESS' || o.status === 'PAUSED') ?? null;
+
+  const [pauseReason, setPauseReason] = useState<string>(PAUSE_REASONS[0].value);
+  const [showPause, setShowPause] = useState(false);
+  const invalidateWork = () => {
+    queryClient.invalidateQueries({ queryKey: ['tech-orders'] });
+    queryClient.invalidateQueries({ queryKey: ['tech-work'] });
+  };
+  const pauseMutation = useMutation({
+    mutationFn: () => api.post(`/service-orders/${activeOrder!.id}/pause`, { reasonCode: pauseReason }),
+    onSuccess: () => { invalidateWork(); setShowPause(false); },
+  });
+  const resumeMutation = useMutation({
+    mutationFn: () => api.post(`/service-orders/${activeOrder!.id}/resume`, {}),
+    onSuccess: invalidateWork,
+  });
 
   if (isLoading) {
     return (
@@ -111,14 +142,56 @@ export default function TechnicianWorkView() {
                 </div>
               </div>
 
-              {/* Complete button - large touch target */}
-              <button
-                onClick={() => completeMutation.mutate(currentJob.queueTicketId)}
-                disabled={completeMutation.isPending}
-                className="btn-success w-full py-4 text-lg font-bold rounded-lg active:scale-[0.98] transition-transform"
-              >
-                {completeMutation.isPending ? 'Completing...' : 'MARK WORK COMPLETE'}
-              </button>
+              {/* CR-2026-011: pause / resume (recording-only) */}
+              {activeOrder?.status === 'PAUSED' && (
+                <div className="space-y-2">
+                  <div className="rounded-lg bg-orange-50 border border-orange-200 px-4 py-3 text-sm text-orange-800 text-center font-medium">
+                    Work is paused
+                  </div>
+                  <button
+                    onClick={() => resumeMutation.mutate()}
+                    disabled={resumeMutation.isPending}
+                    className="btn-success w-full py-4 text-lg font-bold rounded-lg active:scale-[0.98] transition-transform"
+                  >
+                    {resumeMutation.isPending ? 'Resuming...' : 'RESUME WORK'}
+                  </button>
+                </div>
+              )}
+
+              {activeOrder?.status === 'IN_PROGRESS' && (
+                showPause ? (
+                  <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50 p-3">
+                    <label className="input-label">Pause reason</label>
+                    <select value={pauseReason} onChange={(e) => setPauseReason(e.target.value)} className="input-field">
+                      {PAUSE_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                    </select>
+                    {pauseMutation.isError && (
+                      <p className="text-xs text-red-700">{pauseMutation.error instanceof Error ? pauseMutation.error.message : 'Failed to pause'}</p>
+                    )}
+                    <div className="flex gap-2">
+                      <button onClick={() => pauseMutation.mutate()} disabled={pauseMutation.isPending} className="btn-primary flex-1 py-3 font-semibold rounded-lg">
+                        {pauseMutation.isPending ? 'Pausing...' : 'Confirm Pause'}
+                      </button>
+                      <button onClick={() => setShowPause(false)} className="btn-secondary py-3 px-4 rounded-lg">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button onClick={() => setShowPause(true)} className="btn-secondary w-full py-3 text-base font-semibold rounded-lg">
+                    Pause Work
+                  </button>
+                )
+              )}
+
+              {/* Complete button - large touch target (hidden while paused) */}
+              {activeOrder?.status !== 'PAUSED' && (
+                <button
+                  onClick={() => completeMutation.mutate(currentJob.queueTicketId)}
+                  disabled={completeMutation.isPending}
+                  className="btn-success w-full py-4 text-lg font-bold rounded-lg active:scale-[0.98] transition-transform"
+                >
+                  {completeMutation.isPending ? 'Completing...' : 'MARK WORK COMPLETE'}
+                </button>
+              )}
 
               {completeMutation.isSuccess && (
                 <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 text-center font-medium">

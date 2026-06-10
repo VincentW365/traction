@@ -9,6 +9,7 @@ import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../components/status-badge';
 import { useSiteId } from '../../../../hooks/use-site';
+import { PAUSE_REASONS, REWORK_REASONS } from '../../../../lib/service-order-actions';
 
 /* ---------- Types ---------- */
 
@@ -119,6 +120,14 @@ export default function QueueTicketDetailPage() {
   const [assignTechId, setAssignTechId] = useState('');
   const [assignBayId, setAssignBayId] = useState('');
 
+  // Pause / rework form state (CR-2026-011) — keyed by order id
+  const [pauseFormOrderId, setPauseFormOrderId] = useState<string | null>(null);
+  const [pauseReason, setPauseReason] = useState<string>(PAUSE_REASONS[0].value);
+  const [pauseNotes, setPauseNotes] = useState('');
+  const [reworkFormOrderId, setReworkFormOrderId] = useState<string | null>(null);
+  const [reworkReason, setReworkReason] = useState<string>(REWORK_REASONS[0].value);
+  const [reworkDesc, setReworkDesc] = useState('');
+
   // Completion form state
   const [showCompletion, setShowCompletion] = useState(false);
   const [mileageOut, setMileageOut] = useState('');
@@ -180,6 +189,37 @@ export default function QueueTicketDetailPage() {
   const approveOrder = useMutation({
     mutationFn: (orderId: string) => api.post(`/service-orders/${orderId}/approve`, {}),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['service-orders'] }),
+  });
+
+  // CR-2026-011 — dedicated pause/resume/rework endpoints (recording-only; NOT /status)
+  const invalidateOrders = () => {
+    queryClient.invalidateQueries({ queryKey: ['service-orders'] });
+    queryClient.invalidateQueries({ queryKey: ['queue-ticket', ticketId] });
+  };
+  const pauseOrder = useMutation({
+    mutationFn: ({ orderId }: { orderId: string }) =>
+      api.post(`/service-orders/${orderId}/pause`, { reasonCode: pauseReason, notes: pauseNotes || undefined }),
+    onSuccess: () => {
+      invalidateOrders();
+      setPauseFormOrderId(null);
+      setPauseNotes('');
+      setPauseReason(PAUSE_REASONS[0].value);
+    },
+  });
+  const resumeOrder = useMutation({
+    mutationFn: ({ orderId }: { orderId: string }) =>
+      api.post(`/service-orders/${orderId}/resume`, {}),
+    onSuccess: invalidateOrders,
+  });
+  const reworkOrder = useMutation({
+    mutationFn: ({ orderId }: { orderId: string }) =>
+      api.post(`/service-orders/${orderId}/rework`, { reasonCode: reworkReason, description: reworkDesc || undefined }),
+    onSuccess: () => {
+      invalidateOrders();
+      setReworkFormOrderId(null);
+      setReworkDesc('');
+      setReworkReason(REWORK_REASONS[0].value);
+    },
   });
 
   const assignOrder = useMutation({
@@ -454,8 +494,84 @@ export default function QueueTicketDetailPage() {
                           {action.label}
                         </button>
                       ))}
+                      {/* CR-2026-011 pause/resume/rework (dedicated endpoints) */}
+                      {order.status === 'IN_PROGRESS' && (
+                        <button onClick={() => { setReworkFormOrderId(null); setPauseFormOrderId(pauseFormOrderId === order.id ? null : order.id); }} className="btn-secondary text-xs py-1 px-2">
+                          Pause
+                        </button>
+                      )}
+                      {order.status === 'PAUSED' && (
+                        <button onClick={() => resumeOrder.mutate({ orderId: order.id })} disabled={resumeOrder.isPending} className="btn-success text-xs py-1 px-2">
+                          {resumeOrder.isPending ? 'Resuming...' : 'Resume'}
+                        </button>
+                      )}
+                      {order.status === 'QC' && (
+                        <button onClick={() => { setPauseFormOrderId(null); setReworkFormOrderId(reworkFormOrderId === order.id ? null : order.id); }} className="btn-danger text-xs py-1 px-2">
+                          Rework
+                        </button>
+                      )}
                     </div>
                   </div>
+
+                  {/* Pause reason form */}
+                  {pauseFormOrderId === order.id && (
+                    <div className="card mb-3 border-orange-200 bg-orange-50">
+                      <div className="card-body space-y-3">
+                        <h3 className="text-xs font-semibold text-slate-900">Pause work</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="input-label">Reason *</label>
+                            <select value={pauseReason} onChange={(e) => setPauseReason(e.target.value)} className="input-field">
+                              {PAUSE_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="input-label">Notes</label>
+                            <input value={pauseNotes} onChange={(e) => setPauseNotes(e.target.value)} className="input-field" placeholder="Optional" />
+                          </div>
+                        </div>
+                        {pauseOrder.isError && (
+                          <p className="text-xs text-red-700">{pauseOrder.error instanceof Error ? pauseOrder.error.message : 'Failed to pause'}</p>
+                        )}
+                        <div className="flex gap-2">
+                          <button onClick={() => pauseOrder.mutate({ orderId: order.id })} disabled={pauseOrder.isPending} className="btn-primary text-xs py-1 px-3">
+                            {pauseOrder.isPending ? 'Pausing...' : 'Confirm Pause'}
+                          </button>
+                          <button onClick={() => setPauseFormOrderId(null)} className="btn-secondary text-xs py-1 px-3">Cancel</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Rework reason form */}
+                  {reworkFormOrderId === order.id && (
+                    <div className="card mb-3 border-red-200 bg-red-50">
+                      <div className="card-body space-y-3">
+                        <h3 className="text-xs font-semibold text-slate-900">Send back for rework (from QC)</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="input-label">Reason *</label>
+                            <select value={reworkReason} onChange={(e) => setReworkReason(e.target.value)} className="input-field">
+                              {REWORK_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="input-label">Description</label>
+                            <input value={reworkDesc} onChange={(e) => setReworkDesc(e.target.value)} className="input-field" placeholder="What needs redoing? (optional)" />
+                          </div>
+                        </div>
+                        {reworkOrder.isError && (
+                          <p className="text-xs text-red-700">{reworkOrder.error instanceof Error ? reworkOrder.error.message : 'Failed to open rework'}</p>
+                        )}
+                        <div className="flex gap-2">
+                          <button onClick={() => reworkOrder.mutate({ orderId: order.id })} disabled={reworkOrder.isPending} className="btn-danger text-xs py-1 px-3">
+                            {reworkOrder.isPending ? 'Opening...' : 'Confirm Rework'}
+                          </button>
+                          <button onClick={() => setReworkFormOrderId(null)} className="btn-secondary text-xs py-1 px-3">Cancel</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Line items */}
                   <div className="space-y-1">
