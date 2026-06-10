@@ -13,6 +13,7 @@
   },
   "devDependencies": {
     "typescript": "^5",
-    "@bsop/tsconfig": "workspace:*"
+    "@bsop/tsconfig": "workspace:*",
+    "@types/node": "^22"
   }
 }
