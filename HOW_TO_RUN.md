@@ -112,7 +112,7 @@ pnpm db:studio     # Open Prisma Studio GUI to browse/edit the DB
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3001/api/v1` | Where the web app calls the API. |
 | `NEXT_PUBLIC_WS_URL` | `http://localhost:3001` | WebSocket endpoint. |
 | `NOTIFICATION_PROVIDER` | `stub` | SMS/email are stubbed in Phase 1 (no Twilio/SendGrid needed). |
-| `VIN_DECODE_PROVIDER` | `STUB` | `STUB` = no outbound calls (recommended local/dev, incl. data import/testing). Any other value/unset = live NHTSA vPIC VIN decode (`vpic.nhtsa.dot.gov`). |
+| `VIN_DECODE_PROVIDER` | `STUB` | Default `STUB` = no outbound calls (safe for local/dev, data import, offline). Live NHTSA vPIC VIN decode (`vpic.nhtsa.dot.gov`) is **opt-in**: set `VIN_DECODE_PROVIDER=LIVE`. Any other value/unset stays `STUB`. |
 
 ---
 

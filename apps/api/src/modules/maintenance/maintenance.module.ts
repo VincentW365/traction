@@ -15,10 +15,13 @@ import { NhtsaVehicleIdentityProvider } from './providers/nhtsa-vehicle-identity
 import { StubVehicleIdentityProvider } from './providers/stub-vehicle-identity.provider';
 import { StubFluidSpecProvider } from './providers/stub-fluid-spec.provider';
 
+// VIN decode is STUB by default (no outbound calls). The live NHTSA vPIC API is
+// OPT-IN: only enabled when VIN_DECODE_PROVIDER is explicitly set to 'LIVE'.
+// This keeps fresh clones / data imports / offline dev safe by default.
 const VinProvider =
-  process.env.VIN_DECODE_PROVIDER === 'STUB'
-    ? StubVehicleIdentityProvider
-    : NhtsaVehicleIdentityProvider;
+  process.env.VIN_DECODE_PROVIDER === 'LIVE'
+    ? NhtsaVehicleIdentityProvider
+    : StubVehicleIdentityProvider;
 
 @Module({
   imports: [AuditModule],

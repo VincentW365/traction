@@ -13,6 +13,8 @@ export const envSchema = z.object({
   NOTIFICATION_PROVIDER: z
     .enum(['stub', 'twilio', 'sendgrid'])
     .default('stub'),
+  // VIN decode: STUB (no outbound calls) by default; LIVE opt-in enables NHTSA vPIC.
+  VIN_DECODE_PROVIDER: z.enum(['STUB', 'LIVE']).default('STUB'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   LOG_FORMAT: z.enum(['json', 'pretty']).default('json'),
   DEFAULT_SITE_CODE: z.string().default('BERT-01'),
