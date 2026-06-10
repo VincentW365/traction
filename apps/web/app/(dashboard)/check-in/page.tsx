@@ -28,6 +28,8 @@ interface CustomerSearchResult {
 
 interface CustomerDetail extends CustomerSearchResult {
   vehicles: Vehicle[];
+  notificationOptInSms?: boolean;
+  notificationOptInEmail?: boolean;
 }
 
 interface AppointmentResult {
@@ -70,6 +72,9 @@ export default function CheckInPage() {
   const [oilGrade, setOilGrade] = useState('');
   const [vehicleWeightClass, setVehicleWeightClass] = useState('STANDARD');
   const [vehicleColor, setVehicleColor] = useState('');
+  // P4(b) notification consent capture (default opt-out unless explicitly set)
+  const [notifyOptInSms, setNotifyOptInSms] = useState(false);
+  const [notifyOptInEmail, setNotifyOptInEmail] = useState(false);
   const [successResult, setSuccessResult] = useState<{
     ticketNumber: string;
     priorityClass: string;
@@ -99,6 +104,14 @@ export default function CheckInPage() {
     enabled: !!selectedCustomer?.id,
   });
 
+  // P4(b): seed the consent checkboxes from the customer's current values so we
+  // preserve existing consent and never silently flip it; default opt-out.
+  useEffect(() => {
+    const c = customerDetailQuery.data;
+    setNotifyOptInSms(c?.notificationOptInSms ?? false);
+    setNotifyOptInEmail(c?.notificationOptInEmail ?? false);
+  }, [customerDetailQuery.data]);
+
   // Load today's appointments for selected customer at this site
   const today = new Date().toISOString().split('T')[0];
   const appointmentsQuery = useQuery({
@@ -126,6 +139,8 @@ export default function CheckInPage() {
         oilGrade: oilGrade || undefined,
         vehicleWeightClass: vehicleWeightClass || undefined,
         color: vehicleColor || undefined,
+        notificationOptInSms: notifyOptInSms,
+        notificationOptInEmail: notifyOptInEmail,
       }),
     onSuccess: (data) => {
       setSuccessResult({
@@ -442,6 +457,22 @@ export default function CheckInPage() {
                   <input type="text" value={vehicleColor} onChange={(e) => setVehicleColor(e.target.value)}
                     placeholder="e.g., Silver, White, Black"
                     className="input-field" />
+                </div>
+                {/* P4(b): notification consent capture (default opt-out) */}
+                <div className="col-span-2 border-t border-slate-100 pt-3 mt-1">
+                  <p className="input-label mb-2">Notification consent</p>
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input type="checkbox" checked={notifyOptInSms} onChange={(e) => setNotifyOptInSms(e.target.checked)}
+                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                      <span className="text-sm text-slate-700">Customer consents to SMS updates</span>
+                    </label>
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input type="checkbox" checked={notifyOptInEmail} onChange={(e) => setNotifyOptInEmail(e.target.checked)}
+                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                      <span className="text-sm text-slate-700">Customer consents to email updates</span>
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>

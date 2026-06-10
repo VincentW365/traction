@@ -152,6 +152,8 @@ export class ServiceVisitCompletionController {
       oilGradeInstalled?: string;
       mileageOverride?: boolean;
       overrideReason?: string;
+      paymentReleaseOverride?: boolean;
+      paymentReleaseOverrideReason?: string;
     },
     @CurrentUser() user: JwtPayload,
   ) {
@@ -195,6 +197,43 @@ export class ServiceVisitCompletionController {
           `Mileage out (${body.mileageOut}) cannot be less than mileage in (${visit.mileageIn})`,
         );
       }
+    }
+
+    // P4(c) GOV-005: vehicle-release payment gate. Releasing (status -> CLOSED)
+    // is blocked unless every service order's payment is cleared, OR a manager
+    // records an audited exception. Cleared = PAID / ON_ACCOUNT / WAIVED.
+    const PAYMENT_CLEARED = ['PAID', 'ON_ACCOUNT', 'WAIVED'];
+    const unpaidOrders = (visit.serviceOrders ?? []).filter(
+      (so) => !PAYMENT_CLEARED.includes(so.paymentStatus),
+    );
+    if (unpaidOrders.length > 0) {
+      if (body.paymentReleaseOverride !== true) {
+        throw new BadRequestException(
+          'Cannot release vehicle: payment is not cleared. A manager exception is required.',
+        );
+      }
+      if (!['MANAGER', 'ADMIN'].includes(user.role)) {
+        throw new BadRequestException(
+          'Only a manager or admin can authorize a payment-release exception.',
+        );
+      }
+      if (!body.paymentReleaseOverrideReason?.trim()) {
+        throw new BadRequestException(
+          'A reason is required to authorize a payment-release exception.',
+        );
+      }
+      await this.audit.log({
+        actorUserId: user.sub,
+        action: AUDIT_ACTIONS.PAYMENT_RELEASE_OVERRIDE,
+        entityType: 'ServiceVisit',
+        entityId: id,
+        beforeJson: {
+          unpaidOrders: unpaidOrders.map((o) => ({ id: o.id, paymentStatus: o.paymentStatus })),
+        },
+        afterJson: { released: true },
+        reasonCode: 'PAYMENT_RELEASE_OVERRIDE',
+        notes: body.paymentReleaseOverrideReason,
+      });
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {

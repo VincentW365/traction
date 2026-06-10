@@ -70,4 +70,16 @@ export class CheckInDto {
   @IsOptional()
   @IsString()
   overrideReason?: string;
+
+  // --- P4(b) notification consent capture (default opt-out; persisted + audited) ---
+
+  @ApiPropertyOptional({ description: 'Customer consents to SMS notifications' })
+  @IsOptional()
+  @IsBoolean()
+  notificationOptInSms?: boolean;
+
+  @ApiPropertyOptional({ description: 'Customer consents to email notifications' })
+  @IsOptional()
+  @IsBoolean()
+  notificationOptInEmail?: boolean;
 }

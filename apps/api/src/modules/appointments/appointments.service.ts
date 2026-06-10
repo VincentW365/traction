@@ -104,6 +104,14 @@ export class AppointmentsService {
       scheduledStartAt.getTime() + totalDurationMinutes * 60 * 1000,
     );
 
+    // 5b. P4(a): reject an overlapping active appointment for the SAME vehicle.
+    await this.validateNoVehicleOverlap(
+      data.vehicleId,
+      data.siteId,
+      scheduledStartAt,
+      scheduledEndAt,
+    );
+
     // 6. Create appointment + appointment_services in a transaction
     const appointment = await this.prisma.$transaction(async (tx) => {
       const appt = await tx.appointment.create({
@@ -270,6 +278,15 @@ export class AppointmentsService {
         baseStart.getTime() + totalDuration * 60 * 1000,
       );
 
+      // P4(a): the time window changed — re-check same-vehicle overlap (exclude self).
+      await this.validateNoVehicleOverlap(
+        existing.vehicleId,
+        existing.siteId,
+        baseStart,
+        updateData.scheduledEndAt as Date,
+        id,
+      );
+
       // Delete existing services and create new ones inside transaction
       const appointment = await this.prisma.$transaction(async (tx) => {
         await tx.appointmentService.deleteMany({
@@ -313,6 +330,14 @@ export class AppointmentsService {
     const wasRescheduled = !!data.scheduledStartAt;
     if (wasRescheduled) {
       updateData.status = 'RESCHEDULED';
+      // P4(a): rescheduled — re-check same-vehicle overlap (exclude self).
+      await this.validateNoVehicleOverlap(
+        existing.vehicleId,
+        existing.siteId,
+        updateData.scheduledStartAt as Date,
+        (updateData.scheduledEndAt as Date) ?? existing.scheduledEndAt ?? (updateData.scheduledStartAt as Date),
+        id,
+      );
     }
 
     const appointment = await this.prisma.appointment.update({
@@ -499,6 +524,47 @@ export class AppointmentsService {
       },
       reasonCode: 'SAME_DAY_CUTOFF_OVERRIDE',
     });
+  }
+
+  /**
+   * P4(a) — reject a new/rescheduled appointment when the SAME vehicle already
+   * has an active appointment whose time window overlaps the requested window.
+   *
+   * Scope note: bays, work resources, and technicians are NOT bound at
+   * appointment creation (they are assigned later at dispatch via
+   * ResourceReservation), so bay/resource/technician-level double-booking is
+   * intentionally NOT enforced here. This guard only covers the unambiguous,
+   * already-modelled conflict: the same vehicle in two overlapping appointments.
+   */
+  private async validateNoVehicleOverlap(
+    vehicleId: string,
+    siteId: string,
+    startAt: Date,
+    endAt: Date,
+    excludeAppointmentId?: string,
+  ): Promise<void> {
+    const conflict = await this.prisma.appointment.findFirst({
+      where: {
+        siteId,
+        vehicleId,
+        status: { notIn: ['CANCELLED', 'COMPLETED', 'MISSED'] },
+        ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
+        OR: [
+          // Overlap against a known end window: existing.start < new.end AND existing.end > new.start
+          { AND: [{ scheduledStartAt: { lt: endAt } }, { scheduledEndAt: { gt: startAt } }] },
+          // Open-ended existing appointment (no end recorded): treat its start instant as the window
+          { AND: [{ scheduledEndAt: null }, { scheduledStartAt: { gte: startAt, lt: endAt } }] },
+        ],
+      },
+      select: { id: true, scheduledStartAt: true },
+    });
+
+    if (conflict) {
+      throw new BadRequestException(
+        `This vehicle already has an appointment overlapping this time ` +
+          `(${conflict.scheduledStartAt.toISOString()}). Choose a non-overlapping time.`,
+      );
+    }
   }
 
   /**

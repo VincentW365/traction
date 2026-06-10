@@ -57,6 +57,7 @@ interface TicketDetail {
 interface ServiceOrder {
   id: string;
   status: string;
+  paymentStatus: string;
   notes: string | null;
   promisedCompletionAt: string | null;
   startedAt: string | null;
@@ -154,6 +155,9 @@ export default function QueueTicketDetailPage() {
   const [mileageOut, setMileageOut] = useState('');
   const [oilBrandInstalled, setOilBrandInstalled] = useState('');
   const [oilGradeInstalled, setOilGradeInstalled] = useState('');
+  // P4(c) payment-release manager exception (GOV-005)
+  const [paymentOverride, setPaymentOverride] = useState(false);
+  const [paymentOverrideReason, setPaymentOverrideReason] = useState('');
 
   // Abandon / no-show form state (CR-2026-018, P3)
   const [showAbandonForm, setShowAbandonForm] = useState(false);
@@ -281,6 +285,8 @@ export default function QueueTicketDetailPage() {
       mileageOut: mileageOut ? parseInt(mileageOut, 10) : undefined,
       oilBrandInstalled: oilBrandInstalled || undefined,
       oilGradeInstalled: oilGradeInstalled || undefined,
+      paymentReleaseOverride: paymentOverride || undefined,
+      paymentReleaseOverrideReason: paymentOverride ? (paymentOverrideReason || undefined) : undefined,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['queue-ticket', ticketId] });
@@ -352,6 +358,15 @@ export default function QueueTicketDetailPage() {
   const orders = ordersQuery.data ?? [];
   const canOverride = !ticket.overrideActive && DISPATCHABLE_STATUSES.includes(ticket.displayStatus);
   const showCompletionSection = sv.status === 'READY_FOR_PICKUP' || sv.status === 'QC';
+  // P4(c): vehicle-release payment gate (GOV-005). Cleared = PAID/ON_ACCOUNT/WAIVED.
+  const PAYMENT_CLEARED = ['PAID', 'ON_ACCOUNT', 'WAIVED'];
+  const unpaidOrders = orders.filter((o) => !PAYMENT_CLEARED.includes(o.paymentStatus));
+  const paymentBlocked = unpaidOrders.length > 0;
+  const isManager = ['ADMIN', 'MANAGER'].includes(user?.roleCode ?? '');
+  const releaseDisabled =
+    completeVisit.isPending ||
+    (!!mileageOut && sv.mileageIn != null && parseInt(mileageOut, 10) < sv.mileageIn) ||
+    (paymentBlocked && (!isManager || !paymentOverride || !paymentOverrideReason.trim()));
   const canAbandon =
     ABANDON_ROLES.includes(user?.roleCode ?? '') &&
     sv.sourceType !== 'HISTORICAL_IMPORT' &&
@@ -875,6 +890,30 @@ export default function QueueTicketDetailPage() {
                     </select>
                   </div>
                 </div>
+                {/* P4(c): vehicle-release payment gate (GOV-005) */}
+                {paymentBlocked && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 space-y-2">
+                    <p className="text-xs font-semibold text-amber-800">
+                      Payment not cleared on {unpaidOrders.length} order{unpaidOrders.length > 1 ? 's' : ''}
+                      {' '}({unpaidOrders.map((o) => o.paymentStatus).join(', ')}). Release is blocked.
+                    </p>
+                    {isManager ? (
+                      <>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={paymentOverride} onChange={(e) => setPaymentOverride(e.target.checked)}
+                            className="rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
+                          <span className="text-xs text-amber-800">Authorize manager release exception (audited)</span>
+                        </label>
+                        {paymentOverride && (
+                          <input type="text" value={paymentOverrideReason} onChange={(e) => setPaymentOverrideReason(e.target.value)}
+                            className="input-field text-xs" placeholder="Reason for releasing without cleared payment (required)" />
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-xs text-amber-700">A manager or admin must authorize release without cleared payment.</p>
+                    )}
+                  </div>
+                )}
                 {completeVisit.isError && (
                   <p className="text-xs text-red-600">{completeVisit.error instanceof Error ? completeVisit.error.message : 'Failed to complete'}</p>
                 )}
@@ -884,7 +923,7 @@ export default function QueueTicketDetailPage() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => completeVisit.mutate()}
-                    disabled={completeVisit.isPending || (!!mileageOut && sv.mileageIn != null && parseInt(mileageOut, 10) < sv.mileageIn)}
+                    disabled={releaseDisabled}
                     className="btn-success text-xs"
                   >
                     {completeVisit.isPending ? 'Completing...' : 'Complete & Close Visit'}

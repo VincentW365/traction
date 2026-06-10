@@ -58,6 +58,8 @@ export class CheckInService {
       color?: string;
       mileageOverride?: boolean;
       overrideReason?: string;
+      notificationOptInSms?: boolean;
+      notificationOptInEmail?: boolean;
     },
   ) {
     const now = arrivalAt ?? new Date();
@@ -339,6 +341,43 @@ export class CheckInService {
           reasonCode: 'CLASSIFICATION_CONFIRMED',
         }),
       ]);
+    }
+
+    // P4(b): capture notification consent if staff provided it. Default remains
+    // whatever the customer already had — only an explicit value changes it, and
+    // only an actual change is persisted/audited. No notifications are sent here.
+    const optInUpdate: { notificationOptInSms?: boolean; notificationOptInEmail?: boolean } = {};
+    if (
+      intake?.notificationOptInSms !== undefined &&
+      intake.notificationOptInSms !== appointment.customer.notificationOptInSms
+    ) {
+      optInUpdate.notificationOptInSms = intake.notificationOptInSms;
+    }
+    if (
+      intake?.notificationOptInEmail !== undefined &&
+      intake.notificationOptInEmail !== appointment.customer.notificationOptInEmail
+    ) {
+      optInUpdate.notificationOptInEmail = intake.notificationOptInEmail;
+    }
+    if (Object.keys(optInUpdate).length > 0) {
+      const before = {
+        notificationOptInSms: appointment.customer.notificationOptInSms,
+        notificationOptInEmail: appointment.customer.notificationOptInEmail,
+      };
+      await this.prisma.customer.update({
+        where: { id: appointment.customerId },
+        data: optInUpdate,
+      });
+      await this.auditService.log({
+        actorUserId: userId,
+        action: AUDIT_ACTIONS.CUSTOMER_NOTIFICATION_OPTIN,
+        entityType: 'Customer',
+        entityId: appointment.customerId,
+        beforeJson: before,
+        afterJson: { ...before, ...optInUpdate },
+        reasonCode: 'CHECKIN_CAPTURE',
+        notes: 'Notification consent captured at check-in',
+      });
     }
 
     this.logger.log(

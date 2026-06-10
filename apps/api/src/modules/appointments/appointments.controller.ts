@@ -122,6 +122,8 @@ export class AppointmentsController {
       color: dto.color,
       mileageOverride: dto.mileageOverride,
       overrideReason: dto.overrideReason,
+      notificationOptInSms: dto.notificationOptInSms,
+      notificationOptInEmail: dto.notificationOptInEmail,
     });
   }
 }
