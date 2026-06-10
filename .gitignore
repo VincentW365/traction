@@ -21,8 +21,12 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Prisma
-prisma/migrations/**/migration_lock.toml
+# Claude Code local/workflow settings (machine-local permission allowlists)
+.claude/settings.local.json
+.claude/settings.json
+
+# Prisma — migration_lock.toml is intentionally TRACKED (records the datasource
+# provider; Prisma best practice for shared clones). Do not ignore it.
 
 # Turbo
 .turbo/
