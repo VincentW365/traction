@@ -141,4 +141,11 @@ export class TransportDispatchController {
   async getDispatchBoard(@Query('siteId', ParseUUIDPipe) siteId: string) {
     return this.transportService.getDispatchBoard(siteId);
   }
+
+  @Get('drivers')
+  @RequirePermission(PERMISSIONS.TRANSPORT_MANAGE)
+  @ApiOperation({ summary: 'List candidate drivers (active staff) for assignment' })
+  async getDrivers() {
+    return this.transportService.getDrivers();
+  }
 }

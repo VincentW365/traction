@@ -249,25 +249,35 @@ export class TransportService {
   // ---------------------------------------------------------------------------
 
   async getDispatchBoard(siteId: string) {
+    const dispatchInclude = {
+      serviceVisit: {
+        include: {
+          customer: { select: { firstName: true, lastName: true } },
+          vehicle: { select: { plateNumber: true, make: true, model: true } },
+        },
+      },
+      driver: { select: { id: true, fullName: true } },
+    } as const;
+
     const requests = await this.prisma.transportRequest.findMany({
       where: {
         status: { in: ACTIVE_STATUSES },
         serviceVisit: { siteId },
       },
-      include: {
-        serviceVisit: {
-          include: {
-            customer: {
-              select: { firstName: true, lastName: true },
-            },
-            vehicle: {
-              select: { plateNumber: true, make: true, model: true },
-            },
-          },
-        },
-        driver: { select: { id: true, fullName: true } },
-      },
+      include: dispatchInclude,
       orderBy: [{ requestedPickupAt: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    // Recently closed (read-only) — surfaces completed/cancelled jobs so the
+    // dispatch screen can show outcomes. No status transitions happen here.
+    const closed = await this.prisma.transportRequest.findMany({
+      where: {
+        status: { in: ['COMPLETED', 'CANCELLED'] as TransportStatus[] },
+        serviceVisit: { siteId },
+      },
+      include: dispatchInclude,
+      orderBy: { updatedAt: 'desc' },
+      take: 25,
     });
 
     // Group by logical buckets for dispatch view
@@ -285,12 +295,15 @@ export class TransportService {
 
     const mapItem = (r: (typeof requests)[number]) => ({
       id: r.id,
+      serviceVisitId: r.serviceVisitId,
       direction: r.direction,
       status: r.status,
       customerName: `${r.serviceVisit.customer.firstName} ${r.serviceVisit.customer.lastName}`,
       vehiclePlate: r.serviceVisit.vehicle.plateNumber,
+      vehicleDescription: [r.serviceVisit.vehicle.make, r.serviceVisit.vehicle.model].filter(Boolean).join(' '),
       requestedPickupAt: r.requestedPickupAt,
       scheduledPickupAt: r.scheduledPickupAt,
+      completedAt: r.completedAt,
       driverName: r.driver?.fullName ?? null,
     });
 
@@ -298,7 +311,21 @@ export class TransportService {
       pending: pending.map(mapItem),
       scheduled: scheduled.map(mapItem),
       inProgress: inProgress.map(mapItem),
+      recentlyClosed: closed.map(mapItem),
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Drivers — candidate users for assignment (read-only). No dedicated DRIVER
+  // role exists; any active staff member may be assigned as the driver.
+  // ---------------------------------------------------------------------------
+
+  async getDrivers() {
+    return this.prisma.userAccount.findMany({
+      where: { status: 'ACTIVE' },
+      select: { id: true, fullName: true, roleCode: true },
+      orderBy: { fullName: 'asc' },
+    });
   }
 
   // ---------------------------------------------------------------------------

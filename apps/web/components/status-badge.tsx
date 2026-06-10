@@ -9,6 +9,11 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string; lab
   COMPLETED: { bg: 'bg-slate-50', text: 'text-slate-500', dot: 'bg-slate-400', label: 'Completed' },
   CANCELLED: { bg: 'bg-slate-50', text: 'text-slate-400', dot: 'bg-slate-300', label: 'Cancelled' },
   ABANDONED: { bg: 'bg-rose-50', text: 'text-rose-700', dot: 'bg-rose-500', label: 'Abandoned' },
+  // Transport lifecycle (P2)
+  REQUESTED: { bg: 'bg-slate-100', text: 'text-slate-600', dot: 'bg-slate-400', label: 'Requested' },
+  CONFIRMATION_PENDING: { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500', label: 'Confirming' },
+  SCHEDULED: { bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-blue-500', label: 'Scheduled' },
+  DRIVER_ASSIGNED: { bg: 'bg-indigo-50', text: 'text-indigo-700', dot: 'bg-indigo-500', label: 'Driver Assigned' },
   APPT_PROTECTED: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500', label: 'Protected' },
   APPT_LATE_SOFT: { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500', label: 'Late' },
   WALKIN_STANDARD: { bg: 'bg-blue-50', text: 'text-blue-600', dot: 'bg-blue-500', label: 'Walk-In' },
