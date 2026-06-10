@@ -65,6 +65,13 @@ export class ClassificationController {
     });
   }
 
+  @Get('stats')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'Read-only classification progress snapshot (counts only; managers)' })
+  async stats() {
+    return this.classification.getStats();
+  }
+
   @Post(':vehicleId/confirm')
   @RequirePermission(PERMISSIONS.VEHICLE_UPDATE)
   @ApiOperation({ summary: 'Staff confirm/adjust a vehicle serviceClass (writes operational field + audit)' })

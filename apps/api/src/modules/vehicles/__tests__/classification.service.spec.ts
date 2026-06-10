@@ -68,6 +68,59 @@ describe('ClassificationService.getQueue', () => {
   });
 });
 
+describe('ClassificationService.getStats', () => {
+  it('returns live-only counts, percent classified, mobile-jack eligible, and breakdowns', async () => {
+    const h = build();
+    // Call order: totalLive, unclassified, then 7 serviceClasses (SEDAN first), then 4 confidences (HIGH,MEDIUM,LOW,NONE)
+    h.prisma.vehicle.count
+      .mockResolvedValueOnce(100) // totalLive
+      .mockResolvedValueOnce(60) // unclassified
+      .mockResolvedValueOnce(10) // SEDAN_CLASS
+      .mockResolvedValueOnce(8) // SUV_LIGHT
+      .mockResolvedValueOnce(5) // SUV_HEAVY
+      .mockResolvedValueOnce(7) // PICKUP
+      .mockResolvedValueOnce(4) // VAN
+      .mockResolvedValueOnce(3) // TRUCK
+      .mockResolvedValueOnce(3) // UNKNOWN_REQUIRES_REVIEW
+      .mockResolvedValueOnce(0) // HIGH
+      .mockResolvedValueOnce(30) // MEDIUM
+      .mockResolvedValueOnce(0) // LOW
+      .mockResolvedValueOnce(30); // NONE
+
+    const out = await h.service.getStats();
+
+    expect(out.totalLive).toBe(100);
+    expect(out.unclassified).toBe(60);
+    expect(out.classified).toBe(40);
+    expect(out.percentClassified).toBe(40);
+    expect(out.mobileJackEligible).toBe(10);
+    expect(out.confirmedByClass).toHaveLength(7);
+    expect(out.confirmedByClass[0]).toEqual({ serviceClass: 'SEDAN_CLASS', count: 10 });
+    expect(out.pendingByConfidence).toEqual([
+      { confidence: 'HIGH', count: 0 },
+      { confidence: 'MEDIUM', count: 30 },
+      { confidence: 'LOW', count: 0 },
+      { confidence: 'NONE', count: 30 },
+    ]);
+
+    // live-only filtering applied (placeholder excluded) on the totalLive count
+    const firstWhere = h.prisma.vehicle.count.mock.calls[0][0].where;
+    expect(firstWhere.vehicleCode).toEqual({ not: { startsWith: 'HIST-UNRESOLVED-' } });
+    // unclassified count is serviceClass null + live
+    const secondWhere = h.prisma.vehicle.count.mock.calls[1][0].where;
+    expect(secondWhere.serviceClass).toBeNull();
+    expect(secondWhere.vehicleCode).toEqual({ not: { startsWith: 'HIST-UNRESOLVED-' } });
+  });
+
+  it('percentClassified is 0 when there are no live vehicles', async () => {
+    const h = build();
+    h.prisma.vehicle.count.mockResolvedValue(0);
+    const out = await h.service.getStats();
+    expect(out.percentClassified).toBe(0);
+    expect(out.mobileJackEligible).toBe(0);
+  });
+});
+
 describe('ClassificationService.confirm', () => {
   beforeEach(() => vi.clearAllMocks());
 

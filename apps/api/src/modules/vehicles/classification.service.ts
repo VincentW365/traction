@@ -156,6 +156,58 @@ export class ClassificationService {
   }
 
   /**
+   * Read-only progress snapshot (CR-2026-010) — counts only, no PII.
+   * Live-only (excludes historical placeholders via liveVehicleWhere). Used by
+   * the manager Reports view to track classification burn-down. Does not read or
+   * return any plate/VIN/engine fields.
+   */
+  async getStats() {
+    const liveWhere = liveVehicleWhere(false);
+    const serviceClasses = Object.values(VehicleServiceClass);
+    const confidences = Object.values(ClassificationConfidence);
+
+    const [totalLive, unclassified, byClassCounts, byConfidenceCounts] = await Promise.all([
+      this.prisma.vehicle.count({ where: liveWhere }),
+      this.prisma.vehicle.count({ where: { serviceClass: null, ...liveWhere } }),
+      Promise.all(
+        serviceClasses.map((sc) =>
+          this.prisma.vehicle.count({ where: { serviceClass: sc, ...liveWhere } }),
+        ),
+      ),
+      Promise.all(
+        confidences.map((cf) =>
+          this.prisma.vehicle.count({
+            where: { serviceClass: null, ...liveWhere, classification: { is: { confidence: cf } } },
+          }),
+        ),
+      ),
+    ]);
+
+    const classified = totalLive - unclassified;
+    const confirmedByClass = serviceClasses.map((serviceClass, i) => ({
+      serviceClass,
+      count: byClassCounts[i],
+    }));
+    const pendingByConfidence = confidences.map((confidence, i) => ({
+      confidence,
+      count: byConfidenceCounts[i],
+    }));
+    const mobileJackEligible =
+      confirmedByClass.find((c) => c.serviceClass === VehicleServiceClass.SEDAN_CLASS)?.count ?? 0;
+    const percentClassified = totalLive > 0 ? Math.round((classified / totalLive) * 100) : 0;
+
+    return {
+      totalLive,
+      classified,
+      unclassified,
+      percentClassified,
+      mobileJackEligible,
+      confirmedByClass,
+      pendingByConfidence,
+    };
+  }
+
+  /**
    * Staff confirm/adjust a single vehicle's serviceClass (+ optional weightClass).
    * Writes the operational field, the audit record, an AuditLog and StatusHistory.
    */
