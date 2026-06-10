@@ -21,6 +21,7 @@ export const PERMISSIONS = {
   QUEUE_VIEW: 'queue:view',
   QUEUE_OVERRIDE: 'queue:override',
   QUEUE_RECOMPUTE: 'queue:recompute',
+  QUEUE_ABANDON: 'queue:abandon', // CR-2026-018 (P3) — mark visit no-show/abandoned
 
   // Service Orders (Phase 2)
   SERVICE_ORDER_CREATE: 'service_order:create',
@@ -84,6 +85,8 @@ const FRONT_DESK_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.CHECKIN_PERFORM,
   PERMISSIONS.WALKIN_CREATE,
   PERMISSIONS.QUEUE_VIEW,
+  // Front desk owns no-show/abandon handling; inherited by SERVICE_ADVISOR + MANAGER.
+  PERMISSIONS.QUEUE_ABANDON,
   PERMISSIONS.MAINTENANCE_VIEW,
 ];
 

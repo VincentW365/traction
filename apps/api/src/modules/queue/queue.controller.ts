@@ -11,6 +11,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { QueueService } from './queue.service';
 import { QueueOverrideDto, ClearOverrideDto } from './dto/queue-override.dto';
+import { AbandonVisitDto } from './dto/abandon-visit.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -103,5 +104,16 @@ export class QueueTicketsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.queueService.completeTicket(id, user.sub);
+  }
+
+  @Post(':id/abandon')
+  @RequirePermission(PERMISSIONS.QUEUE_ABANDON)
+  @ApiOperation({ summary: 'Mark visit as no-show / abandoned (drops out of the active queue)' })
+  async abandonVisit(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AbandonVisitDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.queueService.abandonVisit(id, dto, user.sub);
   }
 }

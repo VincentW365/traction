@@ -7,9 +7,26 @@ import {
 import { differenceInMinutes } from 'date-fns';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
-import { AuditService } from '../audit/audit.service';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { StatusHistoryService } from '../audit/status-history.service';
 import { SchedulingService } from '../scheduling/scheduling.service';
 import { liveVisitSql } from '../../common/helpers/operational-scope';
+
+/**
+ * CR-2026-018 (P3) — a ServiceVisit may be marked ABANDONED (no-show / left
+ * before service) only from a pre-completion, non-terminal status. QC,
+ * READY_FOR_PICKUP, CLOSED, CANCELLED and ABANDONED are excluded (service is
+ * effectively done or already terminal).
+ */
+const ABANDONABLE_VISIT_STATUSES = [
+  'CREATED',
+  'ARRIVED',
+  'CHECKED_IN',
+  'QUEUED',
+  'CALLED',
+  'IN_SERVICE',
+  'WAITING_PARTS',
+];
 
 /** Source of the ETA average — CR-2026-007 (explainability/audit). */
 export type EtaBasis = 'LIVE' | 'HISTORICAL_FALLBACK' | 'DEFAULT';
@@ -34,6 +51,7 @@ export class QueueService {
     private prisma: PrismaService,
     private auditService: AuditService,
     private schedulingService: SchedulingService,
+    private statusHistory: StatusHistoryService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -456,6 +474,114 @@ export class QueueService {
       message: 'Work marked as complete. Vehicle is ready for pickup.',
       ticketNumber: ticket.ticketNumber,
       serviceVisitId: ticket.serviceVisitId,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // ABANDON VISIT — no-show / left before service (CR-2026-018, P3)
+  //
+  // Terminal operational transition: the ServiceVisit becomes ABANDONED and its
+  // QueueTicket is closed (displayStatus CANCELLED) so it drops out of the
+  // active board/recompute and stops corrupting rank/ETA/KPIs. Nothing is
+  // deleted. A reason is required; the transition is audited (StatusHistory +
+  // AuditLog) and the queue is recomputed for the site. Historical-import
+  // visits are never abandonable.
+  // ---------------------------------------------------------------------------
+
+  async abandonVisit(
+    ticketId: string,
+    input: { reasonCode: string; notes?: string },
+    userId: string,
+  ) {
+    const ticket = await this.prisma.queueTicket.findUnique({
+      where: { id: ticketId },
+      include: { serviceVisit: true },
+    });
+
+    if (!ticket) throw new NotFoundException(`Queue ticket ${ticketId} not found`);
+
+    const sv = ticket.serviceVisit;
+
+    // Guard: ticket already in a terminal display state.
+    if (['COMPLETED', 'CANCELLED'].includes(ticket.displayStatus)) {
+      throw new BadRequestException(
+        `Cannot abandon a ticket already in status ${ticket.displayStatus}`,
+      );
+    }
+    // Guard: never treat imported historical visits as abandonable.
+    if (sv.sourceType === 'HISTORICAL_IMPORT') {
+      throw new BadRequestException('Historical-import visits cannot be abandoned');
+    }
+    // Guard: only active, pre-completion visit statuses may be abandoned.
+    if (!ABANDONABLE_VISIT_STATUSES.includes(sv.status)) {
+      throw new BadRequestException(
+        `Cannot mark visit abandoned from status ${sv.status}`,
+      );
+    }
+
+    const fromVisitStatus = sv.status;
+    const fromDisplayStatus = ticket.displayStatus;
+
+    await this.prisma.$transaction(async (tx) => {
+      // Visit becomes terminal ABANDONED (canonical operational truth).
+      await tx.serviceVisit.update({
+        where: { id: sv.id },
+        data: { status: 'ABANDONED' },
+      });
+
+      // Close the queue ticket so it leaves the active board/recompute. The
+      // QueueDisplayStatus enum has no ABANDONED member; CANCELLED is the
+      // terminal display state (no schema change).
+      await tx.queueTicket.update({
+        where: { id: ticketId },
+        data: { displayStatus: 'CANCELLED' },
+      });
+
+      // Release any resource this visit was occupying.
+      await tx.resourceOccupancy.updateMany({
+        where: { serviceVisitId: sv.id, status: 'OCCUPIED' },
+        data: { status: 'AVAILABLE', serviceVisitId: null, technicianId: null },
+      });
+    });
+
+    await this.logEvent(sv.id, ticketId, 'ABANDONED', userId, {
+      positionBefore: ticket.queueRank,
+      reasonCode: input.reasonCode,
+    });
+
+    await this.statusHistory.record({
+      entityType: 'ServiceVisit',
+      entityId: sv.id,
+      fromStatus: fromVisitStatus,
+      toStatus: 'ABANDONED',
+      changedByUserId: userId,
+      reasonCode: input.reasonCode,
+      notes: input.notes,
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: AUDIT_ACTIONS.SERVICE_VISIT_ABANDONED,
+      entityType: 'ServiceVisit',
+      entityId: sv.id,
+      beforeJson: { status: fromVisitStatus, displayStatus: fromDisplayStatus },
+      afterJson: { status: 'ABANDONED', displayStatus: 'CANCELLED' },
+      reasonCode: input.reasonCode,
+      notes: input.notes,
+    });
+
+    // Re-rank the remaining live tickets for this site.
+    await this.schedulingService.recomputeQueue(sv.siteId);
+
+    this.logger.log(
+      `Visit ${sv.id} (ticket ${ticket.ticketNumber}) abandoned by ${userId}: ${input.reasonCode}`,
+    );
+
+    return {
+      message: 'Visit marked as abandoned and removed from the active queue.',
+      ticketNumber: ticket.ticketNumber,
+      serviceVisitId: sv.id,
+      status: 'ABANDONED',
     };
   }
 

@@ -9,6 +9,7 @@ import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../components/status-badge';
 import { useSiteId } from '../../../../hooks/use-site';
+import { useAuth } from '../../../../hooks/use-auth';
 import { PAUSE_REASONS, REWORK_REASONS } from '../../../../lib/service-order-actions';
 
 /* ---------- Types ---------- */
@@ -85,6 +86,12 @@ interface TechOption {
 const OVERRIDE_REASONS = ['CUSTOMER_REQUEST', 'MANAGER_ESCALATION', 'VIP', 'URGENT_REPAIR', 'OTHER'];
 const DISPATCHABLE_STATUSES = ['WAITING', 'ISSUED', 'PENDING_RANK', 'BLOCKED'];
 
+// CR-2026-018 (P3) — no-show / abandon. Mirrors the backend QUEUE_ABANDON grant
+// (FRONT_DESK + SERVICE_ADVISOR + MANAGER + ADMIN) and the abandonable-status set.
+const ABANDON_REASONS = ['NO_SHOW', 'LEFT_BEFORE_SERVICE', 'CUSTOMER_CANCELLED_ONSITE', 'UNREACHABLE', 'OTHER'];
+const ABANDON_ROLES = ['ADMIN', 'MANAGER', 'SERVICE_ADVISOR', 'FRONT_DESK'];
+const ABANDONABLE_VISIT_STATUSES = ['CREATED', 'ARRIVED', 'CHECKED_IN', 'QUEUED', 'CALLED', 'IN_SERVICE', 'WAITING_PARTS'];
+
 const ORDER_ACTIONS: Record<string, Array<{ label: string; toStatus: string; style: string }>> = {
   DRAFT: [{ label: 'Approve', toStatus: 'APPROVED', style: 'btn-primary' }],
   APPROVED: [],
@@ -107,6 +114,7 @@ export default function QueueTicketDetailPage() {
   const ticketId = params.id as string;
   const siteId = useSiteId();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   // Override form state
   const [showOverrideForm, setShowOverrideForm] = useState(false);
@@ -133,6 +141,11 @@ export default function QueueTicketDetailPage() {
   const [mileageOut, setMileageOut] = useState('');
   const [oilBrandInstalled, setOilBrandInstalled] = useState('');
   const [oilGradeInstalled, setOilGradeInstalled] = useState('');
+
+  // Abandon / no-show form state (CR-2026-018, P3)
+  const [showAbandonForm, setShowAbandonForm] = useState(false);
+  const [abandonReason, setAbandonReason] = useState(ABANDON_REASONS[0]);
+  const [abandonNotes, setAbandonNotes] = useState('');
 
   // --- Queries ---
   const { data: ticket, isLoading, error } = useQuery<TicketDetail>({
@@ -248,6 +261,20 @@ export default function QueueTicketDetailPage() {
     },
   });
 
+  // CR-2026-018 (P3) — mark no-show / abandoned; drops the visit off the board.
+  const abandonVisit = useMutation({
+    mutationFn: () => api.post(`/queue-tickets/${ticketId}/abandon`, {
+      reasonCode: abandonReason,
+      notes: abandonNotes || undefined,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queue-ticket', ticketId] });
+      queryClient.invalidateQueries({ queryKey: ['queue-board'] });
+      setShowAbandonForm(false);
+      setAbandonNotes('');
+    },
+  });
+
   // --- Render ---
   if (isLoading) {
     return (
@@ -282,6 +309,11 @@ export default function QueueTicketDetailPage() {
   const orders = ordersQuery.data ?? [];
   const canOverride = !ticket.overrideActive && DISPATCHABLE_STATUSES.includes(ticket.displayStatus);
   const showCompletionSection = sv.status === 'READY_FOR_PICKUP' || sv.status === 'QC';
+  const canAbandon =
+    ABANDON_ROLES.includes(user?.roleCode ?? '') &&
+    sv.sourceType !== 'HISTORICAL_IMPORT' &&
+    ABANDONABLE_VISIT_STATUSES.includes(sv.status) &&
+    !['COMPLETED', 'CANCELLED'].includes(ticket.displayStatus);
 
   return (
     <div className="page-container">
@@ -376,6 +408,48 @@ export default function QueueTicketDetailPage() {
                 {applyOverride.isPending ? 'Applying...' : 'Apply Override'}
               </button>
               <button onClick={() => setShowOverrideForm(false)} className="btn-secondary text-xs">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* No-show / Abandon control (CR-2026-018, P3) */}
+      {canAbandon && !showAbandonForm && (
+        <div className="mb-4">
+          <button onClick={() => setShowAbandonForm(true)} className="text-xs text-rose-600 hover:underline font-medium">
+            Mark No-Show / Abandoned
+          </button>
+        </div>
+      )}
+
+      {showAbandonForm && (
+        <div className="card mb-4 border-rose-200 bg-rose-50">
+          <div className="card-body space-y-3">
+            <h3 className="text-sm font-semibold text-rose-900">Mark No-Show / Abandoned</h3>
+            <p className="text-xs text-rose-700">
+              This removes the visit from the active queue and re-ranks the rest. The visit record is kept and the
+              change is audited. This cannot be undone from here.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="input-label">Reason *</label>
+                <select value={abandonReason} onChange={(e) => setAbandonReason(e.target.value)} className="input-field">
+                  {ABANDON_REASONS.map((r) => <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="input-label">Notes</label>
+                <input type="text" value={abandonNotes} onChange={(e) => setAbandonNotes(e.target.value)} className="input-field" placeholder="Optional" />
+              </div>
+            </div>
+            {abandonVisit.isError && (
+              <p className="text-xs text-red-700">{abandonVisit.error instanceof Error ? abandonVisit.error.message : 'Failed to mark abandoned'}</p>
+            )}
+            <div className="flex gap-2">
+              <button onClick={() => abandonVisit.mutate()} disabled={abandonVisit.isPending} className="btn-danger text-xs">
+                {abandonVisit.isPending ? 'Marking...' : 'Confirm No-Show'}
+              </button>
+              <button onClick={() => setShowAbandonForm(false)} className="btn-secondary text-xs">Cancel</button>
             </div>
           </div>
         </div>

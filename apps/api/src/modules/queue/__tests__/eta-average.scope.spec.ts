@@ -42,7 +42,7 @@ function buildService() {
     resourceOccupancy: { findMany: vi.fn(async () => []) },
     serviceVisit: { findMany: vi.fn(async () => []) },
   };
-  const service = new QueueService(prisma as any, {} as any, {} as any);
+  const service = new QueueService(prisma as any, {} as any, {} as any, {} as any);
   return { service, prisma };
 }
 
