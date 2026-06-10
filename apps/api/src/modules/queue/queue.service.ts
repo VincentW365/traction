@@ -8,6 +8,20 @@ import { differenceInMinutes } from 'date-fns';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { SchedulingService } from '../scheduling/scheduling.service';
+import { liveVisitSql } from '../../common/helpers/operational-scope';
+
+/** Source of the ETA average — CR-2026-007 (explainability/audit). */
+export type EtaBasis = 'LIVE' | 'HISTORICAL_FALLBACK' | 'DEFAULT';
+interface AvgServiceResult {
+  minutes: number;
+  basis: EtaBasis;
+  sampleSize: number;
+}
+
+/** ETA average defaults (CR-2026-007) — overridable via BusinessRuleConfig. */
+const ETA_DEFAULT_MINUTES = 30;
+const ETA_DEFAULT_WINDOW_DAYS = 30;
+const ETA_DEFAULT_MIN_LIVE_SAMPLE = 20;
 
 @Injectable()
 export class QueueService {
@@ -48,7 +62,8 @@ export class QueueService {
       orderBy: [{ queueRank: { sort: 'asc', nulls: 'last' } }],
     });
 
-    const avgServiceMinutes = await this.getAvgServiceMinutes(siteId);
+    const eta = await this.getAvgServiceMinutes(siteId);
+    const avgServiceMinutes = eta.minutes;
 
     const items = tickets.map((t) => {
       const sv = t.serviceVisit;
@@ -76,7 +91,15 @@ export class QueueService {
       };
     });
 
-    return { siteId, generatedAt: now, items };
+    // CR-2026-007: surface the ETA basis on the STAFF board only (additive,
+    // backward compatible). Never added to the public display board.
+    return {
+      siteId,
+      generatedAt: now,
+      items,
+      etaBasis: eta.basis,
+      etaSampleSize: eta.sampleSize,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -443,7 +466,7 @@ export class QueueService {
   async getPublicDisplayBoard(siteId: string) {
     const now = new Date();
 
-    const [site, tickets, occupancies, readyVisits, avgServiceMinutes] =
+    const [site, tickets, occupancies, readyVisits, eta] =
       await Promise.all([
         this.prisma.site.findUnique({ where: { id: siteId }, select: { name: true } }),
         this.prisma.queueTicket.findMany({
@@ -501,7 +524,9 @@ export class QueueService {
       .map((t) => ({
         ticketNumber: t.ticketNumber,
         position: t.queueRank,
-        eta: this.getDisplayEtaLabel(t.queueRank, avgServiceMinutes),
+        // CR-2026-007: public board uses only the numeric average; etaBasis is
+        // NOT exposed here (staff board only). Label behavior unchanged.
+        eta: this.getDisplayEtaLabel(t.queueRank, eta.minutes),
       }));
 
     const ready = readyVisits
@@ -534,29 +559,100 @@ export class QueueService {
     return 'Blocked';
   }
 
-  private async getAvgServiceMinutes(siteId: string): Promise<number> {
-    // CR-2026-006 DEFERRED (NOT filtered here, intentionally): this average
-    // aggregates ALL completed service orders for the site (no status/ticket
-    // scoping), so HISTORICAL_IMPORT visits' orders are currently included and
-    // could skew it. It feeds the live queue board's ETA estimate — and this CR
-    // is explicitly barred from changing ETA/queue/scheduling behavior
-    // (CLAUDE.md §9 requires a separate review for any ETA change). Tracked as a
-    // follow-up in docs/29; do not add a live-visit filter without that review.
+  /**
+   * Average service-order duration (minutes) used to estimate queue ETA.
+   *
+   * CR-2026-007 — ETA average isolation (approved, docs/34). Two-tier:
+   *  1. PRIMARY (LIVE): average of LIVE completed orders only — excludes
+   *     HISTORICAL_IMPORT visits (reuses operational-scope `liveVisitSql('sv')`)
+   *     and bounded to a rolling recency window. Used when the live sample is
+   *     large enough to be reliable.
+   *  2. FALLBACK (HISTORICAL_FALLBACK): when the live sample is below the
+   *     threshold, fall back to the all-time set (incl. historical) for an
+   *     early-pilot estimate, flagged as historical-derived.
+   *  3. DEFAULT: the constant default when neither tier has data.
+   *
+   * Window + threshold are read from BusinessRuleConfig (not hard-coded);
+   * documented defaults apply when no config row exists. This function only
+   * affects the displayed ETA multiplier — it does NOT touch queueRank,
+   * ranking, scheduling, assignment, or any write path.
+   */
+  private async getAvgServiceMinutes(siteId: string): Promise<AvgServiceResult> {
     try {
-      const result = await this.prisma.$queryRaw<Array<{ avg: number | null }>>`
-        SELECT AVG(
-          EXTRACT(EPOCH FROM (so.completed_at - so.started_at)) / 60
-        )::numeric(10,1) as avg
+      const windowDays = await this.readEtaConfigNumber(
+        siteId,
+        'eta_avg_live_window_days',
+        ETA_DEFAULT_WINDOW_DAYS,
+      );
+      const minLiveSample = await this.readEtaConfigNumber(
+        siteId,
+        'eta_avg_min_live_sample',
+        ETA_DEFAULT_MIN_LIVE_SAMPLE,
+      );
+      const windowStart = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+
+      // Tier 1 — live completed orders within the rolling window.
+      const live = await this.prisma.$queryRaw<Array<{ count: bigint; avg: number | null }>>`
+        SELECT COUNT(*)::bigint AS count,
+               AVG(EXTRACT(EPOCH FROM (so.completed_at - so.started_at)) / 60)::numeric(10,1) AS avg
+        FROM service_orders so
+        JOIN service_visits sv ON so.service_visit_id = sv.id
+        WHERE sv.site_id = ${siteId}::uuid
+          AND so.started_at IS NOT NULL
+          AND so.completed_at IS NOT NULL
+          AND so.completed_at >= ${windowStart}
+          ${liveVisitSql('sv')}
+      `;
+      const liveCount = Number(live[0]?.count ?? 0);
+      const liveAvg = live[0]?.avg != null ? Number(live[0].avg) : null;
+      if (liveCount >= minLiveSample && liveAvg != null) {
+        return { minutes: liveAvg, basis: 'LIVE', sampleSize: liveCount };
+      }
+
+      // Tier 2 — historical/all-time fallback (includes HISTORICAL_IMPORT),
+      // only when the live sample is too small to be reliable.
+      const hist = await this.prisma.$queryRaw<Array<{ count: bigint; avg: number | null }>>`
+        SELECT COUNT(*)::bigint AS count,
+               AVG(EXTRACT(EPOCH FROM (so.completed_at - so.started_at)) / 60)::numeric(10,1) AS avg
         FROM service_orders so
         JOIN service_visits sv ON so.service_visit_id = sv.id
         WHERE sv.site_id = ${siteId}::uuid
           AND so.started_at IS NOT NULL
           AND so.completed_at IS NOT NULL
       `;
-      return result[0]?.avg ? Number(result[0].avg) : 30;
+      const histCount = Number(hist[0]?.count ?? 0);
+      const histAvg = hist[0]?.avg != null ? Number(hist[0].avg) : null;
+      if (histAvg != null) {
+        this.logger.log(
+          `ETA avg for site ${siteId}: HISTORICAL_FALLBACK (live sample ${liveCount} < ${minLiveSample}), ` +
+            `using all-time avg ${histAvg}m over ${histCount} orders`,
+        );
+        return { minutes: histAvg, basis: 'HISTORICAL_FALLBACK', sampleSize: histCount };
+      }
+
+      // Tier 3 — no data anywhere.
+      return { minutes: ETA_DEFAULT_MINUTES, basis: 'DEFAULT', sampleSize: 0 };
     } catch {
-      return 30; // fallback 30 min
+      return { minutes: ETA_DEFAULT_MINUTES, basis: 'DEFAULT', sampleSize: 0 };
     }
+  }
+
+  /**
+   * Read a positive numeric BusinessRuleConfig value by key (site-aware),
+   * falling back to the documented default when absent/invalid. Mirrors the
+   * direct-read pattern used by schedule/maintenance services (CR-2026-007).
+   */
+  private async readEtaConfigNumber(
+    siteId: string,
+    ruleKey: string,
+    fallback: number,
+  ): Promise<number> {
+    const rule = await this.prisma.businessRuleConfig.findFirst({
+      where: { siteId, ruleKey },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+    const value = rule?.valueJson;
+    return typeof value === 'number' && value > 0 ? value : fallback;
   }
 
   private async logEvent(
