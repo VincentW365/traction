@@ -2,18 +2,25 @@
 
 **CR ID:** CR-2026-007
 **Author:** Vincent Wilson · **Date:** 2026-06-09
-**Status:** **DRAFT — not implemented.** Awaiting review/approval under `docs/21_Approval_Gates.md`.
+**Status:** **APPROVED FOR IMPLEMENTATION (2026-06-09) — not yet implemented.** Approved by Vincent Wilson; satisfies the ETA Mandatory Review Trigger under `docs/21_Approval_Gates.md`. Implementation to be scheduled as a separate, reviewable change.
 **Builds on:** CR-2026-006 (operational scope filtering). Resolves the deferred follow-up `docs/29` item 2.5 (and `docs/33` §3a).
 
-> ⚠️ This is an **ETA / queue-display change** and therefore a **Mandatory Review Trigger** (CLAUDE.md §9: "any change to ETA"). It is documented here for approval **before** any code is written. No implementation has been done.
+> ⚠️ This is an **ETA / queue-display change** and therefore a **Mandatory Review Trigger** (CLAUDE.md §9: "any change to ETA"). It was reviewed and approved **before** any code is written. No implementation has been done yet.
 
-### Reviewer position (2026-06-09 — Vincent Wilson)
-Status remains **DRAFT / awaiting formal approval**, but the design direction is endorsed:
-- ✅ Approve the overall design direction (live-by-default, historical small-sample fallback).
-- ✅ Keep the proposed defaults: **30-day** live window, **20-order** minimum live sample.
+### Review decision (2026-06-09 — Vincent Wilson) — APPROVED
+Design direction approved; the following are now **locked decisions** for implementation:
+- ✅ Overall design: live-by-default, historical small-sample fallback.
+- ✅ Defaults: **30-day** live window, **20-order** minimum live sample (both configurable).
 - ✅ Defer outlier trimming for v1 (revisit later if needed).
 - ✅ No queue / ranking / scheduling / bay / assignment logic changes.
-- ✅ No schema migration — only `BusinessRuleConfig` values, and only if/when implementation is approved.
+- ✅ No schema migration — only `BusinessRuleConfig` values.
+- ✅ **`etaBasis` surfacing (resolved):** compute the source internally and **log it** for audit/explainability; expose `etaBasis` (`LIVE | HISTORICAL_FALLBACK | DEFAULT`) as an **additive field on the staff board** response only. **The public display board labels stay unchanged** (keep that screen minimal) and **PII-free** — `etaBasis` is a non-PII enum, so if ever shown there it is safe, but v1 does not add it to the public board.
+
+### Review notes folded into this CR (accuracy + implementation readiness)
+- **Both consumers identified precisely:** `QueueService.getBoard` (`queue.service.ts:51`) → numeric `estimatedWaitMinutes = queueRank * avg` (`:68–69`, staff board); and `QueueService.getPublicDisplayBoard` (`:479`) → bucketed label via `getDisplayEtaLabel(rank, avg)` (`:504`, `:521–529`, public PII-free lobby screen).
+- **Config read:** follow the existing direct `BusinessRuleConfig` read pattern already used by `schedule.service.getOperatingHours` and `maintenance-reminder.service` (read by `ruleKey`, apply documented default when the row is absent). No new config service required.
+- **Performance:** the live query filters `service_orders.completed_at` within the rolling window + joins `service_visits` on site/source. Confirm an index supports `completed_at` filtering at pilot volume; this is a read-only consideration (no migration) — add an index later only if EXPLAIN shows a hot scan.
+- **Injection surface:** the recency-window bound is passed as a **parameterized value** (`${windowStart}`), not an alias; the only raw fragment is the existing hard-coded-alias `liveVisitSql('sv')`. No new injection surface.
 
 ---
 
@@ -50,7 +57,7 @@ Both knobs must be config, not inline constants, via `BusinessRuleConfig` (site-
 - (optional) `eta_avg_outlier_cap_minutes`
 
 ## 4. Files / Modules Impacted
-- `apps/api/src/modules/queue/queue.service.ts` — `getAvgServiceMinutes` (logic + signature/return shape if exposing source), and its two call sites (`getBoard` ~`:51`, and ~`:475`).
+- `apps/api/src/modules/queue/queue.service.ts` — `getAvgServiceMinutes` (logic + return shape now carries source/sample-size), and its two call sites: `getBoard` (`:51`) and `getPublicDisplayBoard` (`:479`). `getBoard` gains the additive `etaBasis` field; `getPublicDisplayBoard` / `getDisplayEtaLabel` behavior is unchanged.
 - `common/helpers/operational-scope.ts` — **reuse only** (`liveVisitSql`); no change expected. If a recency/window SQL fragment is shared, it would be a small additive helper.
 - `BusinessRuleConfig` seed/config — add the new rule keys + defaults (data/config, not schema).
 - Tests: `modules/queue/__tests__/avg-service-minutes.scope.spec.ts` (new) — mocked Prisma, assert: live-only by default; historical fallback engages below threshold; source flag correct; final default when empty; window/threshold honored.
@@ -69,8 +76,8 @@ Both knobs must be config, not inline constants, via `BusinessRuleConfig` (site-
 
 ## 6. Schema / API Impact
 - **Schema:** none (no migration). Uses existing `service_orders` / `service_visits` columns and `BusinessRuleConfig`.
-- **API:** `getAvgServiceMinutes` is currently private/internal. If we surface the source/sample-size on the board response (`estimatedWaitMinutes` is already returned), that's an **additive** field (e.g. `etaBasis: 'LIVE' | 'HISTORICAL_FALLBACK' | 'DEFAULT'`) — backward compatible. OpenAPI updated if exposed.
-- **Open question (for review):** outlier trimming — include in v1 or defer? Recommend a simple upper cap behind a config key, off by default, to avoid scope creep.
+- **API:** `getAvgServiceMinutes` is private/internal; its return shape becomes `{ minutes, basis, sampleSize }`. The **staff board** response gains an additive `etaBasis` field (`'LIVE' | 'HISTORICAL_FALLBACK' | 'DEFAULT'`) — backward compatible; OpenAPI updated. The **public display board** response shape is unchanged.
+- **Resolved (was open):** outlier trimming is **deferred for v1** (per review). If added later, it will be a simple upper cap behind an off-by-default config key (`eta_avg_outlier_cap_minutes`).
 
 ## 7. Risks / Tradeoffs
 - **ETA shifts visibly** the moment this ships (live averages differ from the historical-inflated number). Expected and desired, but it is a user-facing change — communicate to front desk.
@@ -87,4 +94,4 @@ Both knobs must be config, not inline constants, via `BusinessRuleConfig` (site-
 **Phase 5** (advanced reporting / forecasting candidates) — deterministic refinement of an existing estimate, not a new predictive model.
 
 ## 10. Approval Needed?
-**Yes.** ETA/queue-display change → Mandatory Review Trigger (CLAUDE.md §9). Requires sign-off under `docs/21_Approval_Gates.md` before implementation. Use this CR (and `templates/Change_Request_Template.md`) as the review artifact.
+**Yes — and GRANTED (2026-06-09, Vincent Wilson).** ETA/queue-display change → Mandatory Review Trigger (CLAUDE.md §9). Reviewed and approved under `docs/21_Approval_Gates.md` using this CR as the review artifact. Implementation may proceed as a separate, reviewable change with its own tests; ranking/scheduling/schema remain untouched.
