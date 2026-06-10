@@ -123,7 +123,7 @@ pnpm db:studio     # Open Prisma Studio GUI to browse/edit the DB
 
 - **Infra must be running first.** The API needs both Postgres and Redis up, or it won't boot. Start `docker compose up -d` (or the Redis batch script) before `pnpm dev`.
 - **Default site is `BERT-01`** ("Bert's Auto Parts Service Centre — Main"), timezone `America/Jamaica`. Operating hours: Mon–Fri 08:00–17:00, Sat 08:00–13:00, closed Sunday.
-- **Seeded operational data:** service types, the **12-technician roster** (`BERT-T01`–`BERT-T12`, plus the skilled tech specs), work bays, work resources (2 stands, 2 mobile jacks, power wash, external machine shop), business-rule configs, and **23 vehicle weight/serviceClass suggestions**. Exact service-type and rule counts are seed-output dependent — check the `pnpm db:seed` output / `prisma/seed.ts`.
+- **Seeded operational data** (verified from a clean `pnpm db:seed`): **17 users** (incl. the **12-technician roster** `BERT-T01`–`BERT-T12`), **32 service types**, **39 business-rule configs** (17 core + 22 v4.1), **6 work bays**, **10 work resources** (incl. 2 stands, 2 mobile jacks, power wash, external machine shop), **10 resource occupancies**, and **23 vehicle weight/serviceClass suggestions**.
 - **Business rules live in the DB**, not in code — edit them via `BusinessRuleConfig` (Prisma Studio or admin settings), keyed per site. Don't hard-code rule values.
 - **Notifications are stubbed** in dev (`NOTIFICATION_PROVIDER=stub`). No real SMS/email is sent; logs are written to `NotificationLog`.
 - **Login redirect:** successful login always lands on `/check-in`. Use the role-appropriate account to see the right screens (front desk vs. technician vs. manager).
