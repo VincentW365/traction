@@ -198,6 +198,28 @@ enum VehicleServiceClass {
   UNKNOWN_REQUIRES_REVIEW
 }
 
+// CR-2026-008: vehicle ServiceClass classification workflow.
+// Suggestions are advisory; the operational Vehicle.serviceClass is written
+// ONLY after staff confirmation. Until CONFIRMED a vehicle stays mobile-jack
+// blocked (DMAIC Rule 3 unchanged).
+enum ClassificationStatus {
+  PENDING_REVIEW
+  CONFIRMED
+}
+
+enum ClassificationConfidence {
+  HIGH
+  MEDIUM
+  LOW
+  NONE
+}
+
+enum ClassificationSource {
+  MAKE_MODEL_LOOKUP
+  MANUAL
+  CHECK_IN
+}
+
 enum IntegrationSystem {
   AUTOMATE
   SAGE
@@ -277,6 +299,7 @@ model UserAccount {
   technician               Technician?
   queueEventActions        QueueEvent[]                @relation("QueueEventActor")
   initiatedNotifications   NotificationLog[]           @relation("NotificationInitiatedBy")
+  reviewedClassifications  VehicleClassification[]     @relation("ClassificationReviewedBy") // CR-2026-008
 
   @@map("user_accounts")
 }
@@ -334,6 +357,7 @@ model Vehicle {
   fluidSpecs                 FluidSpecSnapshot[]
   maintenanceRecommendations MaintenanceRecommendation[]
   maintenanceReminders       MaintenanceReminder[]
+  classification             VehicleClassification? // CR-2026-008
 
   @@index([customerId])
   @@index([plateNumber])
@@ -1169,7 +1193,37 @@ model VehicleWeightSuggestion {
   yearFrom             Int?              @map("year_from")
   yearTo               Int?              @map("year_to")
   suggestedWeightClass VehicleWeightClass @map("suggested_weight_class")
+  // CR-2026-008: advisory make/model -> serviceClass suggestion (nullable).
+  // Advisory only — never written to Vehicle.serviceClass without staff confirm.
+  suggestedServiceClass VehicleServiceClass? @map("suggested_service_class")
   createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz
 
   @@map("vehicle_weight_suggestions")
+}
+
+// CR-2026-008: per-vehicle classification review + audit record.
+// This is a REVIEW PROJECTION + audit trail, NOT a second source of operational
+// truth — the operational class lives on Vehicle.serviceClass/weightClass and is
+// written only on staff confirm. Captures: suggestion, confidence, source,
+// reviewer, reviewedAt, and the final confirmed class.
+model VehicleClassification {
+  id                    String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicleId             String                   @unique @map("vehicle_id") @db.Uuid
+  status                ClassificationStatus     @default(PENDING_REVIEW)
+  suggestedServiceClass VehicleServiceClass?     @map("suggested_service_class")
+  suggestedWeightClass  VehicleWeightClass?      @map("suggested_weight_class")
+  confidence            ClassificationConfidence @default(NONE)
+  source                ClassificationSource     @default(MAKE_MODEL_LOOKUP)
+  confirmedServiceClass VehicleServiceClass?     @map("confirmed_service_class")
+  confirmedWeightClass  VehicleWeightClass?      @map("confirmed_weight_class")
+  reviewedByUserId      String?                  @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt            DateTime?                @map("reviewed_at") @db.Timestamptz
+  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime                 @updatedAt @map("updated_at") @db.Timestamptz
+
+  vehicle    Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  reviewedBy UserAccount? @relation("ClassificationReviewedBy", fields: [reviewedByUserId], references: [id])
+
+  @@index([status])
+  @@map("vehicle_classifications")
 }

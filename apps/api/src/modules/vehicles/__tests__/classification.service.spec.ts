@@ -1,0 +1,120 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ClassificationService } from '../classification.service';
+
+const RULE_ROWS = [
+  { makePattern: 'Toyota', modelPattern: 'Corolla', yearFrom: null, yearTo: null, suggestedWeightClass: 'LIGHT', suggestedServiceClass: 'SEDAN_CLASS' },
+];
+
+function build() {
+  const tx: any = {
+    vehicle: { update: vi.fn(async () => ({})) },
+    vehicleClassification: { upsert: vi.fn(async () => ({})) },
+  };
+  const prisma: any = {
+    vehicle: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(async () => []),
+    },
+    vehicleWeightSuggestion: { findMany: vi.fn(async () => RULE_ROWS) },
+    $transaction: vi.fn(async (cb: any) => cb(tx)),
+  };
+  const audit = { log: vi.fn(async () => ({})) };
+  const statusHistory = { record: vi.fn(async () => ({})) };
+  const service = new ClassificationService(prisma, audit as any, statusHistory as any);
+  return { service, prisma, tx, audit, statusHistory };
+}
+
+describe('ClassificationService.getQueue', () => {
+  it('filters to unclassified + live (non-placeholder) vehicles and attaches a suggestion', async () => {
+    const h = build();
+    h.prisma.vehicle.findMany.mockResolvedValueOnce([
+      {
+        id: 'v1', vehicleCode: 'SC-ABC', plateNumber: 'ABC', make: 'Toyota', model: 'Corolla', modelYear: 2019,
+        weightClass: null, serviceClass: null, classification: null,
+        customer: { firstName: 'Jane', lastName: 'Doe' },
+      },
+    ]);
+
+    const out = await h.service.getQueue(10);
+
+    const where = h.prisma.vehicle.findMany.mock.calls[0][0].where;
+    expect(where.serviceClass).toBeNull();
+    expect(where.vehicleCode).toEqual({ not: { startsWith: 'HIST-UNRESOLVED-' } });
+    expect(out[0].suggestion.suggestedServiceClass).toBe('SEDAN_CLASS');
+    expect(out[0].classificationStatus).toBe('PENDING_REVIEW');
+  });
+});
+
+describe('ClassificationService.confirm', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('writes the operational serviceClass + a CONFIRMED audit record + AuditLog + StatusHistory', async () => {
+    const h = build();
+    h.prisma.vehicle.findUnique.mockResolvedValueOnce({
+      id: 'v1', vehicleCode: 'SC-ABC', make: 'Toyota', model: 'Corolla', modelYear: 2019,
+      serviceClass: null, weightClass: null,
+    });
+
+    const res = await h.service.confirm('v1', 'u1', { serviceClass: 'SEDAN_CLASS', weightClass: 'LIGHT', notes: 'ok' });
+
+    expect(h.tx.vehicle.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'v1' }, data: expect.objectContaining({ serviceClass: 'SEDAN_CLASS', weightClass: 'LIGHT' }) }),
+    );
+    const upsertArg = h.tx.vehicleClassification.upsert.mock.calls[0][0];
+    expect(upsertArg.where).toEqual({ vehicleId: 'v1' });
+    expect(upsertArg.create.status).toBe('CONFIRMED');
+    expect(upsertArg.create.confirmedServiceClass).toBe('SEDAN_CLASS');
+    expect(upsertArg.create.reviewedByUserId).toBe('u1');
+    expect(h.audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'VEHICLE_CLASSIFIED',
+        entityType: 'Vehicle',
+        entityId: 'v1',
+        beforeJson: { serviceClass: null, weightClass: null },
+        afterJson: { serviceClass: 'SEDAN_CLASS', weightClass: 'LIGHT' },
+      }),
+    );
+    expect(h.statusHistory.record).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'Vehicle', toStatus: 'SEDAN_CLASS' }),
+    );
+    expect(res.confirmed.serviceClass).toBe('SEDAN_CLASS');
+  });
+
+  it('rejects a historical placeholder vehicle and writes nothing', async () => {
+    const h = build();
+    h.prisma.vehicle.findUnique.mockResolvedValueOnce({
+      id: 'vH', vehicleCode: 'HIST-UNRESOLVED-42', make: null, model: null, modelYear: null,
+      serviceClass: null, weightClass: null,
+    });
+
+    await expect(h.service.confirm('vH', 'u1', { serviceClass: 'SEDAN_CLASS' })).rejects.toThrow(/placeholder/i);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+    expect(h.audit.log).not.toHaveBeenCalled();
+  });
+
+  it('throws when the vehicle does not exist', async () => {
+    const h = build();
+    h.prisma.vehicle.findUnique.mockResolvedValueOnce(null);
+    await expect(h.service.confirm('nope', 'u1', { serviceClass: 'SEDAN_CLASS' })).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('ClassificationService.bulkConfirm', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('confirms valid items and collects failures without aborting the batch', async () => {
+    const h = build();
+    h.prisma.vehicle.findUnique
+      .mockResolvedValueOnce({ id: 'v1', vehicleCode: 'SC-1', make: 'Toyota', model: 'Corolla', modelYear: 2019, serviceClass: null, weightClass: null })
+      .mockResolvedValueOnce(null); // second item missing
+
+    const out = await h.service.bulkConfirm('u1', [
+      { vehicleId: 'v1', serviceClass: 'SEDAN_CLASS' },
+      { vehicleId: 'v2', serviceClass: 'PICKUP' },
+    ]);
+
+    expect(out.confirmed).toBe(1);
+    expect(out.failed).toBe(1);
+    expect(h.audit.log).toHaveBeenCalledTimes(1);
+  });
+});

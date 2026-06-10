@@ -237,6 +237,30 @@ export class CheckInService {
             where: { id: appointment.vehicleId },
             data: { serviceClass: intake.vehicleServiceClass as any },
           });
+          // CR-2026-008 check-in parity: record the classification as CONFIRMED
+          // (source CHECK_IN) so the audit/status trail matches the review queue.
+          await tx.vehicleClassification.upsert({
+            where: { vehicleId: appointment.vehicleId },
+            create: {
+              vehicleId: appointment.vehicleId,
+              status: 'CONFIRMED',
+              source: 'CHECK_IN',
+              confirmedServiceClass: intake.vehicleServiceClass as any,
+              confirmedWeightClass:
+                (intake.vehicleWeightClass as any) ?? appointment.vehicle.weightClass ?? null,
+              reviewedByUserId: userId,
+              reviewedAt: now,
+            },
+            update: {
+              status: 'CONFIRMED',
+              source: 'CHECK_IN',
+              confirmedServiceClass: intake.vehicleServiceClass as any,
+              confirmedWeightClass:
+                (intake.vehicleWeightClass as any) ?? appointment.vehicle.weightClass ?? null,
+              reviewedByUserId: userId,
+              reviewedAt: now,
+            },
+          });
         }
 
         // 7c. Update vehicle odometer if mileage provided
@@ -282,6 +306,40 @@ export class CheckInService {
         changedByUserId: userId,
       }),
     ]);
+
+    // CR-2026-008 check-in parity: if staff set/changed the operational
+    // serviceClass at check-in, write the same audit + status trail as the
+    // classification queue (the VehicleClassification row is written in the tx).
+    if (intake?.vehicleServiceClass) {
+      const beforeClass = {
+        serviceClass: appointment.vehicle.serviceClass,
+        weightClass: appointment.vehicle.weightClass,
+      };
+      const afterClass = {
+        serviceClass: intake.vehicleServiceClass,
+        weightClass: intake.vehicleWeightClass ?? appointment.vehicle.weightClass,
+      };
+      await Promise.all([
+        this.auditService.log({
+          actorUserId: userId,
+          action: AUDIT_ACTIONS.VEHICLE_CLASSIFIED,
+          entityType: 'Vehicle',
+          entityId: appointment.vehicleId,
+          beforeJson: beforeClass,
+          afterJson: afterClass,
+          reasonCode: 'CLASSIFICATION_CONFIRMED',
+          notes: 'Set at check-in',
+        }),
+        this.statusHistory.record({
+          entityType: 'Vehicle',
+          entityId: appointment.vehicleId,
+          fromStatus: beforeClass.serviceClass ?? null,
+          toStatus: intake.vehicleServiceClass,
+          changedByUserId: userId,
+          reasonCode: 'CLASSIFICATION_CONFIRMED',
+        }),
+      ]);
+    }
 
     this.logger.log(
       `[CHECK_IN] Appointment ${appointment.id} checked in → ` +
