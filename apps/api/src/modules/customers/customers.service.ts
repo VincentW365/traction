@@ -3,6 +3,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { Customer } from '@prisma/client';
+import { liveCustomerWhere } from '../../common/helpers/operational-scope';
 
 @Injectable()
 export class CustomersService {
@@ -11,19 +12,28 @@ export class CustomersService {
   /**
    * Search customers by phone, name, or customer_number.
    * Case-insensitive partial match. Returns first 20 results.
+   *
+   * CR-2026-006: the placeholder "Historical — Unknown Customer"
+   * (customerNumber === 'BERT-HIST-UNKNOWN') is excluded by default. Pass
+   * includeHistorical=true to surface it (gated by the route's existing RBAC).
    */
-  async search(query: string): Promise<Customer[]> {
+  async search(query: string, includeHistorical = false): Promise<Customer[]> {
     return this.prisma.customer.findMany({
       where: {
-        OR: [
-          { phone: { contains: query, mode: 'insensitive' } },
-          { firstName: { contains: query, mode: 'insensitive' } },
-          { lastName: { contains: query, mode: 'insensitive' } },
-          { customerNumber: { contains: query, mode: 'insensitive' } },
-          { email: { contains: query, mode: 'insensitive' } },
-          { vehicles: { some: { plateNumber: { contains: query, mode: 'insensitive' } } } },
-          { vehicles: { some: { vehicleCode: { contains: query, mode: 'insensitive' } } } },
-          { vehicles: { some: { vin: { contains: query, mode: 'insensitive' } } } },
+        AND: [
+          {
+            OR: [
+              { phone: { contains: query, mode: 'insensitive' } },
+              { firstName: { contains: query, mode: 'insensitive' } },
+              { lastName: { contains: query, mode: 'insensitive' } },
+              { customerNumber: { contains: query, mode: 'insensitive' } },
+              { email: { contains: query, mode: 'insensitive' } },
+              { vehicles: { some: { plateNumber: { contains: query, mode: 'insensitive' } } } },
+              { vehicles: { some: { vehicleCode: { contains: query, mode: 'insensitive' } } } },
+              { vehicles: { some: { vin: { contains: query, mode: 'insensitive' } } } },
+            ],
+          },
+          liveCustomerWhere(includeHistorical),
         ],
       },
       take: 20,
@@ -66,6 +76,10 @@ export class CustomersService {
   /**
    * Find a customer by ID, including their vehicles.
    * Throws NotFoundException if not found.
+   *
+   * CR-2026-006 exemption: by-id lookup is intentional — the caller asked for
+   * that exact record (including the historical placeholder, e.g. when drilling
+   * into a historical visit), so no operational-scope filter is applied here.
    */
   async findById(id: string): Promise<Customer & { vehicles: unknown[] }> {
     const customer = await this.prisma.customer.findUnique({

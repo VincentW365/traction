@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { liveVisitWhere, liveVisitSql } from '../../common/helpers/operational-scope';
 
 export interface KpiResult {
   code: string;
@@ -53,6 +54,7 @@ export class ReportingService {
     siteId: string,
     startDate: string,
     endDate: string,
+    includeHistorical = false,
   ): Promise<KpiResult[]> {
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -67,15 +69,16 @@ export class ReportingService {
       overrideCount,
       avgWaitMinutes,
     ] = await Promise.all([
-      // Total checked-in visits
+      // Total checked-in visits (excludes HISTORICAL_IMPORT by default)
       this.prisma.serviceVisit.count({
         where: {
           siteId,
           checkedInAt: { gte: start, lte: end },
+          ...liveVisitWhere(includeHistorical),
         },
       }),
 
-      // Appointment count
+      // Appointment count — explicit sourceType already excludes HISTORICAL_IMPORT.
       this.prisma.serviceVisit.count({
         where: {
           siteId,
@@ -84,7 +87,7 @@ export class ReportingService {
         },
       }),
 
-      // Walk-in count
+      // Walk-in count — explicit sourceType already excludes HISTORICAL_IMPORT.
       this.prisma.serviceVisit.count({
         where: {
           siteId,
@@ -93,7 +96,8 @@ export class ReportingService {
         },
       }),
 
-      // Missed appointments
+      // Missed appointments — appointment table; the historical import created
+      // no appointments, so no source filter is needed (exempt).
       this.prisma.appointment.count({
         where: {
           siteId,
@@ -102,7 +106,7 @@ export class ReportingService {
         },
       }),
 
-      // Cancelled appointments
+      // Cancelled appointments — appointment table (exempt, see above).
       this.prisma.appointment.count({
         where: {
           siteId,
@@ -111,7 +115,7 @@ export class ReportingService {
         },
       }),
 
-      // Override count
+      // Override count — audit_logs; no historical-import rows (exempt).
       this.prisma.auditLog.count({
         where: {
           action: 'QUEUE_OVERRIDE_APPLIED',
@@ -138,6 +142,7 @@ export class ReportingService {
         AND sv.checked_in_at >= ${start}
         AND sv.checked_in_at <= ${end}
         AND sv.checked_in_at IS NOT NULL
+        ${liveVisitSql('sv', includeHistorical)}
       `,
     ]);
 
@@ -220,6 +225,7 @@ export class ReportingService {
     startDate: string,
     endDate: string,
     metric: TrendMetric,
+    includeHistorical = false,
   ): Promise<TrendDataPoint[]> {
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -236,6 +242,7 @@ export class ReportingService {
             AND sv.checked_in_at >= ${start}
             AND sv.checked_in_at <= ${end}
             AND sv.checked_in_at IS NOT NULL
+            ${liveVisitSql('sv', includeHistorical)}
           GROUP BY DATE(sv.checked_in_at)
           ORDER BY day
         `;
@@ -266,6 +273,7 @@ export class ReportingService {
             AND sv.checked_in_at >= ${start}
             AND sv.checked_in_at <= ${end}
             AND sv.checked_in_at IS NOT NULL
+            ${liveVisitSql('sv', includeHistorical)}
           GROUP BY DATE(sv.checked_in_at)
           ORDER BY day
         `;
@@ -275,6 +283,8 @@ export class ReportingService {
         }));
       }
 
+      // no_shows (appointments) and overrides (audit_logs) have no historical-import
+      // rows, so they need no source filter (exempt).
       case 'no_shows': {
         const rows = await this.prisma.$queryRaw<
           Array<{ day: Date; value: bigint }>
@@ -327,6 +337,7 @@ export class ReportingService {
     siteId: string,
     startDate: string,
     endDate: string,
+    includeHistorical = false,
   ): Promise<TechnicianUtilizationRow[]> {
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -364,6 +375,11 @@ export class ReportingService {
         AND ta.ended_at IS NOT NULL
         AND ta.assigned_at >= ${start}
         AND ta.assigned_at <= ${end}
+        AND ta.service_order_id IN (
+          SELECT so.id FROM service_orders so
+          INNER JOIN service_visits sv ON sv.id = so.service_visit_id
+          WHERE true ${liveVisitSql('sv', includeHistorical)}
+        )
       WHERE t.home_site_id = ${siteId}::uuid
         AND t.status = 'ACTIVE'
       GROUP BY t.id, t.employee_code, ua.full_name
@@ -393,6 +409,7 @@ export class ReportingService {
     siteId: string,
     startDate: string,
     endDate: string,
+    includeHistorical = false,
   ): Promise<ServiceFamilyBreakdownRow[]> {
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -416,6 +433,7 @@ export class ReportingService {
       WHERE sv.site_id = ${siteId}::uuid
         AND so.created_at >= ${start}
         AND so.created_at <= ${end}
+        ${liveVisitSql('sv', includeHistorical)}
       GROUP BY st.family
       ORDER BY count DESC
     `;
@@ -432,6 +450,7 @@ export class ReportingService {
    */
   async getMaintenanceRetention(
     siteId: string,
+    includeHistorical = false,
   ): Promise<MaintenanceRetentionResult> {
     const now = new Date();
     const upcomingThresholdMiles = 1000;
@@ -448,6 +467,7 @@ export class ReportingService {
         INNER JOIN service_visits sv ON sv.id = mr.service_visit_id
         WHERE sv.site_id = ${siteId}::uuid
           AND mr.supersedes_recommendation_id IS NULL
+          ${liveVisitSql('sv', includeHistorical)}
           AND (
             (mr.next_due_odometer IS NOT NULL AND v.odometer IS NOT NULL AND mr.next_due_odometer < v.odometer)
             OR
@@ -462,6 +482,7 @@ export class ReportingService {
         INNER JOIN service_visits sv ON sv.id = mr.service_visit_id
         WHERE sv.site_id = ${siteId}::uuid
           AND mr.supersedes_recommendation_id IS NULL
+          ${liveVisitSql('sv', includeHistorical)}
           AND (
             (
               mr.next_due_odometer IS NOT NULL AND v.odometer IS NOT NULL
@@ -483,6 +504,7 @@ export class ReportingService {
         INNER JOIN service_visits sv ON sv.id = mr.service_visit_id
         WHERE sv.site_id = ${siteId}::uuid
           AND mr.supersedes_recommendation_id IS NULL
+          ${liveVisitSql('sv', includeHistorical)}
       `,
     ]);
 
@@ -505,6 +527,7 @@ export class ReportingService {
     siteId: string,
     startDate: string,
     endDate: string,
+    includeHistorical = false,
   ): Promise<QueuePerformanceSummary> {
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -522,6 +545,7 @@ export class ReportingService {
             WHERE sv.site_id = ${siteId}::uuid
               AND sv.checked_in_at >= ${start}
               AND sv.checked_in_at <= ${end}
+              ${liveVisitSql('sv', includeHistorical)}
             GROUP BY qd.service_visit_id
           ) sub
         `,
@@ -534,6 +558,7 @@ export class ReportingService {
           WHERE sv.site_id = ${siteId}::uuid
             AND sv.checked_in_at >= ${start}
             AND sv.checked_in_at <= ${end}
+            ${liveVisitSql('sv', includeHistorical)}
             AND qd.snapshot_at = (
               SELECT MAX(qd2.snapshot_at)
               FROM queue_decisions qd2
@@ -556,11 +581,12 @@ export class ReportingService {
           },
         }),
 
-        // Total visits in period
+        // Total visits in period (excludes HISTORICAL_IMPORT by default)
         this.prisma.serviceVisit.count({
           where: {
             siteId,
             checkedInAt: { gte: start, lte: end },
+            ...liveVisitWhere(includeHistorical),
           },
         }),
       ]);

@@ -9,7 +9,7 @@ import {
   UseGuards,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { VehiclesService } from './vehicles.service';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
 import { UpdateVehicleDto } from './dto/update-vehicle.dto';
@@ -30,7 +30,7 @@ export class VehiclesController {
   @RequirePermission(PERMISSIONS.CUSTOMER_SEARCH)
   @ApiOperation({ summary: 'Search vehicles by plate, VIN, or customer name' })
   async search(@Query() dto: VehicleSearchDto) {
-    return this.vehiclesService.search(dto.q);
+    return this.vehiclesService.search(dto.q, dto.includeHistorical === 'true');
   }
 
   @Post()
@@ -43,10 +43,15 @@ export class VehiclesController {
   @Get('by-customer/:customerId')
   @RequirePermission(PERMISSIONS.CUSTOMER_SEARCH)
   @ApiOperation({ summary: 'List all vehicles for a customer' })
+  @ApiQuery({ name: 'includeHistorical', required: false, type: Boolean })
   async findByCustomer(
     @Param('customerId', ParseUUIDPipe) customerId: string,
+    @Query('includeHistorical') includeHistorical?: string,
   ) {
-    return this.vehiclesService.findByCustomer(customerId);
+    return this.vehiclesService.findByCustomer(
+      customerId,
+      includeHistorical === 'true',
+    );
   }
 
   @Get(':id')

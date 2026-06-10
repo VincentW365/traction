@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
 import { UpdateVehicleDto } from './dto/update-vehicle.dto';
+import { liveVehicleWhere } from '../../common/helpers/operational-scope';
 
 @Injectable()
 export class VehiclesService {
@@ -14,24 +15,33 @@ export class VehiclesService {
   /**
    * Search vehicles by plate number, VIN, or customer name.
    * Returns the first 20 matches with the customer relation included.
+   *
+   * CR-2026-006: placeholder vehicles (vehicleCode starts 'HIST-UNRESOLVED-')
+   * are excluded by default. Pass includeHistorical=true to surface them
+   * (gated by the route's existing RBAC).
    */
-  async search(query: string) {
+  async search(query: string, includeHistorical = false) {
     const term = query.trim();
 
     return this.prisma.vehicle.findMany({
       where: {
-        OR: [
-          { plateNumber: { contains: term, mode: 'insensitive' } },
-          { vehicleCode: { contains: term, mode: 'insensitive' } },
-          { vin: { contains: term, mode: 'insensitive' } },
+        AND: [
           {
-            customer: {
-              OR: [
-                { firstName: { contains: term, mode: 'insensitive' } },
-                { lastName: { contains: term, mode: 'insensitive' } },
-              ],
-            },
+            OR: [
+              { plateNumber: { contains: term, mode: 'insensitive' } },
+              { vehicleCode: { contains: term, mode: 'insensitive' } },
+              { vin: { contains: term, mode: 'insensitive' } },
+              {
+                customer: {
+                  OR: [
+                    { firstName: { contains: term, mode: 'insensitive' } },
+                    { lastName: { contains: term, mode: 'insensitive' } },
+                  ],
+                },
+              },
+            ],
           },
+          liveVehicleWhere(includeHistorical),
         ],
       },
       include: { customer: true },
@@ -77,6 +87,10 @@ export class VehiclesService {
 
   /**
    * Find a single vehicle by ID. Includes the customer relation.
+   *
+   * CR-2026-006 exemption: by-id lookup is intentional — the caller asked for
+   * that exact record (including a historical placeholder vehicle), so no
+   * operational-scope filter is applied here.
    */
   async findById(id: string) {
     const vehicle = await this.prisma.vehicle.findUnique({
@@ -115,8 +129,11 @@ export class VehiclesService {
 
   /**
    * List all vehicles belonging to a specific customer.
+   *
+   * CR-2026-006: placeholder vehicles are excluded by default. When viewing the
+   * historical placeholder customer intentionally, pass includeHistorical=true.
    */
-  async findByCustomer(customerId: string) {
+  async findByCustomer(customerId: string, includeHistorical = false) {
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
     });
@@ -128,7 +145,7 @@ export class VehiclesService {
     }
 
     return this.prisma.vehicle.findMany({
-      where: { customerId },
+      where: { customerId, ...liveVehicleWhere(includeHistorical) },
       include: { customer: true },
       orderBy: { updatedAt: 'desc' },
     });

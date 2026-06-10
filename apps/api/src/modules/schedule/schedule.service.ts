@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { liveVisitWhere, serviceVisitIsLive } from '../../common/helpers/operational-scope';
 
 /**
  * Read-only aggregation service for the operational schedule UI.
@@ -69,11 +70,15 @@ export class ScheduleService {
     });
 
     // 5. Completed visits today (for muted timeline display)
+    // CR-2026-006: always exclude HISTORICAL_IMPORT visits (no opt-in on live
+    // schedule). Real leak — historical CLOSED visits have a recent updatedAt
+    // from import and would otherwise appear as completed on today's timeline.
     const completedVisits = await this.prisma.serviceVisit.findMany({
       where: {
         siteId,
         status: { in: ['READY_FOR_PICKUP', 'CLOSED'] },
         updatedAt: { gte: dayStart, lte: dayEnd },
+        ...liveVisitWhere(false),
       },
       include: {
         customer: { select: { firstName: true, lastName: true } },
@@ -92,6 +97,7 @@ export class ScheduleService {
         serviceVisit: {
           siteId,
           status: { in: ['CHECKED_IN', 'QUEUED'] },
+          ...serviceVisitIsLive(), // CR-2026-006: historical visits have no ticket; defense-in-depth
         },
         displayStatus: { in: ['PENDING_RANK', 'WAITING', 'BLOCKED'] },
       },
@@ -110,8 +116,10 @@ export class ScheduleService {
     });
 
     // 7. Ready for pickup
+    // CR-2026-006: always live (historical visits are terminal CLOSED, so the
+    // status filter already excludes them — added for consistency/defense).
     const readyForPickup = await this.prisma.serviceVisit.findMany({
-      where: { siteId, status: 'READY_FOR_PICKUP' },
+      where: { siteId, status: 'READY_FOR_PICKUP', ...liveVisitWhere(false) },
       include: {
         customer: { select: { firstName: true, lastName: true, phone: true, email: true } },
         vehicle: { select: { plateNumber: true } },
@@ -304,7 +312,14 @@ export class ScheduleService {
           where: { siteId, scheduledStartAt: { gte: dayStart, lte: dayEnd } },
         }),
         this.prisma.serviceVisit.count({
-          where: { siteId, status: { in: ['READY_FOR_PICKUP', 'CLOSED'] }, updatedAt: { gte: dayStart, lte: dayEnd } },
+          // CR-2026-006: always exclude HISTORICAL_IMPORT (recent import updatedAt
+          // would otherwise inflate the week's completed count).
+          where: {
+            siteId,
+            status: { in: ['READY_FOR_PICKUP', 'CLOSED'] },
+            updatedAt: { gte: dayStart, lte: dayEnd },
+            ...liveVisitWhere(false),
+          },
         }),
         this.prisma.queueTicket.count({
           where: {

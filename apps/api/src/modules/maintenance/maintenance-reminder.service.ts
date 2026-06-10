@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { liveVisitWhere } from '../../common/helpers/operational-scope';
 
 const SITE_TIMEZONE = 'America/Jamaica';
 const QUIET_HOUR_START = 8; // 8 AM
@@ -311,6 +312,10 @@ export class MaintenanceReminderService {
         vehicleId,
         mileageIn: { not: null },
         checkedInAt: { not: null },
+        // CR-2026-006: always exclude HISTORICAL_IMPORT visits from the mileage
+        // cadence model (their odometer/check-in data is back-loaded and would
+        // distort the average-daily-miles estimate). No opt-in here.
+        ...liveVisitWhere(false),
       },
       select: { mileageIn: true, checkedInAt: true },
       orderBy: { checkedInAt: 'asc' },

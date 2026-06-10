@@ -37,7 +37,7 @@ export class CustomersController {
   @ApiOperation({ summary: 'Search customers by phone, name, or customer number' })
   @ApiOkResponse({ description: 'List of matching customers (max 20)' })
   async search(@Query() dto: CustomerSearchDto) {
-    return this.customersService.search(dto.q);
+    return this.customersService.search(dto.q, dto.includeHistorical === 'true');
   }
 
   @Post()

@@ -19,6 +19,8 @@ Owner: Vincent Wilson unless noted. Status: **Decision pending** / **Approved** 
 | 2.1 | Imported vehicles have **null `serviceClass`/`weightClass`** → mobile-jack-blocked (Rule 3 fail-safe) until classified at check-in. Consider back-classification from make/model. | Open |
 | 2.2 | All imported customers have **notification opt-in = false** → reminders/marketing won't reach them until consent is captured. | Open (by design) |
 | 2.3 | **Paused-clock scheduling behavior** (bay hold / ETA / rank while paused) remains deferred (CR-2026-001 follow-up). | Deferred |
+| 2.4 | **Operational metrics & lookups must exclude HISTORICAL_IMPORT visits + placeholder customer/vehicles** (consequence of the 1.1 placeholder approach — they were silently inflating KPIs and surfacing "Historical — Unknown Customer" in search). | ✅ **Resolved → CR-2026-006** — shared `operational-scope` helper; default-exclude with `includeHistorical=true` opt-in on reporting/performance/customers/vehicles; manager-dashboard, schedule, and maintenance mileage are always-live. No schema/scheduling change. See `docs/33`. |
+| 2.5 | **Queue board avg-service-minutes** (`queue.service.getAvgServiceMinutes`) aggregates *all* completed site service orders with no status/ticket scope, so HISTORICAL_IMPORT orders are currently included and may skew the figure. It feeds the live **ETA estimate**, so CR-2026-006 intentionally left it unchanged (ETA/queue changes need separate review per CLAUDE.md §9). | Deferred (needs ETA review) |
 
 ## 3. Governance / environment follow-ups
 

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { liveVisitWhere, serviceVisitIsLive } from '../../common/helpers/operational-scope';
 
 export interface DashboardStats {
   carsToday: number;
@@ -31,10 +32,14 @@ export class ManagerDashboardService {
     todayEnd.setHours(23, 59, 59, 999);
 
     // Cars today (service visits created today)
+    // CR-2026-006: always exclude HISTORICAL_IMPORT visits (no opt-in on live
+    // dashboards). Real leak — historical visits were imported with a recent
+    // createdAt and would otherwise inflate today's count.
     const carsToday = await this.prisma.serviceVisit.count({
       where: {
         siteId,
         createdAt: { gte: todayStart, lte: todayEnd },
+        ...liveVisitWhere(false),
       },
     });
 
@@ -49,7 +54,7 @@ export class ManagerDashboardService {
     // Jobs in progress
     const jobsInProgress = await this.prisma.serviceOrder.count({
       where: {
-        serviceVisit: { siteId },
+        serviceVisit: { siteId, ...serviceVisitIsLive() }, // CR-2026-006: always live
         status: { in: ['ASSIGNED', 'IN_PROGRESS'] },
       },
     });
@@ -57,7 +62,7 @@ export class ManagerDashboardService {
     // Queue depth (active queue tickets)
     const queueDepth = await this.prisma.queueTicket.count({
       where: {
-        serviceVisit: { siteId },
+        serviceVisit: { siteId, ...serviceVisitIsLive() }, // CR-2026-006: always live
         displayStatus: { in: ['WAITING', 'ISSUED', 'PENDING_RANK'] },
       },
     });
@@ -65,7 +70,7 @@ export class ManagerDashboardService {
     // Average wait time for tickets waiting today
     const waitingTickets = await this.prisma.queueTicket.findMany({
       where: {
-        serviceVisit: { siteId },
+        serviceVisit: { siteId, ...serviceVisitIsLive() }, // CR-2026-006: always live
         displayStatus: 'WAITING',
         generatedAt: { gte: todayStart },
       },
@@ -85,7 +90,7 @@ export class ManagerDashboardService {
     // Overrides today
     const overridesToday = await this.prisma.queueTicket.count({
       where: {
-        serviceVisit: { siteId },
+        serviceVisit: { siteId, ...serviceVisitIsLive() }, // CR-2026-006: always live
         overrideAppliedAt: { gte: todayStart, lte: todayEnd },
       },
     });
@@ -93,7 +98,7 @@ export class ManagerDashboardService {
     // Blocked orders
     const blockedOrders = await this.prisma.serviceOrder.count({
       where: {
-        serviceVisit: { siteId },
+        serviceVisit: { siteId, ...serviceVisitIsLive() }, // CR-2026-006: always live
         status: 'WAITING_PARTS',
       },
     });
@@ -101,7 +106,7 @@ export class ManagerDashboardService {
     // Parts pending
     const partsPending = await this.prisma.partsRequest.count({
       where: {
-        serviceOrder: { serviceVisit: { siteId } },
+        serviceOrder: { serviceVisit: { siteId, ...serviceVisitIsLive() } }, // CR-2026-006: always live
         status: { in: ['OPEN', 'RESERVING', 'PARTIAL'] },
       },
     });
@@ -126,7 +131,7 @@ export class ManagerDashboardService {
     const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
     const overdueOrders = await this.prisma.serviceOrder.findMany({
       where: {
-        serviceVisit: { siteId },
+        serviceVisit: { siteId, ...serviceVisitIsLive() }, // CR-2026-006: always live
         status: { in: ['ASSIGNED', 'IN_PROGRESS'] },
         startedAt: { lt: twoHoursAgo, not: null },
       },
@@ -156,7 +161,7 @@ export class ManagerDashboardService {
     // Blocked by parts
     const blockedParts = await this.prisma.queueTicket.findMany({
       where: {
-        serviceVisit: { siteId },
+        serviceVisit: { siteId, ...serviceVisitIsLive() }, // CR-2026-006: always live
         displayStatus: 'BLOCKED',
         blockedReason: { contains: 'parts', mode: 'insensitive' },
       },

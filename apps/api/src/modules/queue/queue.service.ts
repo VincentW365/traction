@@ -353,6 +353,8 @@ export class QueueService {
   // ---------------------------------------------------------------------------
 
   async getReadyForPickup(siteId: string) {
+    // CR-2026-006 exempt (already live): HISTORICAL_IMPORT visits are terminal
+    // CLOSED, so the READY_FOR_PICKUP status filter already excludes them.
     const visits = await this.prisma.serviceVisit.findMany({
       where: {
         siteId,
@@ -466,6 +468,8 @@ export class QueueService {
           where: { status: 'OCCUPIED', serviceVisit: { siteId } },
           select: { serviceVisitId: true, resource: { select: { name: true } } },
         }),
+        // CR-2026-006 exempt (already live): READY_FOR_PICKUP excludes terminal
+        // historical visits.
         this.prisma.serviceVisit.findMany({
           where: { siteId, status: 'READY_FOR_PICKUP' },
           select: { queueTicket: { select: { ticketNumber: true } }, updatedAt: true },
@@ -531,6 +535,13 @@ export class QueueService {
   }
 
   private async getAvgServiceMinutes(siteId: string): Promise<number> {
+    // CR-2026-006 DEFERRED (NOT filtered here, intentionally): this average
+    // aggregates ALL completed service orders for the site (no status/ticket
+    // scoping), so HISTORICAL_IMPORT visits' orders are currently included and
+    // could skew it. It feeds the live queue board's ETA estimate — and this CR
+    // is explicitly barred from changing ETA/queue/scheduling behavior
+    // (CLAUDE.md §9 requires a separate review for any ETA change). Tracked as a
+    // follow-up in docs/29; do not add a live-visit filter without that review.
     try {
       const result = await this.prisma.$queryRaw<Array<{ avg: number | null }>>`
         SELECT AVG(

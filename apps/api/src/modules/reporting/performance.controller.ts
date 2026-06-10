@@ -46,11 +46,18 @@ export class PerformanceController {
   @ApiQuery({ name: 'siteId', required: true })
   @ApiQuery({ name: 'startDate', required: true })
   @ApiQuery({ name: 'endDate', required: true })
+  @ApiQuery({ name: 'includeHistorical', required: false, type: Boolean })
   async getHistory(
     @Query('siteId') siteId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('includeHistorical') includeHistorical?: string,
   ) {
-    return this.performanceService.getAssignmentHistory(siteId, startDate, endDate);
+    return this.performanceService.getAssignmentHistory(
+      siteId,
+      startDate,
+      endDate,
+      includeHistorical === 'true',
+    );
   }
 }

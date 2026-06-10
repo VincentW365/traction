@@ -16,12 +16,14 @@ export class ReportingController {
   @Get('kpis')
   @RequirePermission(PERMISSIONS.REPORT_VIEW)
   @ApiOperation({ summary: 'Get KPI dashboard data for a site and date range' })
+  @ApiQuery({ name: 'includeHistorical', required: false, type: Boolean, description: 'Include HISTORICAL_IMPORT/placeholder records (default false)' })
   async getKpis(
     @Query('siteId') siteId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('includeHistorical') includeHistorical?: string,
   ) {
-    return this.reportingService.getKpis(siteId, startDate, endDate);
+    return this.reportingService.getKpis(siteId, startDate, endDate, includeHistorical === 'true');
   }
 
   // ---------------------------------------------------------------------------
@@ -35,13 +37,15 @@ export class ReportingController {
   @ApiQuery({ name: 'startDate', required: true, type: String, description: 'ISO date (YYYY-MM-DD)' })
   @ApiQuery({ name: 'endDate', required: true, type: String, description: 'ISO date (YYYY-MM-DD)' })
   @ApiQuery({ name: 'metric', required: true, enum: ['check_ins', 'wait_time', 'no_shows', 'overrides'] })
+  @ApiQuery({ name: 'includeHistorical', required: false, type: Boolean })
   async getTrends(
     @Query('siteId') siteId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
     @Query('metric') metric: TrendMetric,
+    @Query('includeHistorical') includeHistorical?: string,
   ) {
-    return this.reportingService.getTrendData(siteId, startDate, endDate, metric);
+    return this.reportingService.getTrendData(siteId, startDate, endDate, metric, includeHistorical === 'true');
   }
 
   @Get('technician-utilization')
@@ -50,12 +54,14 @@ export class ReportingController {
   @ApiQuery({ name: 'siteId', required: true, type: String })
   @ApiQuery({ name: 'startDate', required: true, type: String, description: 'ISO date (YYYY-MM-DD)' })
   @ApiQuery({ name: 'endDate', required: true, type: String, description: 'ISO date (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'includeHistorical', required: false, type: Boolean })
   async getTechnicianUtilization(
     @Query('siteId') siteId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('includeHistorical') includeHistorical?: string,
   ) {
-    return this.reportingService.getTechnicianUtilization(siteId, startDate, endDate);
+    return this.reportingService.getTechnicianUtilization(siteId, startDate, endDate, includeHistorical === 'true');
   }
 
   @Get('service-breakdown')
@@ -64,22 +70,26 @@ export class ReportingController {
   @ApiQuery({ name: 'siteId', required: true, type: String })
   @ApiQuery({ name: 'startDate', required: true, type: String, description: 'ISO date (YYYY-MM-DD)' })
   @ApiQuery({ name: 'endDate', required: true, type: String, description: 'ISO date (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'includeHistorical', required: false, type: Boolean })
   async getServiceBreakdown(
     @Query('siteId') siteId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('includeHistorical') includeHistorical?: string,
   ) {
-    return this.reportingService.getServiceFamilyBreakdown(siteId, startDate, endDate);
+    return this.reportingService.getServiceFamilyBreakdown(siteId, startDate, endDate, includeHistorical === 'true');
   }
 
   @Get('maintenance-retention')
   @RequirePermission(PERMISSIONS.REPORT_VIEW)
   @ApiOperation({ summary: 'Get maintenance retention analytics (overdue, upcoming, opportunities)' })
   @ApiQuery({ name: 'siteId', required: true, type: String })
+  @ApiQuery({ name: 'includeHistorical', required: false, type: Boolean })
   async getMaintenanceRetention(
     @Query('siteId') siteId: string,
+    @Query('includeHistorical') includeHistorical?: string,
   ) {
-    return this.reportingService.getMaintenanceRetention(siteId);
+    return this.reportingService.getMaintenanceRetention(siteId, includeHistorical === 'true');
   }
 
   @Get('queue-performance')
@@ -88,11 +98,13 @@ export class ReportingController {
   @ApiQuery({ name: 'siteId', required: true, type: String })
   @ApiQuery({ name: 'startDate', required: true, type: String, description: 'ISO date (YYYY-MM-DD)' })
   @ApiQuery({ name: 'endDate', required: true, type: String, description: 'ISO date (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'includeHistorical', required: false, type: Boolean })
   async getQueuePerformance(
     @Query('siteId') siteId: string,
     @Query('startDate') startDate: string,
     @Query('endDate') endDate: string,
+    @Query('includeHistorical') includeHistorical?: string,
   ) {
-    return this.reportingService.getQueuePerformanceSummary(siteId, startDate, endDate);
+    return this.reportingService.getQueuePerformanceSummary(siteId, startDate, endDate, includeHistorical === 'true');
   }
 }

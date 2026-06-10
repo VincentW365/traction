@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { serviceVisitIsLive } from '../../common/helpers/operational-scope';
 
 export interface TechnicianEfficiencyRow {
   technicianId: string;
@@ -46,6 +47,10 @@ export class PerformanceService {
         assignments: {
           where: {
             assignedAt: { gte: start, lte: end },
+            // CR-2026-006: exclude assignments tied to HISTORICAL_IMPORT visits.
+            // serviceOrder + serviceVisit are required relations, so this only
+            // filters historical rows (no effect on live data).
+            serviceOrder: { serviceVisit: serviceVisitIsLive() },
           },
           include: {
             serviceOrder: {
@@ -112,6 +117,8 @@ export class PerformanceService {
       where: {
         technicianId,
         assignedAt: { gte: start, lte: end },
+        // CR-2026-006: exclude HISTORICAL_IMPORT visits (required relations → live-only filter).
+        serviceOrder: { serviceVisit: serviceVisitIsLive() },
       },
       include: {
         serviceOrder: {
@@ -179,7 +186,12 @@ export class PerformanceService {
     };
   }
 
-  async getAssignmentHistory(siteId: string, startDate: string, endDate: string) {
+  async getAssignmentHistory(
+    siteId: string,
+    startDate: string,
+    endDate: string,
+    includeHistorical = false,
+  ) {
     const start = new Date(startDate);
     const end = new Date(endDate);
     end.setHours(23, 59, 59, 999);
@@ -188,6 +200,8 @@ export class PerformanceService {
       where: {
         assignedAt: { gte: start, lte: end },
         technician: { homeSiteId: siteId },
+        // CR-2026-006: exclude HISTORICAL_IMPORT visits by default; opt-in via includeHistorical.
+        serviceOrder: { serviceVisit: serviceVisitIsLive(includeHistorical) },
       },
       include: {
         technician: {
