@@ -4,9 +4,11 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import {
+  Prisma,
   VehicleServiceClass,
   VehicleWeightClass,
   ClassificationStatus,
+  ClassificationConfidence,
   ClassificationSource,
 } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
@@ -25,6 +27,13 @@ export interface ConfirmClassificationInput {
   serviceClass: VehicleServiceClass;
   weightClass?: VehicleWeightClass;
   notes?: string;
+}
+
+export interface ClassificationQueueOptions {
+  limit?: number;
+  offset?: number;
+  confidence?: ClassificationConfidence;
+  search?: string;
 }
 
 /**
@@ -61,29 +70,58 @@ export class ClassificationService {
    * Review queue: LIVE vehicles still needing an operational serviceClass.
    * Excludes historical/placeholder vehicles (CR-2026-006). Engine number and
    * other sensitive fields are never selected/returned here.
+   *
+   * Read-only filtering/search/ordering/paging (CR-2026-009) to make the
+   * imported backlog workable. "Suggestable first" ordering surfaces the rows
+   * that have an advisory class (HIGH→NONE) before the unmatched ones.
    */
-  async getQueue(limit = 50) {
-    const vehicles = await this.prisma.vehicle.findMany({
-      where: { serviceClass: null, ...liveVehicleWhere(false) },
-      select: {
-        id: true,
-        vehicleCode: true,
-        plateNumber: true,
-        make: true,
-        model: true,
-        modelYear: true,
-        weightClass: true,
-        serviceClass: true,
-        classification: true,
-        customer: { select: { firstName: true, lastName: true } },
-      },
-      take: limit,
-      orderBy: { updatedAt: 'desc' },
-    });
+  async getQueue(opts: ClassificationQueueOptions = {}) {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    const offset = Math.max(opts.offset ?? 0, 0);
+
+    const where: Prisma.VehicleWhereInput = {
+      serviceClass: null,
+      ...liveVehicleWhere(false),
+      ...(opts.confidence
+        ? { classification: { is: { confidence: opts.confidence } } }
+        : {}),
+      ...(opts.search && opts.search.trim()
+        ? {
+            OR: [
+              { make: { contains: opts.search.trim(), mode: 'insensitive' } },
+              { model: { contains: opts.search.trim(), mode: 'insensitive' } },
+              { plateNumber: { contains: opts.search.trim(), mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const [total, vehicles] = await Promise.all([
+      this.prisma.vehicle.count({ where }),
+      this.prisma.vehicle.findMany({
+        where,
+        select: {
+          id: true,
+          vehicleCode: true,
+          plateNumber: true,
+          make: true,
+          model: true,
+          modelYear: true,
+          weightClass: true,
+          serviceClass: true,
+          classification: true,
+          customer: { select: { firstName: true, lastName: true } },
+        },
+        // enum declared HIGH, MEDIUM, LOW, NONE → asc = suggestable first; null relation last.
+        orderBy: [{ classification: { confidence: 'asc' } }, { updatedAt: 'desc' }],
+        skip: offset,
+        take: limit,
+      }),
+    ]);
 
     const rules = await this.loadRules();
 
-    return vehicles.map((v) => {
+    const items = vehicles.map((v) => {
       // Prefer a stored suggestion; otherwise compute advisory on the fly.
       const stored = v.classification;
       const suggestion =
@@ -113,6 +151,8 @@ export class ClassificationService {
         suggestion,
       };
     });
+
+    return { items, total, limit, offset };
   }
 
   /**

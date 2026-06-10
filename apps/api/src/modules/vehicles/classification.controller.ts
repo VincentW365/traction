@@ -7,8 +7,10 @@ import {
   Query,
   UseGuards,
   ParseUUIDPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { ClassificationConfidence } from '@prisma/client';
 import { ClassificationService } from './classification.service';
 import { ConfirmClassificationDto } from './dto/confirm-classification.dto';
 import { BulkConfirmClassificationDto } from './dto/bulk-confirm-classification.dto';
@@ -39,9 +41,28 @@ export class ClassificationController {
     summary: 'List live vehicles awaiting serviceClass classification (with advisory suggestions)',
   })
   @ApiQuery({ name: 'limit', required: false, type: Number })
-  async queue(@Query('limit') limit?: string) {
-    const n = Math.min(Math.max(parseInt(limit ?? '50', 10) || 50, 1), 200);
-    return this.classification.getQueue(n);
+  @ApiQuery({ name: 'offset', required: false, type: Number })
+  @ApiQuery({ name: 'confidence', required: false, enum: ClassificationConfidence })
+  @ApiQuery({ name: 'search', required: false, type: String, description: 'make / model / plate (partial)' })
+  async queue(
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+    @Query('confidence') confidence?: string,
+    @Query('search') search?: string,
+  ) {
+    let conf: ClassificationConfidence | undefined;
+    if (confidence !== undefined && confidence !== '' && confidence !== 'ALL') {
+      if (!(confidence in ClassificationConfidence)) {
+        throw new BadRequestException(`Invalid confidence: ${confidence}`);
+      }
+      conf = confidence as ClassificationConfidence;
+    }
+    return this.classification.getQueue({
+      limit: limit ? parseInt(limit, 10) || undefined : undefined,
+      offset: offset ? parseInt(offset, 10) || undefined : undefined,
+      confidence: conf,
+      search,
+    });
   }
 
   @Post(':vehicleId/confirm')

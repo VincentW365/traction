@@ -14,6 +14,7 @@ function build() {
     vehicle: {
       findUnique: vi.fn(),
       findMany: vi.fn(async () => []),
+      count: vi.fn(async () => 0),
     },
     vehicleWeightSuggestion: { findMany: vi.fn(async () => RULE_ROWS) },
     $transaction: vi.fn(async (cb: any) => cb(tx)),
@@ -25,8 +26,9 @@ function build() {
 }
 
 describe('ClassificationService.getQueue', () => {
-  it('filters to unclassified + live (non-placeholder) vehicles and attaches a suggestion', async () => {
+  it('filters to unclassified + live (non-placeholder) vehicles, orders suggestable-first, returns {items,total}', async () => {
     const h = build();
+    h.prisma.vehicle.count.mockResolvedValueOnce(1);
     h.prisma.vehicle.findMany.mockResolvedValueOnce([
       {
         id: 'v1', vehicleCode: 'SC-ABC', plateNumber: 'ABC', make: 'Toyota', model: 'Corolla', modelYear: 2019,
@@ -35,13 +37,34 @@ describe('ClassificationService.getQueue', () => {
       },
     ]);
 
-    const out = await h.service.getQueue(10);
+    const out = await h.service.getQueue();
 
-    const where = h.prisma.vehicle.findMany.mock.calls[0][0].where;
-    expect(where.serviceClass).toBeNull();
-    expect(where.vehicleCode).toEqual({ not: { startsWith: 'HIST-UNRESOLVED-' } });
-    expect(out[0].suggestion.suggestedServiceClass).toBe('SEDAN_CLASS');
-    expect(out[0].classificationStatus).toBe('PENDING_REVIEW');
+    const args = h.prisma.vehicle.findMany.mock.calls[0][0];
+    expect(args.where.serviceClass).toBeNull();
+    expect(args.where.vehicleCode).toEqual({ not: { startsWith: 'HIST-UNRESOLVED-' } });
+    expect(args.orderBy).toEqual([
+      { classification: { confidence: 'asc' } },
+      { updatedAt: 'desc' },
+    ]);
+    expect(h.prisma.vehicle.count).toHaveBeenCalledWith({ where: args.where });
+    expect(out.total).toBe(1);
+    expect(out.items[0].suggestion.suggestedServiceClass).toBe('SEDAN_CLASS');
+    expect(out.items[0].classificationStatus).toBe('PENDING_REVIEW');
+  });
+
+  it('applies confidence filter and make/model/plate search, clamps limit, applies offset', async () => {
+    const h = build();
+    await h.service.getQueue({ confidence: 'MEDIUM' as any, search: 'corolla', limit: 999, offset: 40 });
+
+    const args = h.prisma.vehicle.findMany.mock.calls[0][0];
+    expect(args.where.classification).toEqual({ is: { confidence: 'MEDIUM' } });
+    expect(args.where.OR).toEqual([
+      { make: { contains: 'corolla', mode: 'insensitive' } },
+      { model: { contains: 'corolla', mode: 'insensitive' } },
+      { plateNumber: { contains: 'corolla', mode: 'insensitive' } },
+    ]);
+    expect(args.take).toBe(200); // clamped
+    expect(args.skip).toBe(40);
   });
 });
 
