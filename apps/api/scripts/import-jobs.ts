@@ -140,33 +140,41 @@ async function commit() {
         oilBrandRequested: j.oil ?? undefined, notes: visitNotes,
       };
       const existingVisitId = visitByJob.get(j.jobId);
-      const visit = existingVisitId
-        ? await prisma.serviceVisit.update({ where: { id: existingVisitId }, data: visitData })
-        : await prisma.serviceVisit.create({ data: visitData });
 
-      // One ServiceOrder per visit (terminal). Reconcile children idempotently.
-      const existingOrder = await prisma.serviceOrder.findFirst({ where: { serviceVisitId: visit.id }, select: { id: true } });
-      const orderData = { status: j.orderStatus as any, startedAt: j.startedAt, completedAt: j.completedAt, closedAt: j.visitStatus === 'CLOSED' ? j.completedAt : undefined, notes: j.notes || undefined };
-      const order = existingOrder
-        ? await prisma.serviceOrder.update({ where: { id: existingOrder.id }, data: orderData })
-        : await prisma.serviceOrder.create({ data: { serviceVisitId: visit.id, ...orderData } });
+      // Per-job atomic write: visit + order + import-derived children + ref.
+      // Children are deleted-then-recreated so re-running --commit is idempotent
+      // (no duplicate assignments/pauses/reworks). Scoped to this HISTORICAL_IMPORT
+      // order only — never touches live operational orders. Wrapping in one
+      // transaction prevents a mid-job failure leaving deleted-but-not-recreated rows.
+      await prisma.$transaction(async (tx) => {
+        const visit = existingVisitId
+          ? await tx.serviceVisit.update({ where: { id: existingVisitId }, data: visitData })
+          : await tx.serviceVisit.create({ data: visitData });
 
-      await prisma.technicianAssignment.deleteMany({ where: { serviceOrderId: order.id } });
-      await prisma.serviceOrderPause.deleteMany({ where: { serviceOrderId: order.id } });
-      await prisma.serviceOrderRework.deleteMany({ where: { serviceOrderId: order.id } });
+        // One ServiceOrder per visit (terminal). Reconcile children idempotently.
+        const existingOrder = await tx.serviceOrder.findFirst({ where: { serviceVisitId: visit.id }, select: { id: true } });
+        const orderData = { status: j.orderStatus as any, startedAt: j.startedAt, completedAt: j.completedAt, closedAt: j.visitStatus === 'CLOSED' ? j.completedAt : undefined, notes: j.notes || undefined };
+        const order = existingOrder
+          ? await tx.serviceOrder.update({ where: { id: existingOrder.id }, data: orderData })
+          : await tx.serviceOrder.create({ data: { serviceVisitId: visit.id, ...orderData } });
 
-      for (const t of j.techNames) {
-        const techId = ctx.techByName.get(normalizeTechName(t));
-        if (!techId) continue;
-        await prisma.technicianAssignment.create({ data: { serviceOrderId: order.id, technicianId: techId, status: 'COMPLETED', startedAt: j.startedAt, endedAt: j.completedAt } });
-      }
-      if (j.pause) await prisma.serviceOrderPause.create({ data: { serviceOrderId: order.id, reasonCode: 'OTHER', startedAt: j.pause.startedAt, endedAt: j.pause.endedAt } });
-      if (j.rework) await prisma.serviceOrderRework.create({ data: { serviceOrderId: order.id, reasonCode: 'HISTORICAL_RECTIFY', openedAt: j.rework.openedAt, closedAt: j.rework.closedAt } });
+        await tx.technicianAssignment.deleteMany({ where: { serviceOrderId: order.id } });
+        await tx.serviceOrderPause.deleteMany({ where: { serviceOrderId: order.id } });
+        await tx.serviceOrderRework.deleteMany({ where: { serviceOrderId: order.id } });
 
-      await prisma.externalSystemRef.upsert({
-        where: { system_entityType_entityId: { system: JOB_SYSTEM as any, entityType: 'ServiceVisit', entityId: visit.id } },
-        update: { externalId: j.jobId, syncStatus: 'SYNCED' }, // preserve original batch lineage
-        create: { system: JOB_SYSTEM as any, entityType: 'ServiceVisit', entityId: visit.id, externalId: j.jobId, syncStatus: 'SYNCED', metadata: { importBatchId: batchId, jobId: j.jobId, resolution: kind, sourceStatus: j.sourceStatus } },
+        for (const t of j.techNames) {
+          const techId = ctx.techByName.get(normalizeTechName(t));
+          if (!techId) continue;
+          await tx.technicianAssignment.create({ data: { serviceOrderId: order.id, technicianId: techId, status: 'COMPLETED', startedAt: j.startedAt, endedAt: j.completedAt } });
+        }
+        if (j.pause) await tx.serviceOrderPause.create({ data: { serviceOrderId: order.id, reasonCode: 'OTHER', startedAt: j.pause.startedAt, endedAt: j.pause.endedAt } });
+        if (j.rework) await tx.serviceOrderRework.create({ data: { serviceOrderId: order.id, reasonCode: 'HISTORICAL_RECTIFY', openedAt: j.rework.openedAt, closedAt: j.rework.closedAt } });
+
+        await tx.externalSystemRef.upsert({
+          where: { system_entityType_entityId: { system: JOB_SYSTEM as any, entityType: 'ServiceVisit', entityId: visit.id } },
+          update: { externalId: j.jobId, syncStatus: 'SYNCED' }, // preserve original batch lineage
+          create: { system: JOB_SYSTEM as any, entityType: 'ServiceVisit', entityId: visit.id, externalId: j.jobId, syncStatus: 'SYNCED', metadata: { importBatchId: batchId, jobId: j.jobId, resolution: kind, sourceStatus: j.sourceStatus } },
+        });
       });
       visits++;
     }

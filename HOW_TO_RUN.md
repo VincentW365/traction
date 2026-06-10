@@ -187,3 +187,5 @@ npx tsx apps/api/scripts/backfill-vehicle-classifications.ts --commit   # write 
 ```
 
 > Read-only verification helpers also exist: `verify-import.ts`, `verify-jobs.ts`, `verify-classification-backfill.ts`. None of these scripts change `Vehicle.serviceClass` or scheduling behavior.
+
+> **Repeat sync:** the imports are idempotent (re-running `--commit` updates in place; no duplicate customers/vehicles/jobs) and preserve staff classification + notification consent. For the controlled re-import/update runbook, see **`docs/43_CR_Manual_SharePoint_Sync.md`**.

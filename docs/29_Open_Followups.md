@@ -28,7 +28,7 @@ Owner: Vincent Wilson unless noted. Status: **Decision pending** / **Approved** 
 | --- | --- | --- |
 | 3.1 | Pre-existing WIP (technicians, maintenance reminders, reporting, staff, availability, NHTSA, web admin, `permissions.ts`, `app.module.ts`) was **risk-reviewed but not line-by-line audited**. | Open |
 | 3.2 | **NHTSA VIN-decode should default to STUB** in all non-production environments (currently live-unless-`STUB`; mitigated locally only). | Open |
-| 3.3 | **SharePoint extraction is manual + point-in-time** (snapshot 2026-06-09). No automated re-sync. | Open |
+| 3.3 | **SharePoint extraction is manual + point-in-time** (snapshot 2026-06-09). No automated re-sync. | Open (manual). **Controlled repeat-sync runbook → CR-2026-014** (`docs/43`): idempotent re-import (no duplicate customers/vehicles/jobs), per-job atomic child reconciliation, preserves staff classification + consent, removals ignored. Automated re-sync still out of scope. |
 
 ## 4. Data-quality follow-ups
 
