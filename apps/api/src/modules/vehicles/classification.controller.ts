@@ -72,6 +72,16 @@ export class ClassificationController {
     return this.classification.getStats();
   }
 
+  @Get('productivity')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'Read-only classification productivity (velocity, reviewers, daily target; managers)' })
+  @ApiQuery({ name: 'days', required: false, type: Number, description: 'window size, 1–90 (default 14)' })
+  async productivity(@Query('days') days?: string) {
+    return this.classification.getProductivity({
+      days: days ? parseInt(days, 10) || undefined : undefined,
+    });
+  }
+
   @Post(':vehicleId/confirm')
   @RequirePermission(PERMISSIONS.VEHICLE_UPDATE)
   @ApiOperation({ summary: 'Staff confirm/adjust a vehicle serviceClass (writes operational field + audit)' })

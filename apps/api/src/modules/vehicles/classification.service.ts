@@ -208,6 +208,90 @@ export class ClassificationService {
   }
 
   /**
+   * Read-only productivity snapshot (CR-2026-012) — counts only, no writes.
+   * Tracks classification throughput for managers: daily target vs today's
+   * confirmations, confirmation velocity over a window, and a per-reviewer
+   * breakdown. Daily target comes from BusinessRuleConfig (default 50).
+   */
+  async getProductivity(opts: { days?: number } = {}) {
+    const days = Math.min(Math.max(opts.days ?? 14, 1), 90);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const from = new Date(todayStart);
+    from.setDate(from.getDate() - (days - 1)); // window includes today + (days-1) prior
+
+    // Daily target from BusinessRuleConfig (editable); default 50 when absent.
+    const targetRule = await this.prisma.businessRuleConfig.findFirst({
+      where: { ruleKey: 'classification_daily_target' },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+    const dailyTarget = this.readDailyTarget(targetRule?.valueJson) ?? 50;
+
+    const [todayConfirmed, remainingUnclassified, velocityRows, reviewerRows] = await Promise.all([
+      this.prisma.vehicleClassification.count({
+        where: { status: 'CONFIRMED', reviewedAt: { gte: todayStart } },
+      }),
+      this.prisma.vehicle.count({ where: { serviceClass: null, ...liveVehicleWhere(false) } }),
+      this.prisma.$queryRaw<Array<{ day: Date; confirmed: number }>>`
+        SELECT date_trunc('day', reviewed_at) AS day, COUNT(*)::int AS confirmed
+        FROM vehicle_classifications
+        WHERE status = 'CONFIRMED' AND reviewed_at >= ${from}
+        GROUP BY 1 ORDER BY 1`,
+      this.prisma.$queryRaw<Array<{ reviewerId: string; reviewerName: string; confirmed: number }>>`
+        SELECT vc.reviewed_by_user_id AS "reviewerId", ua.full_name AS "reviewerName", COUNT(*)::int AS confirmed
+        FROM vehicle_classifications vc
+        JOIN user_accounts ua ON ua.id = vc.reviewed_by_user_id
+        WHERE vc.status = 'CONFIRMED' AND vc.reviewed_at >= ${from}
+        GROUP BY 1, 2 ORDER BY confirmed DESC`,
+    ]);
+
+    const velocity = velocityRows.map((r) => ({
+      date: new Date(r.day).toISOString().slice(0, 10),
+      confirmed: Number(r.confirmed),
+    }));
+    const byReviewer = reviewerRows.map((r) => ({
+      reviewerId: r.reviewerId,
+      reviewerName: r.reviewerName,
+      confirmed: Number(r.confirmed),
+    }));
+
+    const windowTotal = velocity.reduce((s, v) => s + v.confirmed, 0);
+    const activeDays = velocity.length || 1; // days that had at least one confirmation
+    const recentAvgPerDay = Math.round((windowTotal / activeDays) * 10) / 10;
+    const projectionDaysAtRecent =
+      recentAvgPerDay > 0 ? Math.ceil(remainingUnclassified / recentAvgPerDay) : null;
+    const projectionDaysAtTarget =
+      dailyTarget > 0 ? Math.ceil(remainingUnclassified / dailyTarget) : null;
+
+    return {
+      days,
+      dailyTarget,
+      today: {
+        confirmed: todayConfirmed,
+        target: dailyTarget,
+        remainingToTarget: Math.max(dailyTarget - todayConfirmed, 0),
+      },
+      remainingUnclassified,
+      recentAvgPerDay,
+      projectionDaysAtRecent,
+      projectionDaysAtTarget,
+      velocity,
+      byReviewer,
+    };
+  }
+
+  /** Parse a BusinessRuleConfig value into a positive daily-target number, or null. */
+  private readDailyTarget(value: unknown): number | null {
+    if (typeof value === 'number' && value > 0) return value;
+    if (value && typeof value === 'object') {
+      const v = value as Record<string, unknown>;
+      const n = v.target ?? v.value;
+      if (typeof n === 'number' && n > 0) return n;
+    }
+    return null;
+  }
+
+  /**
    * Staff confirm/adjust a single vehicle's serviceClass (+ optional weightClass).
    * Writes the operational field, the audit record, an AuditLog and StatusHistory.
    */

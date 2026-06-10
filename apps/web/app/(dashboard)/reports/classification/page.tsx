@@ -21,6 +21,18 @@ interface ClassificationStats {
   pendingByConfidence: { confidence: ClassificationConfidence; count: number }[];
 }
 
+interface ClassificationProductivity {
+  days: number;
+  dailyTarget: number;
+  today: { confirmed: number; target: number; remainingToTarget: number };
+  remainingUnclassified: number;
+  recentAvgPerDay: number;
+  projectionDaysAtRecent: number | null;
+  projectionDaysAtTarget: number | null;
+  velocity: { date: string; confirmed: number }[];
+  byReviewer: { reviewerId: string; reviewerName: string; confirmed: number }[];
+}
+
 export default function ClassificationProgressPage() {
   const { user } = useAuth();
   const allowed = ALLOWED_ROLES.includes(user?.roleCode ?? '');
@@ -28,6 +40,12 @@ export default function ClassificationProgressPage() {
   const statsQuery = useQuery({
     queryKey: ['classification-stats'],
     queryFn: () => api.get<ClassificationStats>('/vehicles/classification/stats'),
+    enabled: allowed,
+  });
+
+  const prodQuery = useQuery({
+    queryKey: ['classification-productivity', 14],
+    queryFn: () => api.get<ClassificationProductivity>('/vehicles/classification/productivity?days=14'),
     enabled: allowed,
   });
 
@@ -146,6 +164,84 @@ export default function ClassificationProgressPage() {
             </div>
           </div>
         </>
+      )}
+
+      {prodQuery.data && (
+        <div className="mt-8">
+          <h2 className="text-base font-semibold text-slate-900 mb-3">
+            Productivity <span className="text-sm font-normal text-slate-400">(last {prodQuery.data.days} days)</span>
+          </h2>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatCard
+              value={`${prodQuery.data.today.confirmed} / ${prodQuery.data.today.target}`}
+              label="Confirmed today vs target"
+              color={prodQuery.data.today.remainingToTarget === 0 ? 'green' : 'amber'}
+              icon={<span className="text-xs font-medium text-slate-400">{prodQuery.data.today.remainingToTarget} to go</span>}
+            />
+            <StatCard value={prodQuery.data.recentAvgPerDay} label="Avg confirmed / active day" color="blue" />
+            <StatCard value={prodQuery.data.projectionDaysAtRecent ?? '—'} label="Days to clear (recent pace)" color="slate" />
+            <StatCard value={prodQuery.data.remainingUnclassified} label="Remaining unclassified" color="amber" />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+            {/* Confirmation velocity */}
+            <div className="card">
+              <div className="card-header">
+                <h3 className="text-sm font-semibold text-slate-900">Confirmation velocity</h3>
+              </div>
+              <div className="card-body">
+                {prodQuery.data.velocity.length === 0 ? (
+                  <p className="text-sm text-slate-500">No confirmations in this window yet.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {(() => {
+                      const max = Math.max(...prodQuery.data.velocity.map((v) => v.confirmed), 1);
+                      return prodQuery.data.velocity.map((v) => (
+                        <div key={v.date} className="flex items-center gap-2 text-xs">
+                          <span className="w-20 shrink-0 font-mono text-slate-500">{v.date}</span>
+                          <div className="flex-1 bg-slate-100 rounded h-3">
+                            <div className="bg-blue-500 h-3 rounded" style={{ width: `${(v.confirmed / max) * 100}%` }} />
+                          </div>
+                          <span className="w-8 shrink-0 text-right font-medium text-slate-700">{v.confirmed}</span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Confirmations by reviewer */}
+            <div className="card">
+              <div className="card-header">
+                <h3 className="text-sm font-semibold text-slate-900">Confirmations by reviewer</h3>
+              </div>
+              <div className="table-container">
+                <table className="w-full text-sm">
+                  <thead className="table-header">
+                    <tr>
+                      <th>Reviewer</th>
+                      <th className="text-right">Confirmed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {prodQuery.data.byReviewer.length === 0 ? (
+                      <tr><td colSpan={2} className="text-sm text-slate-500 px-4 py-3">No confirmations in this window yet.</td></tr>
+                    ) : (
+                      prodQuery.data.byReviewer.map((r) => (
+                        <tr key={r.reviewerId} className="table-row">
+                          <td className="text-slate-700">{r.reviewerName}</td>
+                          <td className="text-right font-medium text-slate-900">{r.confirmed}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -16,7 +16,10 @@ function build() {
       findMany: vi.fn(async () => []),
       count: vi.fn(async () => 0),
     },
+    vehicleClassification: { count: vi.fn(async () => 0) },
+    businessRuleConfig: { findFirst: vi.fn(async () => null) },
     vehicleWeightSuggestion: { findMany: vi.fn(async () => RULE_ROWS) },
+    $queryRaw: vi.fn(async () => []),
     $transaction: vi.fn(async (cb: any) => cb(tx)),
   };
   const audit = { log: vi.fn(async () => ({})) };
@@ -118,6 +121,49 @@ describe('ClassificationService.getStats', () => {
     const out = await h.service.getStats();
     expect(out.percentClassified).toBe(0);
     expect(out.mobileJackEligible).toBe(0);
+  });
+});
+
+describe('ClassificationService.getProductivity', () => {
+  function setup(h: ReturnType<typeof build>) {
+    h.prisma.vehicleClassification.count.mockResolvedValueOnce(7); // today confirmed
+    h.prisma.vehicle.count.mockResolvedValueOnce(100); // remaining unclassified (live)
+    h.prisma.$queryRaw
+      .mockResolvedValueOnce([{ day: new Date('2026-06-10T00:00:00Z'), confirmed: 5 }]) // velocity
+      .mockResolvedValueOnce([{ reviewerId: 'u1', reviewerName: 'Manager User', confirmed: 5 }]); // byReviewer
+  }
+
+  it('defaults daily target to 50 when no BusinessRuleConfig rule exists', async () => {
+    const h = build();
+    setup(h);
+    const out = await h.service.getProductivity();
+    expect(out.dailyTarget).toBe(50);
+    expect(out.today).toEqual({ confirmed: 7, target: 50, remainingToTarget: 43 });
+    expect(out.remainingUnclassified).toBe(100);
+    expect(out.velocity).toEqual([{ date: '2026-06-10', confirmed: 5 }]);
+    expect(out.byReviewer).toEqual([{ reviewerId: 'u1', reviewerName: 'Manager User', confirmed: 5 }]);
+    expect(out.recentAvgPerDay).toBe(5);
+    expect(out.projectionDaysAtRecent).toBe(20); // ceil(100/5)
+    expect(out.projectionDaysAtTarget).toBe(2); // ceil(100/50)
+  });
+
+  it('reads daily target from BusinessRuleConfig (valueJson.target)', async () => {
+    const h = build();
+    h.prisma.businessRuleConfig.findFirst.mockResolvedValueOnce({ valueJson: { target: 30 } });
+    setup(h);
+    const out = await h.service.getProductivity();
+    expect(out.dailyTarget).toBe(30);
+    expect(out.today.remainingToTarget).toBe(23); // 30 - 7
+    expect(h.prisma.businessRuleConfig.findFirst.mock.calls[0][0].where).toEqual({
+      ruleKey: 'classification_daily_target',
+    });
+  });
+
+  it('clamps the days window to 1..90', async () => {
+    const hi = build(); setup(hi);
+    expect((await hi.service.getProductivity({ days: 999 })).days).toBe(90);
+    const lo = build(); setup(lo);
+    expect((await lo.service.getProductivity({ days: 0 })).days).toBe(1);
   });
 });
 
