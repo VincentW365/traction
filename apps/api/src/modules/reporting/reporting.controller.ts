@@ -119,4 +119,20 @@ export class ReportingController {
   ) {
     return this.reportingService.getHistoricalAnalytics({ from, to });
   }
+
+  @Get('service-mix')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'Read-only Service Mix / Job-Category analytics (CR-2026-019 P1c)' })
+  @ApiQuery({ name: 'from', required: false, type: String, description: 'ISO date (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'to', required: false, type: String, description: 'ISO date (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'category', required: false, type: String })
+  @ApiQuery({ name: 'mode', required: false, enum: ['auto', 'suggested'], description: 'auto = AUTO_MATCHED only; suggested = include NEEDS_REVIEW in volume (low-confidence)' })
+  async getServiceMix(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('category') category?: string,
+    @Query('mode') mode?: 'auto' | 'suggested',
+  ) {
+    return this.reportingService.getServiceMix({ from, to, category, mode });
+  }
 }

@@ -723,4 +723,192 @@ export class ReportingService {
       })),
     };
   }
+
+  /**
+   * CR-2026-019 (P1c) — Service Mix / Job-Category analytics. READ-ONLY.
+   * Built on ServiceJobMapping (historical) + ServiceCatalogItem (catalog/estimated
+   * prices) + ServiceType.family (live). Never writes. No customer PII (categories,
+   * service names, prices, technician names only). Estimated value = AUTO_MATCHED ×
+   * catalog price only (never fuzzy, never invoice). mode='suggested' adds
+   * NEEDS_REVIEW to VOLUME signal only (labelled low-confidence); revenue stays auto.
+   */
+  async getServiceMix(opts: { from?: string; to?: string; category?: string; mode?: 'auto' | 'suggested' } = {}) {
+    const from = opts.from ? new Date(opts.from) : null;
+    const to = opts.to ? new Date(opts.to) : null;
+    if (to) to.setHours(23, 59, 59, 999);
+    const mode = opts.mode === 'suggested' ? 'suggested' : 'auto';
+    const fromSql = from ? Prisma.sql`AND sv.created_at >= ${from}` : Prisma.empty;
+    const toSql = to ? Prisma.sql`AND sv.created_at <= ${to}` : Prisma.empty;
+    const catSql = opts.category ? Prisma.sql`AND ci.category = ${opts.category}` : Prisma.empty;
+    const modeSql = Prisma.raw(mode === 'suggested' ? `AND m.status IN ('AUTO_MATCHED','NEEDS_REVIEW')` : `AND m.status IN ('AUTO_MATCHED')`);
+    const bothSql = Prisma.raw(`AND m.status IN ('AUTO_MATCHED','NEEDS_REVIEW')`);
+    const hist = historicalVisitWhere();
+    const dateWhere = from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {};
+
+    const [perJob, timeline, opRows, techRows, coverage, totalHistoricalOrders, live, span] = await Promise.all([
+      this.prisma.$queryRaw<Array<{ id: string; name: string; category: string; base_price: number | null; auto_vol: number; review_vol: number }>>`
+        SELECT ci.id, ci.name, ci.category, ci.base_price::float8 AS base_price,
+               COUNT(*) FILTER (WHERE m.status = 'AUTO_MATCHED')::int AS auto_vol,
+               COUNT(*) FILTER (WHERE m.status = 'NEEDS_REVIEW')::int AS review_vol
+        FROM service_job_mappings m
+        JOIN service_catalog_items ci ON ci.id = m.catalog_item_id
+        JOIN service_orders so ON so.id = m.service_order_id
+        JOIN service_visits sv ON sv.id = so.service_visit_id
+        WHERE true ${bothSql} ${historicalVisitSql('sv')} ${fromSql} ${toSql} ${catSql}
+        GROUP BY ci.id, ci.name, ci.category, ci.base_price`,
+      this.prisma.$queryRaw<Array<{ month: Date; category: string; jobs: number }>>`
+        SELECT date_trunc('month', sv.created_at) AS month, ci.category, COUNT(*)::int AS jobs
+        FROM service_job_mappings m
+        JOIN service_catalog_items ci ON ci.id = m.catalog_item_id
+        JOIN service_orders so ON so.id = m.service_order_id
+        JOIN service_visits sv ON sv.id = so.service_visit_id
+        WHERE true ${modeSql} ${historicalVisitSql('sv')} ${fromSql} ${toSql} ${catSql}
+        GROUP BY 1, 2 ORDER BY 1`,
+      this.prisma.$queryRaw<Array<{ category: string; orders: number; avg_minutes: number | null; dur_sample: number; completed: number; cancelled: number; paused: number; reworked: number }>>`
+        WITH oc AS (
+          SELECT DISTINCT so.id AS order_id, ci.category, so.started_at, so.completed_at, sv.status AS visit_status
+          FROM service_job_mappings m
+          JOIN service_catalog_items ci ON ci.id = m.catalog_item_id
+          JOIN service_orders so ON so.id = m.service_order_id
+          JOIN service_visits sv ON sv.id = so.service_visit_id
+          WHERE true ${modeSql} ${historicalVisitSql('sv')} ${fromSql} ${toSql} ${catSql}
+        )
+        SELECT category, COUNT(*)::int AS orders,
+          AVG(EXTRACT(EPOCH FROM (completed_at - started_at)) / 60) FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL AND completed_at > started_at)::int AS avg_minutes,
+          COUNT(*) FILTER (WHERE completed_at IS NOT NULL AND started_at IS NOT NULL AND completed_at > started_at)::int AS dur_sample,
+          COUNT(*) FILTER (WHERE visit_status = 'CLOSED')::int AS completed,
+          COUNT(*) FILTER (WHERE visit_status = 'CANCELLED')::int AS cancelled,
+          COUNT(*) FILTER (WHERE order_id IN (SELECT service_order_id FROM service_order_pauses))::int AS paused,
+          COUNT(*) FILTER (WHERE order_id IN (SELECT service_order_id FROM service_order_reworks))::int AS reworked
+        FROM oc GROUP BY category ORDER BY orders DESC`,
+      this.prisma.$queryRaw<Array<{ category: string; name: string; jobs: number }>>`
+        SELECT ci.category, ua.full_name AS name, COUNT(DISTINCT so.id)::int AS jobs
+        FROM service_job_mappings m
+        JOIN service_catalog_items ci ON ci.id = m.catalog_item_id
+        JOIN service_orders so ON so.id = m.service_order_id
+        JOIN service_visits sv ON sv.id = so.service_visit_id
+        JOIN technician_assignments ta ON ta.service_order_id = so.id
+        JOIN technicians t ON t.id = ta.technician_id
+        JOIN user_accounts ua ON ua.id = t.user_account_id
+        WHERE true ${modeSql} ${historicalVisitSql('sv')} ${fromSql} ${toSql} ${catSql}
+        GROUP BY ci.category, ua.full_name ORDER BY jobs DESC LIMIT 80`,
+      this.prisma.$queryRaw<Array<{ auto_orders: number; any_orders: number }>>`
+        SELECT COUNT(DISTINCT m.service_order_id) FILTER (WHERE m.status = 'AUTO_MATCHED')::int AS auto_orders,
+               COUNT(DISTINCT m.service_order_id)::int AS any_orders
+        FROM service_job_mappings m
+        JOIN service_orders so ON so.id = m.service_order_id
+        JOIN service_visits sv ON sv.id = so.service_visit_id
+        WHERE true ${bothSql} ${historicalVisitSql('sv')} ${fromSql} ${toSql}`,
+      this.prisma.serviceOrder.count({ where: { serviceVisit: { ...hist, ...dateWhere } } }),
+      this.prisma.$queryRaw<Array<{ category: string; items: number }>>`
+        SELECT st.family AS category, COUNT(*)::int AS items
+        FROM service_order_items soi
+        JOIN service_orders so ON so.id = soi.service_order_id
+        JOIN service_visits sv ON sv.id = so.service_visit_id
+        JOIN service_types st ON st.id = soi.service_type_id
+        WHERE true ${liveVisitSql('sv')}
+        GROUP BY st.family ORDER BY items DESC`,
+      this.prisma.serviceVisit.aggregate({ _min: { createdAt: true }, _max: { createdAt: true }, where: hist }),
+    ]);
+
+    // --- per-job derivations (one query covers category summary + job-level) ---
+    const jobs = perJob.map((r) => {
+      const basePrice = r.base_price != null ? Number(r.base_price) : null;
+      const autoVol = Number(r.auto_vol), reviewVol = Number(r.review_vol);
+      const volume = mode === 'suggested' ? autoVol + reviewVol : autoVol;
+      return { id: r.id, name: r.name, category: r.category, basePrice, autoVol, reviewVol, volume, estValue: basePrice != null ? +(basePrice * autoVol).toFixed(2) : null };
+    });
+    const round1 = (n: number) => Math.round(n * 10) / 10;
+    const median = (xs: number[]) => { if (!xs.length) return 0; const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+
+    const catMap = new Map<string, { category: string; auto: number; review: number; estValueAuto: number; missingPriceMappings: number }>();
+    for (const j of jobs) {
+      const c = catMap.get(j.category) ?? { category: j.category, auto: 0, review: 0, estValueAuto: 0, missingPriceMappings: 0 };
+      c.auto += j.autoVol; c.review += j.reviewVol;
+      if (j.basePrice != null) c.estValueAuto += j.basePrice * j.autoVol; else c.missingPriceMappings += j.autoVol;
+      catMap.set(j.category, c);
+    }
+    const categorySummary = [...catMap.values()]
+      .map((c) => ({ ...c, jobs: mode === 'suggested' ? c.auto + c.review : c.auto, estValueAuto: +c.estValueAuto.toFixed(2) }))
+      .sort((a, b) => b.jobs - a.jobs);
+
+    const priced = jobs.filter((j) => j.basePrice != null);
+    const medPrice = median(priced.map((j) => j.basePrice as number));
+    const medVol = median(priced.map((j) => j.volume));
+    const slim = (j: typeof jobs[number]) => ({ name: j.name, category: j.category, volume: j.volume, basePrice: j.basePrice, estValue: j.estValue });
+
+    const topByVolume = [...jobs].sort((a, b) => b.volume - a.volume).slice(0, 15).map(slim);
+    const topByValue = priced.filter((j) => (j.estValue ?? 0) > 0).sort((a, b) => (b.estValue! - a.estValue!)).slice(0, 15).map(slim);
+    const highVolumeLowValue = priced.filter((j) => (j.basePrice as number) <= medPrice).sort((a, b) => b.volume - a.volume).slice(0, 10).map(slim);
+    const lowVolumeHighValue = priced.filter((j) => j.volume <= medVol).sort((a, b) => (b.basePrice as number) - (a.basePrice as number)).slice(0, 10).map(slim);
+    const servicesMissingPrice = jobs.filter((j) => j.basePrice == null).sort((a, b) => b.volume - a.volume).slice(0, 15).map(slim);
+
+    // --- timeline + growth/shrink + rolling 3-month ---
+    const months = [...new Set(timeline.map((r) => new Date(r.month).toISOString().slice(0, 7)))].sort();
+    const monthlyByCategory = timeline.map((r) => ({ month: new Date(r.month).toISOString().slice(0, 7), category: r.category, jobs: Number(r.jobs) }));
+    const overallByMonth = months.map((m) => ({ month: m, jobs: monthlyByCategory.filter((r) => r.month === m).reduce((s, r) => s + r.jobs, 0) }));
+    const overallMonthly = overallByMonth.map((p, i) => {
+      const w = overallByMonth.slice(Math.max(0, i - 2), i + 1);
+      return { month: p.month, jobs: p.jobs, rolling3: +(w.reduce((s, x) => s + x.jobs, 0) / w.length).toFixed(1) };
+    });
+    const recent = new Set(months.slice(-3)), prior = new Set(months.slice(-6, -3));
+    const growthByCategory = new Map<string, { recent: number; prior: number }>();
+    for (const r of monthlyByCategory) {
+      const g = growthByCategory.get(r.category) ?? { recent: 0, prior: 0 };
+      if (recent.has(r.month)) g.recent += r.jobs; else if (prior.has(r.month)) g.prior += r.jobs;
+      growthByCategory.set(r.category, g);
+    }
+    const growth = [...growthByCategory.entries()].map(([category, g]) => ({ category, recent: g.recent, prior: g.prior, delta: g.recent - g.prior }));
+    const topGrowing = [...growth].filter((g) => g.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 8);
+    const topShrinking = [...growth].filter((g) => g.delta < 0).sort((a, b) => a.delta - b.delta).slice(0, 8);
+
+    // --- operational by category ---
+    const operationalByCategory = opRows.map((r) => ({
+      category: r.category, orders: Number(r.orders),
+      avgDurationMinutes: r.avg_minutes != null ? Number(r.avg_minutes) : null, durationSampleSize: Number(r.dur_sample),
+      completed: Number(r.completed), cancelled: Number(r.cancelled),
+      pauseRate: r.orders ? round1((100 * Number(r.paused)) / Number(r.orders)) : 0,
+      reworkRate: r.orders ? round1((100 * Number(r.reworked)) / Number(r.orders)) : 0,
+    }));
+
+    // --- technician workload mix: top 3 per category ---
+    const techByCat = new Map<string, Array<{ name: string; jobs: number }>>();
+    for (const r of techRows) { (techByCat.get(r.category) ?? techByCat.set(r.category, []).get(r.category)!).push({ name: r.name, jobs: Number(r.jobs) }); }
+    const technicianMixByCategory = [...techByCat.entries()].map(([category, list]) => ({ category, technicians: list.sort((a, b) => b.jobs - a.jobs).slice(0, 3) }));
+
+    // --- coverage / review ---
+    const autoOrders = Number(coverage[0]?.auto_orders ?? 0);
+    const anyOrders = Number(coverage[0]?.any_orders ?? 0);
+    const total = Number(totalHistoricalOrders);
+    const reviewMappings = jobs.reduce((s, j) => s + j.reviewVol, 0);
+    const autoMappings = jobs.reduce((s, j) => s + j.autoVol, 0);
+
+    return {
+      mode,
+      span: {
+        from: span._min.createdAt ? span._min.createdAt.toISOString().slice(0, 10) : null,
+        to: span._max.createdAt ? span._max.createdAt.toISOString().slice(0, 10) : null,
+      },
+      valueNote: 'Estimated catalog value only (AUTO_MATCHED × catalog price). Not invoice revenue.',
+      historical: {
+        categorySummary,
+        timeline: { months, monthlyByCategory, overallMonthly, topGrowing, topShrinking },
+        jobs: { topByVolume, topByValue, highVolumeLowValue, lowVolumeHighValue, servicesMissingPrice },
+        operationalByCategory,
+        technicianMixByCategory,
+        coverage: {
+          totalHistoricalOrders: total,
+          autoMappedOrders: autoOrders,
+          anyMappedOrders: anyOrders,
+          unmappedOrders: Math.max(0, total - anyOrders),
+          analyticsReadyPct: total ? round1((100 * autoOrders) / total) : 0,
+          potentialAfterReviewPct: total ? round1((100 * anyOrders) / total) : 0,
+          unmappedPct: total ? round1((100 * (total - anyOrders)) / total) : 0,
+          autoMappings, suggestedReviewMappings: reviewMappings,
+          reviewBacklogByCategory: categorySummary.map((c) => ({ category: c.category, review: c.review })).filter((c) => c.review > 0).sort((a, b) => b.review - a.review),
+        },
+      },
+      live: { serviceMixByFamily: live.map((r) => ({ family: r.category, items: Number(r.items) })), hasLiveItems: live.length > 0 },
+    };
+  }
 }
