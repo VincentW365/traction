@@ -19,6 +19,14 @@ import { validateEnv } from '@bsop/config';
 import { assertTestDataToolsEnabled, assertValidLabel } from '../src/modules/data-import/test-data/guards';
 import { resolveScenarioKeys } from '../src/modules/data-import/test-data/scenarios';
 import { planRun, createRun, listRuns } from '../src/modules/data-import/test-data/runner';
+import {
+  loadCleanupPlan,
+  evaluateSafety,
+  executeCleanup,
+  assertRunIdProvided,
+  assertBackupProvided,
+  CLEANUP_DELETE_SEQUENCE,
+} from '../src/modules/data-import/test-data/cleanup';
 
 const argv = process.argv.slice(2);
 const sub = argv[0] && !argv[0].startsWith('--') ? argv[0] : 'help';
@@ -42,7 +50,11 @@ function printUsage(): void {
       Scenarios: appointment, walkin, completed, abandon, transport  (default: appointment,walkin,completed,abandon)
 
   test-data list        List existing test runs (read-only).
-  test-data cleanup     Not available yet — implemented in T-c.`);
+
+  test-data cleanup --run <id> [--commit --backup <path>]
+      Dry-run by default (no deletes). Manifest-driven; deletes ONLY the run's tagged rows
+      in dependency order. --commit needs ALLOW_TEST_DATA_TOOLS=true, all safety checks PASS,
+      and --backup <path> (a pg_dump taken first). Marks the run CLEANED_UP.`);
 }
 
 async function runCreate(prisma: PrismaClient, env: ReturnType<typeof validateEnv>): Promise<void> {
@@ -100,6 +112,54 @@ async function runCreate(prisma: PrismaClient, env: ReturnType<typeof validateEn
   console.log(`  cleanup (T-c) ...... will target run ${result.runId}`);
 }
 
+async function runCleanup(prisma: PrismaClient, env: ReturnType<typeof validateEnv>): Promise<void> {
+  const runId = val('--run');
+  assertRunIdProvided(runId);
+  const commit = has('--commit');
+  const backup = val('--backup');
+
+  const plan = await loadCleanupPlan(prisma, runId);
+  const safety = evaluateSafety(plan.facts);
+
+  console.log(commit ? 'TEST DATA CLEANUP — COMMIT' : 'TEST DATA CLEANUP — DRY RUN (no deletes)');
+  console.log(`  run ................ ${runId}`);
+  console.log(`  label .............. ${plan.run?.label ?? '(run not found)'}`);
+  console.log(`  status ............. ${plan.run?.status ?? 'n/a'}`);
+  console.log(`  manifest refs ...... ${plan.manifestTotal}`);
+  console.log('  Rows to delete (dependency order):');
+  for (const type of CLEANUP_DELETE_SEQUENCE) {
+    console.log(`    ${type.padEnd(24, '.')} ${plan.deleteCounts[type] ?? 0}`);
+  }
+  console.log(`    ${'TOTAL rows'.padEnd(24, '.')} ${plan.totalRows}`);
+  console.log('  Safety checks:');
+  for (const c of safety.checks) console.log(`    [${c.ok ? 'PASS' : 'FAIL'}] ${c.name} (${c.detail})`);
+  console.log(`  Safety: ${safety.pass ? 'PASS' : 'FAIL'}`);
+  console.log(`  Backup gate: a pg_dump path is REQUIRED before --commit`);
+  console.log(`    e.g.  pg_dump "$DATABASE_URL" > backup_${plan.run?.label ?? runId}.sql   then pass --backup <path>`);
+  console.log(`    ALLOW_TEST_DATA_TOOLS ${env.ALLOW_TEST_DATA_TOOLS ? 'enabled' : 'DISABLED (commit will refuse)'}`);
+
+  if (!commit) {
+    console.log('  No rows deleted (dry run). Re-run with --commit --backup <path> to delete.');
+    return;
+  }
+
+  // Commit gate: env + safety + backup, all required before any delete.
+  assertTestDataToolsEnabled(env.ALLOW_TEST_DATA_TOOLS);
+  if (!safety.pass) {
+    const failed = safety.checks.filter((c) => !c.ok).map((c) => c.name).join('; ');
+    throw new Error(`Safety checks FAILED — refusing cleanup: ${failed}`);
+  }
+  assertBackupProvided(backup);
+  if (!plan.run) throw new Error('Run not found — cannot clean up.');
+
+  const result = await executeCleanup(prisma, { runId, backup, actorUserId: plan.run.createdByUserId });
+  console.log('  DELETED:');
+  for (const [type, n] of Object.entries(result.counts)) console.log(`    ${type.padEnd(24, '.')} ${n}`);
+  console.log(`    ${'TOTAL deleted'.padEnd(24, '.')} ${result.totalDeleted}`);
+  console.log(`  run marked ......... CLEANED_UP`);
+  console.log(`  backup recorded .... ${result.backup}`);
+}
+
 async function runList(prisma: PrismaClient): Promise<void> {
   const runs = await listRuns(prisma);
   if (!runs.length) {
@@ -126,7 +186,7 @@ async function main(): Promise<void> {
         await runList(prisma);
         break;
       case 'cleanup':
-        console.log('cleanup is not available yet — it is implemented in T-c (CR-2026-020). No action taken.');
+        await runCleanup(prisma, env);
         break;
       default:
         printUsage();
