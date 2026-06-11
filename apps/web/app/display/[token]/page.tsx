@@ -5,9 +5,20 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { io, type Socket } from 'socket.io-client';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+// Resolve the API base URL at call time (browser-safe): explicit env override,
+// else derive from the current host so a LAN device calls the same host:3001
+// (not its own localhost); SSR fallback → localhost. Not a frozen module value.
+function resolveApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:3001/api/v1`;
+  }
+  return 'http://localhost:3001/api/v1';
+}
 // Socket.IO namespaces live at the server root, not under the HTTP global prefix.
-const SOCKET_URL = API_URL.replace(/\/api\/v\d+\/?$/, '');
+function resolveSocketUrl(): string {
+  return resolveApiBaseUrl().replace(/\/api\/v\d+\/?$/, '');
+}
 
 interface DisplayBoard {
   siteId: string;
@@ -36,7 +47,7 @@ export default function DisplayBoardPage() {
   const { data, isLoading, error, refetch } = useQuery<DisplayBoard>({
     queryKey: ['display-board', token],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/display/${token}`);
+      const res = await fetch(`${resolveApiBaseUrl()}/display/${token}`);
       if (!res.ok) {
         if (res.status === 404) throw new Error('INVALID');
         throw new Error('Failed to load board');
@@ -53,7 +64,7 @@ export default function DisplayBoardPage() {
     if (!siteId) return;
     let socket: Socket | undefined;
     try {
-      socket = io(`${SOCKET_URL}/queue`, {
+      socket = io(`${resolveSocketUrl()}/queue`, {
         query: { siteId },
         transports: ['websocket'],
         reconnection: true,

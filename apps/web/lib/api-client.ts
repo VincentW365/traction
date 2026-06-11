@@ -1,4 +1,19 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+/**
+ * Resolve the API base URL at call time (browser-safe):
+ *  1. explicit NEXT_PUBLIC_API_URL (prod / override) — unchanged behavior;
+ *  2. in the browser, derive from the current host so a device that loaded the
+ *     page over the LAN calls the API on that SAME host:3001 (not its own
+ *     localhost) — this is what enables LAN access without baking an IP;
+ *  3. SSR / server-side fallback → localhost.
+ * Computed per call (not a frozen module-level value) so SSR never freezes it.
+ */
+function resolveApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:3001/api/v1`;
+  }
+  return 'http://localhost:3001/api/v1';
+}
 
 let accessToken: string | null = null;
 
@@ -22,7 +37,7 @@ async function request<T>(
     headers.Authorization = `Bearer ${accessToken}`;
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${resolveApiBaseUrl()}${path}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,

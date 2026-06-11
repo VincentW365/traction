@@ -3,7 +3,16 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api/v1';
+// Resolve the API base URL at call time (browser-safe): explicit env override,
+// else derive from the current host so a LAN device calls the same host:3001
+// (not its own localhost); SSR fallback → localhost. Not a frozen module value.
+function resolveApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:3001/api/v1`;
+  }
+  return 'http://localhost:3001/api/v1';
+}
 
 interface CustomerStatus {
   ticketNumber: string | null;
@@ -53,7 +62,7 @@ export default function CustomerStatusPage() {
   const { data, isLoading, error } = useQuery<CustomerStatus>({
     queryKey: ['customer-status', token],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/status/${token}`);
+      const res = await fetch(`${resolveApiBaseUrl()}/status/${token}`);
       if (!res.ok) {
         if (res.status === 404) throw new Error('EXPIRED');
         throw new Error('Failed to load status');

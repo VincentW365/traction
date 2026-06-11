@@ -11,8 +11,15 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api/v1');
 
+  // Allow one or more web origins. A single value preserves prior behavior; a
+  // comma-separated list (e.g. localhost + LAN IPs for dev access from other
+  // devices) is parsed into a trimmed array.
+  const corsOrigin = env.API_CORS_ORIGIN.includes(',')
+    ? env.API_CORS_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean)
+    : env.API_CORS_ORIGIN;
+
   app.enableCors({
-    origin: env.API_CORS_ORIGIN,
+    origin: corsOrigin,
     credentials: true,
   });
 

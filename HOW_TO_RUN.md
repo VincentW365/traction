@@ -67,6 +67,30 @@ pnpm --filter @bsop/api dev    # API only  (nest start --watch)
 pnpm --filter @bsop/web dev    # Web only  (next dev)
 ```
 
+### Access from other devices on the LAN (dev only)
+
+To open the web app from another device on the same network (phone/tablet/laptop):
+
+```powershell
+pnpm --filter @bsop/api dev        # API already binds all interfaces (0.0.0.0:3001)
+pnpm --filter @bsop/web dev:lan    # binds the web dev server to 0.0.0.0:3000
+```
+
+Then in your **gitignored** `.env`, set `API_CORS_ORIGIN` to a comma-separated list
+including localhost and each LAN origin you'll use (find your IPv4 with `ipconfig`):
+
+```
+API_CORS_ORIGIN="http://localhost:3000,http://<LAN-IP>:3000"
+```
+
+- The browser auto-targets the API at the **same host** it loaded from, port `3001`
+  (no `NEXT_PUBLIC_API_URL` needed); set `NEXT_PUBLIC_API_URL` only to force a specific host.
+- Restart the API after changing `.env`. Restart `dev:lan` if you change `NEXT_PUBLIC_*`.
+- The owner must allow **Windows Firewall inbound TCP 3000 and 3001** on the *Private* network profile.
+- Open `http://<LAN-IP>:3000` on the device (it must share the subnet of that IP).
+- **LAN access is HTTP/dev-only** — not TLS, not production. Production uses an
+  explicit `NEXT_PUBLIC_API_URL` + proper hosting (see `docs/47`).
+
 ---
 
 ## 4. Login Credentials (seeded)
