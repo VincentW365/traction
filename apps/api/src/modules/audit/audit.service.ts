@@ -30,6 +30,7 @@ export const AUDIT_ACTIONS = {
   SERVICE_VISIT_ABANDONED: 'SERVICE_VISIT_ABANDONED', // CR-2026-018 (P3) — no-show / left before service
   CUSTOMER_NOTIFICATION_OPTIN: 'CUSTOMER_NOTIFICATION_OPTIN', // P4(b) — consent captured at check-in
   PAYMENT_RELEASE_OVERRIDE: 'PAYMENT_RELEASE_OVERRIDE', // P4(c) — manager release exception (GOV-005)
+  DEV_LOGIN: 'DEV_LOGIN', // CR-2026-022 — dev-only one-click role login (gated)
 } as const;
 
 @Injectable()
