@@ -41,14 +41,18 @@ describe('ReportingService.getKpis operational scope (CR-2026-006)', () => {
     expect(fragment.strings.join('')).toContain('source_type');
   });
 
-  it('includeHistorical=true removes the filter (count where + raw fragment empty)', async () => {
+  it('includeHistorical=true removes the historical filter (test-data exclusion remains, CR-2026-020)', async () => {
     await h.service.getKpis('site-1', '2026-01-01', '2026-01-31', true);
 
+    // historical opt-in drops sourceType; the test-data filter stays on by default.
     const totalCheckedInWhere = h.prisma.serviceVisit.count.mock.calls[0][0].where;
     expect(totalCheckedInWhere.sourceType).toBeUndefined();
+    expect(totalCheckedInWhere.testDataRunId).toBeNull();
 
+    // Raw fragment no longer carries source_type, but still excludes test data.
     const rawCall = h.prisma.$queryRaw.mock.calls[0];
     const fragment = rawCall[rawCall.length - 1];
-    expect(fragment.strings.join('')).toBe('');
+    expect(fragment.strings.join('')).not.toContain('source_type');
+    expect(fragment.strings.join('')).toContain('test_data_run_id IS NULL');
   });
 });

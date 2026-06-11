@@ -18,6 +18,12 @@ export const envSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   LOG_FORMAT: z.enum(['json', 'pretty']).default('json'),
   DEFAULT_SITE_CODE: z.string().default('BERT-01'),
+  // CR-2026-020 — gate for the test-data sandbox tooling (create/cleanup runner).
+  // Default OFF; enable only in local/staging. Must never be true in production.
+  ALLOW_TEST_DATA_TOOLS: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;

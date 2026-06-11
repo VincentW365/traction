@@ -225,6 +225,7 @@ enum IntegrationSystem {
   SAGE
   SHAREPOINT_CONTACT_DB
   SHAREPOINT_JOB_SHEET
+  TEST_DATA_RUN // CR-2026-020 — test-data run manifest tag (ExternalSystemRef)
 }
 
 enum ReminderStatus {
@@ -323,6 +324,11 @@ model Customer {
   serviceVisits        ServiceVisit[]
   maintenanceReminders MaintenanceReminder[]
 
+  // CR-2026-020 — nullable test-data run tag (null for all real & imported rows)
+  testDataRunId String?      @map("test_data_run_id") @db.Uuid
+  testDataRun   TestDataRun? @relation(fields: [testDataRunId], references: [id], onDelete: Restrict)
+
+  @@index([testDataRunId])
   @@map("customers")
 }
 
@@ -359,8 +365,13 @@ model Vehicle {
   maintenanceReminders       MaintenanceReminder[]
   classification             VehicleClassification? // CR-2026-008
 
+  // CR-2026-020 — nullable test-data run tag (null for all real & imported rows)
+  testDataRunId String?      @map("test_data_run_id") @db.Uuid
+  testDataRun   TestDataRun? @relation(fields: [testDataRunId], references: [id], onDelete: Restrict)
+
   @@index([customerId])
   @@index([plateNumber])
+  @@index([testDataRunId])
   @@map("vehicles")
 }
 
@@ -505,8 +516,13 @@ model ServiceVisit {
   maintenanceRecommendations MaintenanceRecommendation[]
   resourceOccupancies        ResourceOccupancy[]
 
+  // CR-2026-020 — nullable test-data run tag (null for all real & imported visits)
+  testDataRunId String?      @map("test_data_run_id") @db.Uuid
+  testDataRun   TestDataRun? @relation(fields: [testDataRunId], references: [id], onDelete: Restrict)
+
   @@index([siteId, status])
   @@index([customerId, vehicleId])
+  @@index([testDataRunId])
   @@map("service_visits")
 }
 
@@ -1210,6 +1226,41 @@ model ServiceJobMapping {
   @@index([catalogItemId])
   @@index([status])
   @@map("service_job_mappings")
+}
+
+// =========================
+// CR-2026-020 — TEST DATA SANDBOX
+// Run registry for disposable local/staging test data. The three operational
+// anchors (Customer, Vehicle, ServiceVisit) carry a nullable testDataRunId for
+// cheap reporting exclusion; every created row is additionally tagged via an
+// ExternalSystemRef(system=TEST_DATA_RUN) manifest. The run row is KEPT after
+// cleanup (status=CLEANED_UP) for audit — never deleted by the runner, so the
+// Restrict FK never blocks. createdByUserId is a soft reference (no DB FK).
+// =========================
+
+enum TestDataRunStatus {
+  ACTIVE
+  CLEANED_UP
+}
+
+model TestDataRun {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  label           String            @unique // e.g. vw-test-run-2026-06-11
+  createdByUserId String            @map("created_by_user_id") @db.Uuid // soft ref (no FK)
+  notes           String?
+  status          TestDataRunStatus @default(ACTIVE)
+  cleanedAt       DateTime?         @map("cleaned_at") @db.Timestamptz
+  creationSummary Json?             @map("creation_summary") // per-scenario created counts
+  cleanupSummary  Json?             @map("cleanup_summary") // per-table delete counts + backup path
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  customers     Customer[]
+  vehicles      Vehicle[]
+  serviceVisits ServiceVisit[]
+
+  @@index([status])
+  @@map("test_data_runs")
 }
 
 // =========================
