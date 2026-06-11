@@ -3,6 +3,8 @@ export const PERMISSIONS = {
   CUSTOMER_SEARCH: 'customer:search',
   CUSTOMER_CREATE: 'customer:create',
   CUSTOMER_UPDATE: 'customer:update',
+  CUSTOMER_DIRECTORY: 'customer:directory', // CR-2026-021 — admin/manager browse-all phonebook
+
   VEHICLE_CREATE: 'vehicle:create',
   VEHICLE_UPDATE: 'vehicle:update',
 
@@ -122,6 +124,7 @@ const TRANSPORT_COORDINATOR_PERMISSIONS: PermissionKey[] = [
 
 const MANAGER_PERMISSIONS: PermissionKey[] = [
   ...SERVICE_ADVISOR_PERMISSIONS,
+  PERMISSIONS.CUSTOMER_DIRECTORY, // CR-2026-021 — browse-all customer directory (ADMIN also via all-permissions)
   PERMISSIONS.QUEUE_OVERRIDE,
   PERMISSIONS.QUEUE_RECOMPUTE,
   PERMISSIONS.CONFIG_VIEW,
