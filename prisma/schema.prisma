@@ -1133,6 +1133,44 @@ model ExternalSystemRef {
 }
 
 // =========================
+// SERVICE CATALOG / PRICE LIST (CR-2026-019, P1a)
+// Internal catalog/classification reference for analytics — NOT invoice truth,
+// NOT a parts/labor pricing workflow. Prices are estimated/catalog values.
+// Additive only. ServiceJobMapping (P1b) is intentionally NOT added here.
+// =========================
+
+model ServiceCatalogItem {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobCode           String?   @map("job_code") // null — the source price list has no SKU/code
+  name              String
+  normalizedName    String    @map("normalized_name")
+  category          String // = source workbook tab (SERVICE, BRAKES, SUSPENSION, ...)
+  subcategory       String?
+  basePrice         Decimal?  @map("base_price") @db.Decimal(12, 2) // col F: current pre-tax estimate
+  priceTaxInclusive Decimal?  @map("price_tax_inclusive") @db.Decimal(12, 2) // col G: incl. GCT
+  laborPrice        Decimal?  @map("labor_price") @db.Decimal(12, 2) // null — file has no split
+  partsPrice        Decimal?  @map("parts_price") @db.Decimal(12, 2) // null — file has no split
+  currency          String?   @default("JMD")
+  effectiveFrom     DateTime? @map("effective_from") @db.Timestamptz
+  effectiveTo       DateTime? @map("effective_to") @db.Timestamptz
+  active            Boolean   @default(true)
+  source            String // e.g. PRICE_LIST_2026 (+ filename)
+  rawImportRow      Json      @map("raw_import_row") // full included-row provenance (C..H + comment)
+  rowHash           String    @map("row_hash") // dedup/idempotency for EXACT full-row repeats only
+  serviceTypeId     String?   @map("service_type_id") @db.Uuid // soft reference (no DB FK in P1a)
+  importBatchId     String?   @map("import_batch_id")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([rowHash])
+  @@index([normalizedName])
+  @@index([category])
+  @@index([jobCode])
+  @@index([serviceTypeId])
+  @@map("service_catalog_items")
+}
+
+// =========================
 // v4.1 — MAINTENANCE REMINDERS
 // =========================
 

@@ -54,9 +54,11 @@ master.xml
 proj.xml
 proj.csv
 expand.xml
-# Raw source exports (DMAIC doc + SharePoint CSV/XLSX) and analysis outputs
+# Raw source exports (DMAIC doc + SharePoint CSV/XLSX + price-list workbooks) and analysis outputs.
+# Raw Excel workbooks may contain PII (e.g. staff sheets) — never commit them.
 Service Center*.csv
 *.docx
+*.xlsx
 demo-output/
 
 # Build caches
