@@ -1170,6 +1170,48 @@ model ServiceCatalogItem {
   @@map("service_catalog_items")
 }
 
+// CR-2026-019 (P1b) — job -> catalog mapping. Additive only; soft references
+// (no DB FK) so existing tables are untouched. One row per matched segment;
+// many per order. Source notes are NEVER modified — rawText is a copy.
+enum ServiceMatchMethod {
+  EXACT
+  NORMALIZED
+  FUZZY
+  MANUAL
+  NONE
+}
+
+enum ServiceMatchStatus {
+  AUTO_MATCHED
+  NEEDS_REVIEW
+  CONFIRMED
+  REJECTED
+  UNMAPPED
+}
+
+model ServiceJobMapping {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceOrderId     String             @map("service_order_id") @db.Uuid // soft ref
+  serviceOrderItemId String?            @map("service_order_item_id") @db.Uuid // soft ref (live)
+  catalogItemId      String?            @map("catalog_item_id") @db.Uuid // soft ref; null = unmapped
+  rawText            String?            @map("raw_text") // COPY of the matched segment; notes untouched
+  confidence         Float?
+  matchMethod        ServiceMatchMethod @map("match_method")
+  status             ServiceMatchStatus
+  segmentHash        String             @map("segment_hash") // idempotency: (orderId|itemId + normalized segment)
+  reviewedByUserId   String?            @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt         DateTime?          @map("reviewed_at") @db.Timestamptz
+  importBatchId      String?            @map("import_batch_id")
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([segmentHash])
+  @@index([serviceOrderId])
+  @@index([catalogItemId])
+  @@index([status])
+  @@map("service_job_mappings")
+}
+
 // =========================
 // v4.1 — MAINTENANCE REMINDERS
 // =========================
