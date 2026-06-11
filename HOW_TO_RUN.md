@@ -112,6 +112,42 @@ All seeded accounts use the domain `@bert.local`. Passwords are seeded in plain 
 
 To change a password, edit `prisma/seed.ts` and re-run `pnpm db:seed` (it upserts by email, so existing users keep their password unless you reset — see below).
 
+### Dev role switcher — one-click test login (CR-2026-022)
+
+A dev-only page lets you sign in as any role **without typing credentials** — useful for quickly exploring the app as Admin / Manager / Service Advisor / Front Desk / Technician / Parts Staff / Transport Coordinator. It issues a **normal session token** (RBAC is fully enforced; only credential entry is skipped).
+
+> ⚠️ **Development/Test Login Only — Disabled in Production.** It is **off by default** and is **always refused when `NODE_ENV=production`**, even if the flag is on.
+
+**Enable it locally:** in your gitignored `.env`, set:
+
+```
+ALLOW_DEV_LOGIN=true
+# and ensure NODE_ENV is not "production" (defaults to development)
+```
+
+Then **seed the DEVTEST users once** (gated; idempotent; creates the 6 non-admin profiles with no password — `admin` is reused, never duplicated):
+
+```powershell
+$env:ALLOW_DEV_LOGIN="true"; $env:NODE_ENV="development"; npx tsx apps/api/scripts/seed-dev-users.ts --commit
+```
+
+Restart the API, then open **http://localhost:3000/dev-login** and click a role card.
+
+| Role | Mapped profile |
+| --- | --- |
+| ADMIN | `admin@bert.local` (existing admin, reused) |
+| MANAGER | `devtest.manager@berts.local` |
+| SERVICE_ADVISOR | `devtest.advisor@berts.local` |
+| FRONT_DESK | `devtest.frontdesk@berts.local` |
+| TECHNICIAN | `devtest.tech@berts.local` |
+| PARTS_STAFF | `devtest.parts@berts.local` |
+| TRANSPORT_COORDINATOR | `devtest.transport@berts.local` |
+
+- DEVTEST users have **no password** (`passwordHash = null`) — they can only be reached through the gated `/auth/dev-login` endpoint, never the normal login form.
+- If `ALLOW_DEV_LOGIN` is off (or in production), `/dev-login` shows a clear "disabled" state and the API endpoints return 403.
+- Each successful dev-login writes a `DEV_LOGIN` AuditLog row (no tokens logged).
+- **Never enable `ALLOW_DEV_LOGIN` in production.** There is no CUSTOMER card.
+
 ---
 
 ## 5. Database Commands

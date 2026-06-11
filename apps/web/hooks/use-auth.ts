@@ -63,6 +63,28 @@ export function useAuth() {
     }
   }, []);
 
+  // CR-2026-022 — dev-only one-click login. Stores the same session as login().
+  const devLogin = useCallback(async (role: string) => {
+    setState((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const res = await api.post<{
+        accessToken: string;
+        refreshToken: string;
+        user: User;
+      }>('/auth/dev-login', { role });
+      setToken(res.accessToken);
+      sessionStorage.setItem('bsop_token', res.accessToken);
+      sessionStorage.setItem('bsop_refresh', res.refreshToken);
+      setState({ user: res.user, loading: false, error: null });
+    } catch (e) {
+      setState({
+        user: null,
+        loading: false,
+        error: e instanceof Error ? e.message : 'Dev login failed',
+      });
+    }
+  }, []);
+
   const logout = useCallback(() => {
     setToken(null);
     sessionStorage.removeItem('bsop_token');
@@ -70,5 +92,5 @@ export function useAuth() {
     setState({ user: null, loading: false, error: null });
   }, []);
 
-  return { ...state, login, logout };
+  return { ...state, login, devLogin, logout };
 }
