@@ -83,6 +83,8 @@ export default function QueueBoardPage() {
 
   const readyCount = items.filter((i) => i.readyForDispatch).length;
   const waitingForBayCount = activeItems.filter((i) => !i.readyForDispatch && i.displayStatus !== 'BLOCKED').length;
+  // CR-2026-028: total ranked line, for "position N of M" context.
+  const rankedTotal = items.filter((i) => i.fifoPosition != null).length;
 
   return (
     <div className="page-container">
@@ -163,9 +165,12 @@ export default function QueueBoardPage() {
                     {/* Position */}
                     <td className="px-4 py-3">
                       {item.fifoPosition != null ? (
-                        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-50 text-blue-700 text-xs font-bold border border-blue-200">
-                          {item.fifoPosition}
-                        </span>
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-50 text-blue-700 text-xs font-bold border border-blue-200">
+                            {item.fifoPosition}
+                          </span>
+                          <span className="text-[10px] text-slate-400 tabular-nums">of {rankedTotal}</span>
+                        </div>
                       ) : (
                         <span className="inline-block w-7 h-7 rounded-full bg-slate-100 animate-pulse" />
                       )}
