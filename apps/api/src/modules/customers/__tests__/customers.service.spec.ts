@@ -23,6 +23,24 @@ describe('CustomersService.search — privacy-safe list', () => {
     expect(res[0]).toMatchObject({ id: 'c1', vehicleCount: 2, hasLoyalty: true });
     expect(res[0].lastVisitAt).toEqual(new Date('2026-06-01'));
   });
+
+  // CR-2026-027 — separator-insensitive vehicle-code match.
+  const orCodes = (where: any) =>
+    where.AND[0].OR.map((c: any) => c?.vehicles?.some?.vehicleCode?.contains).filter(Boolean);
+
+  it('adds a normalized vehicleCode clause so SC-1211KC / SC1211KC / 1211KC all match', async () => {
+    const prisma: any = { customer: { findMany: vi.fn(async () => []) } };
+    await new CustomersService(prisma).search('SC-1211KC');
+    const codes = orCodes(prisma.customer.findMany.mock.calls[0][0].where);
+    expect(codes).toContain('SC-1211KC'); // raw query
+    expect(codes).toContain('SC1211KC'); // normalized (separators stripped)
+  });
+
+  it('omits the normalized clause for a 1-char query', async () => {
+    const prisma: any = { customer: { findMany: vi.fn(async () => []) } };
+    await new CustomersService(prisma).search('a');
+    expect(orCodes(prisma.customer.findMany.mock.calls[0][0].where)).toEqual(['a']);
+  });
 });
 
 describe('CustomersService.directory — raw SQL, paginated, no phone', () => {

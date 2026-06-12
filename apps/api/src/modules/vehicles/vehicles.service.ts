@@ -7,6 +7,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
 import { UpdateVehicleDto } from './dto/update-vehicle.dto';
 import { liveVehicleWhere } from '../../common/helpers/operational-scope';
+import { normalizeCodeQuery } from '../../common/helpers/normalize-code-query';
 
 @Injectable()
 export class VehiclesService {
@@ -22,6 +23,8 @@ export class VehiclesService {
    */
   async search(query: string, includeHistorical = false) {
     const term = query.trim();
+    // CR-2026-027: separator-insensitive code match ('SC-1211KC'/'1211KC' → 'SC1211KC').
+    const codeTerm = normalizeCodeQuery(term);
 
     return this.prisma.vehicle.findMany({
       where: {
@@ -39,6 +42,9 @@ export class VehiclesService {
                   ],
                 },
               },
+              ...(codeTerm.length >= 2
+                ? [{ vehicleCode: { contains: codeTerm, mode: 'insensitive' as const } }]
+                : []),
             ],
           },
           liveVehicleWhere(includeHistorical),

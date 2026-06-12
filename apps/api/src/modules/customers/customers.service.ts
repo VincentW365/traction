@@ -5,6 +5,7 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerDirectoryDto } from './dto/customer-directory.dto';
 import { liveCustomerWhere, PLACEHOLDER_CUSTOMER_NUMBER } from '../../common/helpers/operational-scope';
+import { normalizeCodeQuery } from '../../common/helpers/normalize-code-query';
 import {
   toCustomerListItem,
   toCustomerDetail,
@@ -27,6 +28,9 @@ export class CustomersService {
    * Excludes the BERT-HIST-UNKNOWN placeholder + test data by default (CR-2026-006/020).
    */
   async search(query: string, includeHistorical = false): Promise<CustomerListItem[]> {
+    // CR-2026-027: separator-insensitive code match so 'SC1211KC', 'SC-1211KC',
+    // and '1211KC' all find the vehicle whose stored code is 'SC1211KC'.
+    const codeQuery = normalizeCodeQuery(query);
     const rows = await this.prisma.customer.findMany({
       where: {
         AND: [
@@ -40,6 +44,9 @@ export class CustomersService {
               { vehicles: { some: { plateNumber: { contains: query, mode: 'insensitive' } } } },
               { vehicles: { some: { vehicleCode: { contains: query, mode: 'insensitive' } } } },
               { vehicles: { some: { vin: { contains: query, mode: 'insensitive' } } } },
+              ...(codeQuery.length >= 2
+                ? [{ vehicles: { some: { vehicleCode: { contains: codeQuery, mode: 'insensitive' as const } } } }]
+                : []),
             ],
           },
           liveCustomerWhere(includeHistorical),
@@ -81,11 +88,18 @@ export class CustomersService {
     ];
     if (dto.q && dto.q.trim()) {
       const like = `%${dto.q.trim()}%`;
+      // CR-2026-027: separator-insensitive code match (strip '-' from the stored code).
+      const codeQuery = normalizeCodeQuery(dto.q);
+      const codeLike = `%${codeQuery}%`;
+      const codeBranch =
+        codeQuery.length >= 2
+          ? Prisma.sql` OR replace(upper(v.vehicle_code), '-', '') ILIKE ${codeLike}`
+          : Prisma.empty;
       conds.push(Prisma.sql`(
         c.first_name ILIKE ${like} OR c.last_name ILIKE ${like} OR c.customer_number ILIKE ${like}
         OR c.email ILIKE ${like} OR c.phone ILIKE ${like}
         OR EXISTS (SELECT 1 FROM vehicles v WHERE v.customer_id = c.id
-          AND (v.plate_number ILIKE ${like} OR v.vehicle_code ILIKE ${like} OR v.vin ILIKE ${like}))
+          AND (v.plate_number ILIKE ${like} OR v.vehicle_code ILIKE ${like} OR v.vin ILIKE ${like}${codeBranch}))
       )`);
     }
     if (dto.letter) conds.push(Prisma.sql`c.last_name ILIKE ${dto.letter + '%'}`);
