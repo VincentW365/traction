@@ -109,4 +109,13 @@ describe('CustomersService.create — dev-login sandbox tagging (CR-2026-023 spi
     expect(tx.customer.create.mock.calls[0][0].data.testDataRunId).toBeUndefined();
     expect(tx.externalSystemRef.create).not.toHaveBeenCalled();
   });
+
+  it('computes the next CUST- number from ^CUST-[0-9]+$ rows only (ignores imported C-…)', async () => {
+    const { svc, tx } = buildCreate(undefined);
+    await svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234' } as any);
+    // $queryRaw is a tagged template; the first arg is the SQL strings array.
+    const sql = (tx.$queryRaw.mock.calls[0][0] as string[]).join('');
+    expect(sql).toContain("customer_number ~ '^CUST-[0-9]+$'");
+    expect(tx.customer.create.mock.calls[0][0].data.customerNumber).toMatch(/^CUST-\d{6}$/);
+  });
 });

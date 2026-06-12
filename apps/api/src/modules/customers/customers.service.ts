@@ -129,11 +129,15 @@ export class CustomersService {
     const sandboxRunId = this.sandbox.getRunId();
 
     return this.prisma.$transaction(async (tx) => {
+      // Only consider canonical CUST-<digits> numbers. Imported numbers (C-…),
+      // blanks, and any non-numeric suffix (e.g. CUST-ABC) are ignored — otherwise
+      // the CAST throws and customer creation fails. Format is unchanged.
       const result = await tx.$queryRaw<{ next_val: number }[]>`
         SELECT COALESCE(
           MAX(CAST(SUBSTRING(customer_number FROM 6) AS INTEGER)), 0
         ) + 1 AS next_val
         FROM customers
+        WHERE customer_number ~ '^CUST-[0-9]+$'
       `;
       const nextVal = result[0].next_val;
       const customerNumber = `CUST-${String(nextVal).padStart(6, '0')}`;
