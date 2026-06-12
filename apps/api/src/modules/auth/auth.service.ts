@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import * as jwt from 'jsonwebtoken';
+import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { ROLE_PERMISSIONS } from '../../common/constants/permissions';
 import { JwtPayload } from '../../common/decorators/current-user.decorator';
@@ -33,29 +34,38 @@ export class AuthService {
     private audit: AuditService,
   ) {}
 
-  /**
-   * Issue normal access + refresh tokens for a user (shared by login + dev-login).
-   * Behaviour is identical to the previous inline signing in login().
-   */
-  private issueTokensForUser(user: TokenUser) {
+  /** Sign an access token. `sandboxRunId` (CR-2026-023) is added ONLY for dev-login sessions. */
+  private signAccessToken(user: TokenUser, sandboxRunId?: string): string {
     const permissions = ROLE_PERMISSIONS[user.roleCode] ?? [];
     const payload: JwtPayload = {
       sub: user.id,
       role: user.roleCode,
       siteId: user.siteId,
       permissions,
+      ...(sandboxRunId ? { sandboxRunId } : {}),
     };
-    const accessToken = jwt.sign(payload, this.jwtSecret, {
+    return jwt.sign(payload, this.jwtSecret, {
       expiresIn: this.accessExpiry as jwt.SignOptions['expiresIn'],
     });
-    const refreshToken = jwt.sign(
-      { sub: user.id, type: 'refresh' },
+  }
+
+  /** Sign a refresh token; carries sandboxRunId so refreshes preserve the dev session. */
+  private signRefreshToken(userId: string, sandboxRunId?: string): string {
+    return jwt.sign(
+      { sub: userId, type: 'refresh', ...(sandboxRunId ? { sandboxRunId } : {}) },
       this.jwtSecret,
       { expiresIn: this.refreshExpiry as jwt.SignOptions['expiresIn'] },
     );
+  }
+
+  /**
+   * Issue normal access + refresh tokens for a user (shared by login + dev-login).
+   * Normal login passes no sandboxRunId → behaviour identical to before.
+   */
+  private issueTokensForUser(user: TokenUser, sandboxRunId?: string) {
     return {
-      accessToken,
-      refreshToken,
+      accessToken: this.signAccessToken(user, sandboxRunId),
+      refreshToken: this.signRefreshToken(user.id, sandboxRunId),
       user: {
         id: user.id,
         email: user.email,
@@ -146,15 +156,30 @@ export class AuthService {
         `Dev user for ${role} is not seeded yet (${profile.email}). Run scripts/seed-dev-users.ts (CR-2026-022 D-b).`,
       );
     }
+
+    // CR-2026-023 — each dev-login opens an ephemeral sandbox session (a TestDataRun
+    // of runType DEV_LOGIN_SESSION). Records created during the session are tagged to
+    // it and removable later via the existing cleanup engine.
+    const run = await this.prisma.testDataRun.create({
+      data: {
+        label: `dev-session-${user.roleCode.toLowerCase()}-${Date.now()}-${randomUUID().slice(0, 8)}`,
+        createdByUserId: user.id,
+        status: 'ACTIVE',
+        runType: 'DEV_LOGIN_SESSION',
+        creationSummary: { kind: 'DEV_LOGIN_SESSION', role: user.roleCode },
+      },
+    });
+
     await this.audit.log({
       actorUserId: user.id,
       action: AUDIT_ACTIONS.DEV_LOGIN,
       entityType: 'UserAccount',
       entityId: user.id,
-      afterJson: { role: user.roleCode, email: user.email },
+      afterJson: { role: user.roleCode, email: user.email, sandboxRunId: run.id },
       reasonCode: 'DEV_LOGIN',
     });
-    return this.issueTokensForUser(user);
+
+    return { ...this.issueTokensForUser(user, run.id), sandboxRunId: run.id };
   }
 
   async refresh(refreshToken: string) {
@@ -162,6 +187,7 @@ export class AuthService {
       const decoded = jwt.verify(refreshToken, this.jwtSecret) as {
         sub: string;
         type: string;
+        sandboxRunId?: string;
       };
 
       if (decoded.type !== 'refresh') {
@@ -176,19 +202,8 @@ export class AuthService {
         throw new UnauthorizedException('User not found or inactive');
       }
 
-      const permissions = ROLE_PERMISSIONS[user.roleCode] ?? [];
-
-      const payload: JwtPayload = {
-        sub: user.id,
-        role: user.roleCode,
-        siteId: user.siteId,
-        permissions,
-      };
-
-      const accessToken = jwt.sign(payload, this.jwtSecret, {
-        expiresIn: this.accessExpiry as jwt.SignOptions['expiresIn'],
-      });
-
+      // CR-2026-023 — preserve the dev-login sandbox run id across refreshes.
+      const accessToken = this.signAccessToken(user, decoded.sandboxRunId);
       return { accessToken };
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');

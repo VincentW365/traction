@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
+import { SandboxModule } from './common/sandbox/sandbox.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { VehiclesModule } from './modules/vehicles/vehicles.module';
@@ -28,6 +29,7 @@ import { AvailabilityModule } from './modules/availability/availability.module';
   imports: [
     EventEmitterModule.forRoot(),
     PrismaModule,
+    SandboxModule,
     AuthModule,
     CustomersModule,
     VehiclesModule,

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { CustomersService } from '../customers.service';
 
+// CR-2026-023: no sandbox context by default → create() behaves exactly as before.
+const noSandbox = { getRunId: () => undefined } as any;
+
 const customerRow = {
   id: 'c1', customerNumber: 'CUST-000123', firstName: 'Jane', lastName: 'Doe',
   phone: '8763341234', email: 'jane@example.test', loyaltyNumber: 'LOY-1', notes: 'import:abc; raw="DOE, JANE"',
@@ -16,7 +19,7 @@ describe('CustomersService.search — privacy-safe list', () => {
         ]),
       },
     };
-    const svc = new CustomersService(prisma);
+    const svc = new CustomersService(prisma, noSandbox);
     const res = await svc.search('doe');
     expect(JSON.stringify(res)).not.toContain('phone');
     expect(JSON.stringify(res)).not.toContain('8763341234');
@@ -35,7 +38,7 @@ describe('CustomersService.directory — raw SQL, paginated, no phone', () => {
         ])
         .mockResolvedValueOnce([{ total: 1 }]),
     };
-    const svc = new CustomersService(prisma);
+    const svc = new CustomersService(prisma, noSandbox);
     const res = await svc.directory({} as any);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
     expect(res).toMatchObject({ total: 1, limit: 50, offset: 0 });
@@ -56,7 +59,7 @@ describe('CustomersService.findById — detail with role-aware import meta', () 
         })),
       },
     };
-    return new CustomersService(prisma);
+    return new CustomersService(prisma, noSandbox);
   }
 
   it('formats phones, strips import note, includes importMeta for admin/manager', async () => {
@@ -75,6 +78,35 @@ describe('CustomersService.findById — detail with role-aware import meta', () 
 
   it('throws NotFound when missing', async () => {
     const prisma: any = { customer: { findUnique: vi.fn(async () => null) } };
-    await expect(new CustomersService(prisma).findById('nope', false)).rejects.toThrow(/not found/i);
+    await expect(new CustomersService(prisma, noSandbox).findById('nope', false)).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('CustomersService.create — dev-login sandbox tagging (CR-2026-023 spike)', () => {
+  function buildCreate(sandboxRunId?: string) {
+    const tx: any = {
+      $queryRaw: vi.fn(async () => [{ next_val: 1 }]),
+      customer: { create: vi.fn(async (args: any) => ({ id: 'cust-1', ...args.data })) },
+      externalSystemRef: { create: vi.fn(async () => ({ id: 'ref-1' })) },
+    };
+    const prisma: any = { $transaction: vi.fn(async (cb: any) => cb(tx)) };
+    const sandbox: any = { getRunId: () => sandboxRunId };
+    return { svc: new CustomersService(prisma, sandbox), tx };
+  }
+
+  it('tags the customer + writes a TEST_DATA_RUN manifest ref inside a sandbox session', async () => {
+    const { svc, tx } = buildCreate('run-1');
+    await svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234' } as any);
+    expect(tx.customer.create.mock.calls[0][0].data.testDataRunId).toBe('run-1');
+    expect(tx.externalSystemRef.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ system: 'TEST_DATA_RUN', externalId: 'run-1', entityType: 'Customer', entityId: 'cust-1' }) }),
+    );
+  });
+
+  it('does NOT tag and writes NO manifest ref when there is no sandbox session (normal users unchanged)', async () => {
+    const { svc, tx } = buildCreate(undefined);
+    await svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234' } as any);
+    expect(tx.customer.create.mock.calls[0][0].data.testDataRunId).toBeUndefined();
+    expect(tx.externalSystemRef.create).not.toHaveBeenCalled();
   });
 });

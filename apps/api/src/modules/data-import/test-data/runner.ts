@@ -155,7 +155,13 @@ export async function createRun(
   return db.$transaction(
     async (tx) => {
       const run = await tx.testDataRun.create({
-        data: { label: opts.label, createdByUserId: infra.advisorUserId, notes: opts.notes ?? null, status: 'ACTIVE' },
+        data: {
+          label: opts.label,
+          createdByUserId: infra.advisorUserId,
+          notes: opts.notes ?? null,
+          status: 'ACTIVE',
+          runType: 'BATCH', // CR-2026-023 — explicit (default is also BATCH)
+        },
       });
       const rec = new ManifestRecorder();
       const alloc = new RunAllocator(await nextCustomerSeqStart(tx));

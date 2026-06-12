@@ -19,6 +19,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       role: payload.role,
       siteId: payload.siteId,
       permissions: payload.permissions,
+      // CR-2026-023 — carry the dev-login sandbox run id onto request.user (if present).
+      ...(payload.sandboxRunId ? { sandboxRunId: payload.sandboxRunId } : {}),
     };
   }
 }

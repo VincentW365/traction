@@ -5,10 +5,12 @@ export interface JwtPayload {
   role: string;
   siteId: string | null;
   permissions: string[];
+  // CR-2026-023 — present ONLY on dev-login sandbox sessions (never on normal login).
+  sandboxRunId?: string;
 }
 
 export const CurrentUser = createParamDecorator(
-  (data: keyof JwtPayload | undefined, ctx: ExecutionContext): JwtPayload | string | string[] | null => {
+  (data: keyof JwtPayload | undefined, ctx: ExecutionContext): JwtPayload | string | string[] | null | undefined => {
     const request = ctx.switchToHttp().getRequest();
     const user = request.user as JwtPayload;
     return data ? user?.[data] : user;

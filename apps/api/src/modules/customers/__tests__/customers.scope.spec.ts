@@ -14,7 +14,7 @@ function buildService() {
   const prisma: any = {
     customer: { findMany: vi.fn(async () => []) },
   };
-  return { service: new CustomersService(prisma as any), prisma };
+  return { service: new CustomersService(prisma as any, { getRunId: () => undefined } as any), prisma };
 }
 
 function liveClause(where: any) {

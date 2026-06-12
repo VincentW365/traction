@@ -5,6 +5,7 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerDirectoryDto } from './dto/customer-directory.dto';
 import { liveCustomerWhere, PLACEHOLDER_CUSTOMER_NUMBER } from '../../common/helpers/operational-scope';
+import { SandboxContextService } from '../../common/sandbox/sandbox-context.service';
 import {
   toCustomerListItem,
   toCustomerDetail,
@@ -19,7 +20,10 @@ const RECENT_VISITS = 10;
 
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly sandbox: SandboxContextService,
+  ) {}
 
   /**
    * Search customers (front-desk/advisor). Search-first; returns the privacy-safe
@@ -120,6 +124,10 @@ export class CustomersService {
    * Create a new customer with an auto-generated customer_number (CUST-NNNNNN).
    */
   async create(data: CreateCustomerDto) {
+    // CR-2026-023 (E-c spike): present ONLY inside a dev-login sandbox session.
+    // For normal username/password requests this is undefined → create is unchanged.
+    const sandboxRunId = this.sandbox.getRunId();
+
     return this.prisma.$transaction(async (tx) => {
       const result = await tx.$queryRaw<{ next_val: number }[]>`
         SELECT COALESCE(
@@ -130,7 +138,7 @@ export class CustomersService {
       const nextVal = result[0].next_val;
       const customerNumber = `CUST-${String(nextVal).padStart(6, '0')}`;
 
-      return tx.customer.create({
+      const customer = await tx.customer.create({
         data: {
           customerNumber,
           firstName: data.firstName,
@@ -140,8 +148,26 @@ export class CustomersService {
           notificationOptInSms: data.notificationOptInSms ?? true,
           notificationOptInEmail: data.notificationOptInEmail ?? true,
           notes: data.notes,
+          ...(sandboxRunId ? { testDataRunId: sandboxRunId } : {}),
         },
       });
+
+      if (sandboxRunId) {
+        // Tag the sandbox manifest exactly like the batch creator (TEST_DATA_RUN ref),
+        // so the existing cleanup engine removes it with the session.
+        await tx.externalSystemRef.create({
+          data: {
+            system: 'TEST_DATA_RUN',
+            entityType: 'Customer',
+            entityId: customer.id,
+            externalId: sandboxRunId,
+            syncStatus: 'SYNCED',
+            metadata: { devLoginSession: true },
+          },
+        });
+      }
+
+      return customer;
     });
   }
 

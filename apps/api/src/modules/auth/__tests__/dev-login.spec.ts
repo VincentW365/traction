@@ -13,7 +13,11 @@ afterAll(() => {
 });
 
 function build() {
-  const prisma: any = { userAccount: { findFirst: vi.fn() } };
+  const prisma: any = {
+    userAccount: { findFirst: vi.fn() },
+    // CR-2026-023 — dev-login opens an ephemeral sandbox TestDataRun.
+    testDataRun: { create: vi.fn(async () => ({ id: 'run-xyz' })) },
+  };
   const audit: any = { log: vi.fn(async () => ({})) };
   return { svc: new AuthService(prisma as any, audit as any), prisma, audit };
 }
@@ -34,6 +38,10 @@ describe('normal login is unchanged after the refactor', () => {
     expect(decode(res.accessToken).role).toBe('MANAGER');
     expect(decode(res.accessToken).permissions).toEqual(ROLE_PERMISSIONS.MANAGER);
     expect(res.user).toMatchObject({ id: 'u1', roleCode: 'MANAGER' });
+    // CR-2026-023 — normal login is NOT a sandbox session.
+    expect(decode(res.accessToken).sandboxRunId).toBeUndefined();
+    expect('sandboxRunId' in res).toBe(false);
+    expect(prisma.testDataRun.create).not.toHaveBeenCalled();
   });
 
   it('rejects a bad password', async () => {
@@ -76,6 +84,11 @@ describe('dev-login behaviour (enabled, non-production)', () => {
     expect(prisma.userAccount.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ email: 'admin@bert.local', roleCode: 'ADMIN' }) }),
     );
+    // CR-2026-023 — exactly one ACTIVE DEV_LOGIN_SESSION run; id returned + in the token.
+    expect(prisma.testDataRun.create).toHaveBeenCalledTimes(1);
+    expect(prisma.testDataRun.create.mock.calls[0][0].data).toMatchObject({ runType: 'DEV_LOGIN_SESSION', status: 'ACTIVE', createdByUserId: 'admin-1' });
+    expect(res.sandboxRunId).toBe('run-xyz');
+    expect(decode(res.accessToken).sandboxRunId).toBe('run-xyz');
   });
 
   it('refuses unsupported / CUSTOMER roles', async () => {
@@ -109,6 +122,9 @@ describe('dev-login behaviour (enabled, non-production)', () => {
     );
     // no token/secret leaked into the audit payload
     expect(JSON.stringify(audit.log.mock.calls[0][0])).not.toContain(res.accessToken);
+    // CR-2026-023 — sandbox session opened + claim present
+    expect(res.sandboxRunId).toBe('run-xyz');
+    expect(decode(res.accessToken).sandboxRunId).toBe('run-xyz');
   });
 
   it('listDevProfiles returns the 7 staff roles (no CUSTOMER) + availability + warning', async () => {

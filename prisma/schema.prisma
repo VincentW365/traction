@@ -1243,12 +1243,21 @@ enum TestDataRunStatus {
   CLEANED_UP
 }
 
+// CR-2026-023 — discriminates batch test runs (scripts/test-data.ts) from
+// ephemeral dev-login sandbox sessions. Existing rows default to BATCH.
+enum TestDataRunType {
+  BATCH
+  DEV_LOGIN_SESSION
+}
+
 model TestDataRun {
   id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   label           String            @unique // e.g. vw-test-run-2026-06-11
   createdByUserId String            @map("created_by_user_id") @db.Uuid // soft ref (no FK)
   notes           String?
   status          TestDataRunStatus @default(ACTIVE)
+  runType         TestDataRunType   @default(BATCH) @map("run_type") // CR-2026-023
+  expiresAt       DateTime?         @map("expires_at") @db.Timestamptz // CR-2026-023 (optional)
   cleanedAt       DateTime?         @map("cleaned_at") @db.Timestamptz
   creationSummary Json?             @map("creation_summary") // per-scenario created counts
   cleanupSummary  Json?             @map("cleanup_summary") // per-table delete counts + backup path
@@ -1260,6 +1269,7 @@ model TestDataRun {
   serviceVisits ServiceVisit[]
 
   @@index([status])
+  @@index([runType])
   @@map("test_data_runs")
 }
 
