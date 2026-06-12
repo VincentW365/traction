@@ -142,6 +142,8 @@ export class CustomersService {
           lastName: data.lastName,
           phone: data.phone,
           email: data.email,
+          // Optional loyalty number; trimmed, empty → null (presence = loyalty member).
+          loyaltyNumber: data.loyaltyNumber?.trim() ? data.loyaltyNumber.trim() : null,
           notificationOptInSms: data.notificationOptInSms ?? true,
           notificationOptInEmail: data.notificationOptInEmail ?? true,
           notes: data.notes,

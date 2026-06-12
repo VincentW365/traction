@@ -98,4 +98,18 @@ describe('CustomersService.create — number generator', () => {
     expect(sql).toContain("customer_number ~ '^CUST-[0-9]+$'");
     expect(tx.customer.create.mock.calls[0][0].data.customerNumber).toBe('CUST-000016');
   });
+
+  it('persists an optional loyaltyNumber (trimmed); blank/absent → null', async () => {
+    const a = buildCreate();
+    await a.svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234', loyaltyNumber: '  LOY-9  ' } as any);
+    expect(a.tx.customer.create.mock.calls[0][0].data.loyaltyNumber).toBe('LOY-9');
+
+    const b = buildCreate();
+    await b.svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234', loyaltyNumber: '   ' } as any);
+    expect(b.tx.customer.create.mock.calls[0][0].data.loyaltyNumber).toBeNull();
+
+    const c = buildCreate();
+    await c.svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234' } as any);
+    expect(c.tx.customer.create.mock.calls[0][0].data.loyaltyNumber).toBeNull();
+  });
 });

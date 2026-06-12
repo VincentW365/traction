@@ -28,6 +28,11 @@ export class CreateCustomerDto {
   @IsEmail()
   email?: string;
 
+  @ApiPropertyOptional({ description: "Bert's loyalty number (presence = loyalty member)" })
+  @IsOptional()
+  @IsString()
+  loyaltyNumber?: string;
+
   @ApiPropertyOptional({
     description: 'Opt-in for SMS notifications',
     default: true,
