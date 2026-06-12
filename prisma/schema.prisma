@@ -271,8 +271,43 @@ model Site {
   technicians          Technician[]
   businessRules        BusinessRuleConfig[]
   resourceReservations ResourceReservation[]
+  scheduleHolds        ScheduleHold[] // CR-2026-026 — advisory schedule holds
 
   @@map("sites")
+}
+
+// =========================
+// CR-2026-026 — Schedule Quick-Book Holds (advisory only; NOT an appointment)
+// A reserved time block with no customer/vehicle/service. Isolated from the
+// scheduling engine (no queue/ETA/priority/bay/check-in). See
+// docs/50_CR_2026_026_schedule_quick_book_holds.md.
+// =========================
+enum ScheduleHoldStatus {
+  ACTIVE
+  CONVERTED
+  RELEASED
+}
+
+model ScheduleHold {
+  id                     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId                 String             @map("site_id") @db.Uuid
+  scheduledStartAt       DateTime           @map("scheduled_start_at") @db.Timestamptz
+  scheduledEndAt         DateTime           @map("scheduled_end_at") @db.Timestamptz // start + (30|60|90)
+  status                 ScheduleHoldStatus @default(ACTIVE)
+  label                  String? // optional short label
+  notes                  String?
+  // Soft reference (no relation) so the Appointment model is NOT modified.
+  convertedAppointmentId String?            @unique @map("converted_appointment_id") @db.Uuid
+  expiresAt              DateTime?          @map("expires_at") @db.Timestamptz // optional; manual release only in v1
+  createdByUserId        String?            @map("created_by_user_id") @db.Uuid // soft ref (no FK)
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  site Site @relation(fields: [siteId], references: [id])
+
+  @@index([siteId, scheduledStartAt])
+  @@index([status])
+  @@map("schedule_holds")
 }
 
 model UserAccount {
