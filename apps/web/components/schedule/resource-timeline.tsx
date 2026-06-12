@@ -5,7 +5,7 @@ import { TimeHeader } from './time-header';
 import { ResourceRow } from './resource-row';
 import { CurrentTimeIndicator } from './current-time-indicator';
 import { TimelineEventData } from './timeline-event';
-import { AppointmentsLane, ApptBlock } from './appointments-lane';
+import { AppointmentsLane, ApptBlock, HoldBlock } from './appointments-lane';
 
 interface ResourceData {
   id: string;
@@ -27,6 +27,9 @@ interface Props {
   appointments?: ApptBlock[];
   onAppointmentClick?: (id: string) => void;
   onEmptySlotClick?: (time: string) => void;
+  // CR-2026-026 — advisory holds rendered on the same lane
+  holds?: HoldBlock[];
+  onHoldClick?: (id: string) => void;
 }
 
 const ZOOM_PX: Record<string, number> = {
@@ -44,7 +47,7 @@ const GROUP_LABELS: Record<string, string> = {
   LIGHT_SLOT: 'Light Tasks',
 };
 
-export function ResourceTimeline({ resources, events, operatingHours, date, zoom, onEventClick, appointments, onAppointmentClick, onEmptySlotClick }: Props) {
+export function ResourceTimeline({ resources, events, operatingHours, date, zoom, onEventClick, appointments, onAppointmentClick, onEmptySlotClick, holds, onHoldClick }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   if (!operatingHours) {
@@ -101,7 +104,7 @@ export function ResourceTimeline({ resources, events, operatingHours, date, zoom
           labelColumnWidth={LABEL_WIDTH}
         />
 
-        {/* Appointments lane (time-aligned; not bay-bound) */}
+        {/* Appointments lane (time-aligned; not bay-bound) + advisory holds */}
         {(appointments || onEmptySlotClick) && (
           <AppointmentsLane
             appointments={appointments ?? []}
@@ -111,6 +114,8 @@ export function ResourceTimeline({ resources, events, operatingHours, date, zoom
             labelColumnWidth={LABEL_WIDTH}
             onAppointmentClick={onAppointmentClick}
             onEmptySlotClick={onEmptySlotClick}
+            holds={holds}
+            onHoldClick={onHoldClick}
           />
         )}
 

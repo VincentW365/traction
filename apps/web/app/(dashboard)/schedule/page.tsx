@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { api } from '../../../lib/api-client';
 import { useSiteId } from '../../../hooks/use-site';
@@ -69,6 +69,9 @@ function formatDateShort(dateStr: string): string {
   });
 }
 
+const fmtClock = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+const toHHMM = (iso: string) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
 // --- Component ---
 
 export default function SchedulePage() {
@@ -84,6 +87,10 @@ export default function SchedulePage() {
   // CR-2026-025 — appointment detail modal + "create at time" popover
   const [openApptId, setOpenApptId] = useState<string | null>(null);
   const [createAtTime, setCreateAtTime] = useState<string | null>(null);
+  // CR-2026-026 — quick-hold popover state + hold detail modal
+  const [openHoldId, setOpenHoldId] = useState<string | null>(null);
+  const [holdDuration, setHoldDuration] = useState<number>(30);
+  const [holdLabel, setHoldLabel] = useState('');
 
   // Session-persist zoom
   const setZoomPersist = useCallback((z: ZoomLevel) => {
@@ -127,10 +134,34 @@ export default function SchedulePage() {
       customerName: `${a.customer.firstName} ${a.customer.lastName}`,
     }));
 
+  // CR-2026-026 — advisory holds for the day (ACTIVE only).
+  const holdsQuery = useQuery<Array<{ id: string; scheduledStartAt: string; scheduledEndAt: string; label: string | null }>>({
+    queryKey: ['schedule-holds', siteId, selectedDate],
+    queryFn: () => api.get(`/schedule-holds?siteId=${siteId}&date=${selectedDate}`),
+    enabled: activeTab === 'day' && !!siteId,
+    refetchInterval: activeTab === 'day' ? 10000 : false,
+    retry: false, // fail closed (no holds shown) if the role lacks permission
+  });
+  const holdBlocks = (holdsQuery.data ?? []).map((h) => ({
+    id: h.id, scheduledStartAt: h.scheduledStartAt, scheduledEndAt: h.scheduledEndAt, label: h.label,
+  }));
+  const openHold = (holdsQuery.data ?? []).find((h) => h.id === openHoldId) ?? null;
+
   const onScheduleChanged = () => {
     queryClient.invalidateQueries({ queryKey: ['schedule-day'] });
     queryClient.invalidateQueries({ queryKey: ['schedule-appointments'] });
+    queryClient.invalidateQueries({ queryKey: ['schedule-holds'] });
   };
+
+  const createHoldMutation = useMutation({
+    mutationFn: (payload: { scheduledStartAt: string; durationMinutes: number; label?: string }) =>
+      api.post('/schedule-holds', { siteId, ...payload }),
+    onSuccess: () => { onScheduleChanged(); setCreateAtTime(null); setHoldLabel(''); setHoldDuration(30); },
+  });
+  const releaseHoldMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/schedule-holds/${id}`),
+    onSuccess: () => { onScheduleChanged(); setOpenHoldId(null); },
+  });
 
   function prevDay() {
     const d = new Date(`${selectedDate}T12:00:00`);
@@ -261,6 +292,8 @@ export default function SchedulePage() {
                     appointments={apptBlocks}
                     onAppointmentClick={(id) => setOpenApptId(id)}
                     onEmptySlotClick={(time) => setCreateAtTime(time)}
+                    holds={holdBlocks}
+                    onHoldClick={(id) => setOpenHoldId(id)}
                   />
                 </div>
 
@@ -307,16 +340,82 @@ export default function SchedulePage() {
       {createAtTime && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setCreateAtTime(null)}>
           <div className="card w-80 p-5" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-slate-900">New appointment</h3>
-            <p className="mt-1 text-xs text-slate-500">{formatDateShort(selectedDate)} at {createAtTime}</p>
+            <h3 className="text-sm font-semibold text-slate-900">New at {createAtTime}</h3>
+            <p className="mt-1 text-xs text-slate-500">{formatDateShort(selectedDate)}</p>
+
+            <button
+              onClick={() => router.push(`/appointments/new?date=${selectedDate}&time=${createAtTime}`)}
+              className="btn-primary text-xs w-full mt-4"
+            >
+              Schedule Appointment (full details)
+            </button>
+
+            {/* Quick hold — reserve the slot now with no details */}
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <p className="input-label">Quick hold (no details)</p>
+              <div className="flex gap-1.5 mt-1">
+                {[30, 60, 90].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setHoldDuration(d)}
+                    className={`flex-1 rounded-md border px-2 py-1.5 text-xs font-medium transition-colors ${holdDuration === d ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                  >
+                    {d}m
+                  </button>
+                ))}
+              </div>
+              <input
+                type="text"
+                value={holdLabel}
+                onChange={(e) => setHoldLabel(e.target.value)}
+                placeholder="Label (optional)"
+                className="input-field mt-2 text-xs"
+              />
+              {createHoldMutation.isError && (
+                <p className="mt-1 text-xs text-red-600">{createHoldMutation.error instanceof Error ? createHoldMutation.error.message : 'Failed to create hold'}</p>
+              )}
+              <button
+                onClick={() => createHoldMutation.mutate({
+                  scheduledStartAt: new Date(`${selectedDate}T${createAtTime}:00`).toISOString(),
+                  durationMinutes: holdDuration,
+                  label: holdLabel.trim() || undefined,
+                })}
+                disabled={createHoldMutation.isPending}
+                className="btn-secondary text-xs w-full mt-2"
+              >
+                {createHoldMutation.isPending ? 'Holding…' : `Quick Hold (${holdDuration}m)`}
+              </button>
+            </div>
+
+            <button onClick={() => setCreateAtTime(null)} className="btn-secondary text-xs w-full mt-3">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Hold detail modal (click a HELD block) */}
+      {openHoldId && openHold && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setOpenHoldId(null)}>
+          <div className="card w-80 p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-900">Held slot</h3>
+              <span className="badge bg-slate-100 text-slate-500">HELD</span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">{formatDateShort(selectedDate)} · {fmtClock(openHold.scheduledStartAt)} – {fmtClock(openHold.scheduledEndAt)}</p>
+            {openHold.label && <p className="mt-2 text-sm text-slate-700">{openHold.label}</p>}
+            {releaseHoldMutation.isError && (
+              <p className="mt-2 text-xs text-red-600">{releaseHoldMutation.error instanceof Error ? releaseHoldMutation.error.message : 'Failed to release'}</p>
+            )}
             <div className="mt-4 flex flex-col gap-2">
               <button
-                onClick={() => router.push(`/appointments/new?date=${selectedDate}&time=${createAtTime}`)}
+                onClick={() => router.push(`/appointments/new?date=${selectedDate}&time=${toHHMM(openHold.scheduledStartAt)}&holdId=${openHold.id}`)}
                 className="btn-primary text-xs"
               >
-                Schedule Appointment
+                Convert to Appointment
               </button>
-              <button onClick={() => setCreateAtTime(null)} className="btn-secondary text-xs">Cancel</button>
+              <button onClick={() => releaseHoldMutation.mutate(openHold.id)} disabled={releaseHoldMutation.isPending} className="btn-danger text-xs">
+                {releaseHoldMutation.isPending ? 'Releasing…' : 'Release Hold'}
+              </button>
+              <button onClick={() => setOpenHoldId(null)} className="btn-secondary text-xs">Cancel</button>
             </div>
           </div>
         </div>

@@ -16,6 +16,14 @@ export interface ApptBlock {
   customerName: string;
 }
 
+// CR-2026-026 — advisory hold block (no customer/vehicle/service).
+export interface HoldBlock {
+  id: string;
+  scheduledStartAt: string;
+  scheduledEndAt: string;
+  label: string | null;
+}
+
 interface Props {
   appointments: ApptBlock[];
   openMinutes: number;
@@ -24,6 +32,8 @@ interface Props {
   labelColumnWidth: number;
   onAppointmentClick?: (id: string) => void;
   onEmptySlotClick?: (time: string) => void; // "HH:MM"
+  holds?: HoldBlock[];
+  onHoldClick?: (id: string) => void;
 }
 
 // Block color by appointment status.
@@ -43,6 +53,8 @@ export function AppointmentsLane({
   labelColumnWidth,
   onAppointmentClick,
   onEmptySlotClick,
+  holds = [],
+  onHoldClick,
 }: Props) {
   const totalMinutes = closeMinutes - openMinutes;
   const totalWidth = totalMinutes * pxPerMinute;
@@ -85,6 +97,26 @@ export function AppointmentsLane({
         {hourLines.map((left, i) => (
           <div key={i} className="absolute top-0 bottom-0 w-px bg-slate-100" style={{ left: `${left}px` }} />
         ))}
+
+        {/* Advisory holds — distinct dashed/striped style, rendered under appointments */}
+        {holds.map((h) => {
+          const startM = minutesOf(h.scheduledStartAt);
+          const endM = minutesOf(h.scheduledEndAt);
+          const left = toPct(startM);
+          const width = Math.max(toPct(endM) - left, 3);
+          return (
+            <button
+              key={h.id}
+              onClick={(e) => { e.stopPropagation(); onHoldClick?.(h.id); }}
+              className="absolute top-1 bottom-1 rounded border border-dashed border-slate-400 bg-slate-100/80 px-1.5 overflow-hidden text-left text-slate-500 hover:bg-slate-200 transition-colors"
+              style={{ left: `${left}%`, width: `${width}%`, minWidth: '54px' }}
+              title={`HELD ${fmt(h.scheduledStartAt)}${h.label ? ` — ${h.label}` : ''}`}
+            >
+              <span className="block text-[10px] font-semibold leading-tight truncate">HELD {fmt(h.scheduledStartAt)}</span>
+              {h.label && <span className="block text-[10px] leading-tight truncate">{h.label}</span>}
+            </button>
+          );
+        })}
 
         {appointments.map((a) => {
           const startM = minutesOf(a.scheduledStartAt);

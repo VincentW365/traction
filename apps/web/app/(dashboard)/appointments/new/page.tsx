@@ -118,6 +118,8 @@ export default function NewAppointmentPage() {
 
   // Success state
   const [createdId, setCreatedId] = useState<string | null>(null);
+  // CR-2026-026 — when launched from a hold, convert it after booking
+  const [holdId, setHoldId] = useState<string | null>(null);
 
   // Debounce search
   useEffect(() => {
@@ -140,6 +142,8 @@ export default function NewAppointmentPage() {
       setScheduledDate(tomorrow.toISOString().split('T')[0]);
     }
     if (qTime) setScheduledTime(qTime);
+    const qHold = params?.get('holdId');
+    if (qHold) setHoldId(qHold);
   }, []);
 
   // Pre-select the customer when arriving from a customer page
@@ -206,7 +210,12 @@ export default function NewAppointmentPage() {
       serviceTypes: Array<{ serviceTypeCode: string }>;
       notes?: string;
     }) => api.post<{ id: string }>('/appointments', payload),
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
+      // If this booking came from a hold, convert it (non-fatal on failure — the
+      // appointment is booked regardless; the hold can be released manually).
+      if (holdId) {
+        try { await api.post(`/schedule-holds/${holdId}/convert`, { appointmentId: data.id }); } catch { /* ignore */ }
+      }
       setCreatedId(data.id);
       setStep('success');
     },
