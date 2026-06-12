@@ -22,6 +22,11 @@ export class UpdateCustomerDto {
   @IsEmail()
   email?: string;
 
+  @ApiPropertyOptional({ description: "Bert's loyalty number (empty string removes membership)" })
+  @IsOptional()
+  @IsString()
+  loyaltyNumber?: string;
+
   @ApiPropertyOptional({
     description: 'Opt-in for SMS notifications',
   })

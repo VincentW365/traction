@@ -113,3 +113,33 @@ describe('CustomersService.create — number generator', () => {
     expect(c.tx.customer.create.mock.calls[0][0].data.loyaltyNumber).toBeNull();
   });
 });
+
+describe('CustomersService.update — loyalty', () => {
+  function build() {
+    const prisma: any = {
+      customer: {
+        findUnique: vi.fn(async () => ({ id: 'c1' })),
+        update: vi.fn(async (args: any) => ({ id: 'c1', ...args.data })),
+      },
+    };
+    return { svc: new CustomersService(prisma), prisma };
+  }
+
+  it('sets a trimmed loyaltyNumber', async () => {
+    const { svc, prisma } = build();
+    await svc.update('c1', { loyaltyNumber: '  LOY-7 ' } as any);
+    expect(prisma.customer.update.mock.calls[0][0].data.loyaltyNumber).toBe('LOY-7');
+  });
+
+  it('clears loyalty when given an empty string', async () => {
+    const { svc, prisma } = build();
+    await svc.update('c1', { loyaltyNumber: '' } as any);
+    expect(prisma.customer.update.mock.calls[0][0].data.loyaltyNumber).toBeNull();
+  });
+
+  it('leaves loyalty untouched when not provided', async () => {
+    const { svc, prisma } = build();
+    await svc.update('c1', { firstName: 'X' } as any);
+    expect('loyaltyNumber' in prisma.customer.update.mock.calls[0][0].data).toBe(false);
+  });
+});

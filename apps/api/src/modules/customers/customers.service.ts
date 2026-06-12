@@ -204,6 +204,8 @@ export class CustomersService {
         ...(data.lastName !== undefined && { lastName: data.lastName }),
         ...(data.phone !== undefined && { phone: data.phone }),
         ...(data.email !== undefined && { email: data.email }),
+        // Loyalty: trimmed value, or null when explicitly cleared (empty string).
+        ...(data.loyaltyNumber !== undefined && { loyaltyNumber: data.loyaltyNumber.trim() ? data.loyaltyNumber.trim() : null }),
         ...(data.notificationOptInSms !== undefined && { notificationOptInSms: data.notificationOptInSms }),
         ...(data.notificationOptInEmail !== undefined && { notificationOptInEmail: data.notificationOptInEmail }),
         ...(data.notes !== undefined && { notes: data.notes }),

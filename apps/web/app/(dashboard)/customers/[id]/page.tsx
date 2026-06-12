@@ -77,6 +77,9 @@ export default function CustomerDetailPage() {
   const [vColor, setVColor] = useState('');
   const [vOdometer, setVOdometer] = useState('');
 
+  const [editingLoyalty, setEditingLoyalty] = useState(false);
+  const [loyaltyInput, setLoyaltyInput] = useState('');
+
   const { data: customer, isLoading, error } = useQuery<CustomerDetail>({
     queryKey: ['customer', customerId],
     queryFn: () => api.get(`/customers/${customerId}`),
@@ -112,6 +115,16 @@ export default function CustomerDetailPage() {
       setShowAddVehicle(false);
       setVPlate(''); setVVin(''); setVMake(''); setVModel('');
       setVYear(''); setVColor(''); setVOdometer('');
+    },
+  });
+
+  // Edit loyalty number (empty string removes membership). Modification of a
+  // non-sandbox customer is blocked server-side while in Dev Sandbox Mode.
+  const updateLoyaltyMutation = useMutation({
+    mutationFn: () => api.patch(`/customers/${customerId}`, { loyaltyNumber: loyaltyInput.trim() }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['customer', customerId] });
+      setEditingLoyalty(false);
     },
   });
 
@@ -197,15 +210,51 @@ export default function CustomerDetailPage() {
 
         {/* Loyalty Status */}
         <div className="card">
-          <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Loyalty Status</h2></div>
+          <div className="card-header flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900">Loyalty Status</h2>
+            {!editingLoyalty && (
+              <button
+                onClick={() => { setLoyaltyInput(customer.loyaltyNumber ?? ''); setEditingLoyalty(true); }}
+                className="text-xs text-blue-600 hover:underline font-medium"
+              >
+                Edit
+              </button>
+            )}
+          </div>
           <div className="card-body">
-            <div className="flex items-center gap-2">
-              {customer.hasLoyalty
-                ? <span className="badge bg-amber-50 text-amber-700">★ Member</span>
-                : <span className="badge bg-slate-100 text-slate-500">Not a loyalty member</span>}
-            </div>
-            {customer.loyaltyNumber && (
-              <div className="mt-3"><div className="input-label">Loyalty Number</div><p className="font-mono text-sm text-slate-900">{customer.loyaltyNumber}</p></div>
+            {editingLoyalty ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="input-label">Loyalty Number</label>
+                  <input
+                    type="text"
+                    value={loyaltyInput}
+                    onChange={(e) => setLoyaltyInput(e.target.value)}
+                    className="input-field"
+                    placeholder="Leave blank to remove membership"
+                  />
+                </div>
+                {updateLoyaltyMutation.isError && (
+                  <p className="text-xs text-red-600">{updateLoyaltyMutation.error instanceof Error ? updateLoyaltyMutation.error.message : 'Failed to update loyalty'}</p>
+                )}
+                <div className="flex items-center gap-2">
+                  <button onClick={() => updateLoyaltyMutation.mutate()} disabled={updateLoyaltyMutation.isPending} className="btn-primary text-xs">
+                    {updateLoyaltyMutation.isPending ? 'Saving...' : 'Save'}
+                  </button>
+                  <button onClick={() => setEditingLoyalty(false)} disabled={updateLoyaltyMutation.isPending} className="btn-secondary text-xs">Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  {customer.hasLoyalty
+                    ? <span className="badge bg-amber-50 text-amber-700">★ Member</span>
+                    : <span className="badge bg-slate-100 text-slate-500">Not a loyalty member</span>}
+                </div>
+                {customer.loyaltyNumber && (
+                  <div className="mt-3"><div className="input-label">Loyalty Number</div><p className="font-mono text-sm text-slate-900">{customer.loyaltyNumber}</p></div>
+                )}
+              </>
             )}
           </div>
         </div>
