@@ -49,6 +49,15 @@ export class StatusController {
     const displayStatus = ticket?.displayStatus ?? visit.status;
     const partsReadiness = visit.partsReadiness;
 
+    // CR-2026-028: queue-position context (no ETA). Count the ranked line at this site.
+    const totalInQueue = position !== null
+      ? await this.prisma.queueTicket.count({
+          where: { serviceVisit: { siteId: visit.siteId }, queueRank: { not: null } },
+        })
+      : 0;
+    const aheadCount = position !== null ? Math.max(0, position - 1) : null;
+    const behindCount = position !== null ? Math.max(0, totalInQueue - position) : null;
+
     // Gather services from appointment or service orders
     const services = [
       ...(visit.appointment?.services?.map((s) => s.serviceType.name) ?? []),
@@ -72,6 +81,9 @@ export class StatusController {
     return {
       ticketNumber: ticket?.ticketNumber ?? null,
       position,
+      totalInQueue,
+      aheadCount,
+      behindCount,
       status: displayStatus,
       partsReadiness,
       estimatedWait,
@@ -106,11 +118,11 @@ export class StatusController {
       return "We're getting your parts ready. You'll keep your place in line.";
     }
 
-    // In queue with position
+    // In queue (CR-2026-028: friendly tier, no time; exact position shown separately)
     if (position !== null) {
-      if (position <= 2) return "You're next — estimated 15-30 minutes";
-      if (position <= 5) return 'A few ahead of you — estimated 30-60 minutes';
-      return 'Several ahead of you — estimated over 1 hour';
+      if (position <= 1) return "You're next in line!";
+      if (position <= 3) return "You're near the front of the line.";
+      return "You're in the queue.";
     }
 
     return "You're in line — we'll update you soon.";

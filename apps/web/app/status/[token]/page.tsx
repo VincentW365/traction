@@ -17,6 +17,9 @@ function resolveApiBaseUrl(): string {
 interface CustomerStatus {
   ticketNumber: string | null;
   position: number | null;
+  totalInQueue: number;
+  aheadCount: number | null;
+  behindCount: number | null;
   status: string;
   partsReadiness: string;
   estimatedWait: string;
@@ -174,8 +177,20 @@ export default function CustomerStatusPage() {
             {data.estimatedWait}
           </div>
           {data.position !== null && !isReady && (
-            <div className="text-sm text-slate-500 mt-2">
-              You are <span className="font-bold text-blue-600">#{data.position}</span> in line
+            <div className="mt-3">
+              <div className="text-sm text-slate-600">
+                Your place in line:{' '}
+                <span className="font-bold text-blue-600">#{data.position}</span>
+                {data.totalInQueue > 0 && <span className="text-slate-400"> of {data.totalInQueue}</span>}
+              </div>
+              <div className="mt-2 flex items-center justify-center gap-3 text-xs">
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">
+                  <span className="font-bold text-slate-800">{data.aheadCount ?? 0}</span> ahead of you
+                </span>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">
+                  <span className="font-bold text-slate-800">{data.behindCount ?? 0}</span> behind you
+                </span>
+              </div>
             </div>
           )}
         </div>

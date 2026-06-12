@@ -24,7 +24,7 @@ interface DisplayBoard {
   siteId: string;
   siteName: string;
   generatedAt: string;
-  inQueue: { ticketNumber: string; position: number | null; eta: string }[];
+  inQueue: { ticketNumber: string; position: number | null }[];
   inService: { ticketNumber: string; bay: string | null }[];
   ready: { ticketNumber: string }[];
 }
@@ -110,6 +110,7 @@ export default function DisplayBoardPage() {
   const updatedTime = clock
     ? clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : '';
+  const queueRanked = data.inQueue.filter((i) => i.position != null).length;
 
   return (
     <div className="min-h-screen bg-slate-900 text-white flex flex-col">
@@ -141,12 +142,14 @@ export default function DisplayBoardPage() {
         >
           {data.inQueue.map((item) => (
             <Row key={item.ticketNumber} ticket={item.ticketNumber} accent="text-blue-300">
-              <div className="text-right">
-                <div className="text-2xl text-slate-300">{item.eta}</div>
-                {item.position != null && (
-                  <div className="text-sm text-slate-500">#{item.position} in line</div>
-                )}
-              </div>
+              {item.position != null ? (
+                <div className="text-right">
+                  <div className="text-3xl font-bold text-slate-200 tabular-nums">#{item.position}</div>
+                  <div className="text-sm text-slate-500">of {queueRanked}</div>
+                </div>
+              ) : (
+                <div className="text-lg text-slate-500">Holding</div>
+              )}
             </Row>
           ))}
         </BoardColumn>

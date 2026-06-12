@@ -595,7 +595,7 @@ export class QueueService {
   async getPublicDisplayBoard(siteId: string) {
     const now = new Date();
 
-    const [site, tickets, occupancies, readyVisits, eta] =
+    const [site, tickets, occupancies, readyVisits] =
       await Promise.all([
         this.prisma.site.findUnique({ where: { id: siteId }, select: { name: true } }),
         this.prisma.queueTicket.findMany({
@@ -628,7 +628,6 @@ export class QueueService {
           orderBy: { updatedAt: 'desc' },
           take: 20,
         }),
-        this.getAvgServiceMinutes(siteId),
       ]);
 
     // serviceVisitId -> bay/resource display name
@@ -653,9 +652,6 @@ export class QueueService {
       .map((t) => ({
         ticketNumber: t.ticketNumber,
         position: t.queueRank,
-        // CR-2026-007: public board uses only the numeric average; etaBasis is
-        // NOT exposed here (staff board only). Label behavior unchanged.
-        eta: this.getDisplayEtaLabel(t.queueRank, eta.minutes),
       }));
 
     const ready = readyVisits
@@ -666,20 +662,11 @@ export class QueueService {
       siteId,
       siteName: site?.name ?? 'Service Centre',
       generatedAt: now.toISOString(),
+      totalInQueue: inQueue.length,
       inQueue,
       inService,
       ready,
     };
-  }
-
-  private getDisplayEtaLabel(rank: number | null, avgMinutes: number): string {
-    if (rank == null) return 'Shortly';
-    const mins = rank * avgMinutes;
-    if (mins <= 15) return '~15 min';
-    if (mins <= 30) return '~30 min';
-    if (mins <= 45) return '~45 min';
-    if (mins <= 60) return '~1 hr';
-    return '1 hr+';
   }
 
   private getBlockedReason(sv: { queuePriorityClass: string | null }): string {
