@@ -133,6 +133,18 @@ export default function NewAppointmentPage() {
     setScheduledDate(tomorrow.toISOString().split('T')[0]);
   }, []);
 
+  // Pre-select the customer when arriving from a customer page
+  // (/appointments/new?customerId=…) so we don't ask to pick a customer again.
+  // The by-id detail load below also works for sandbox customers (exempt from
+  // the operational-scope search filter).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const cid = new URLSearchParams(window.location.search).get('customerId');
+    if (cid) {
+      setSelectedCustomer((prev) => prev ?? { id: cid, customerNumber: '', firstName: '', lastName: '', phone: '' });
+    }
+  }, []);
+
   // Queries
   const customersQuery = useQuery({
     queryKey: ['customer-search', debouncedTerm],
@@ -163,6 +175,17 @@ export default function NewAppointmentPage() {
       }
     }
   }, [customerDetailQuery.data, step]);
+
+  // Backfill a pre-selected customer's name once detail loads (so step headers show it).
+  useEffect(() => {
+    const d = customerDetailQuery.data;
+    if (!d) return;
+    setSelectedCustomer((prev) =>
+      prev && (!prev.firstName || !prev.lastName)
+        ? { ...prev, firstName: d.firstName, lastName: d.lastName, phone: d.phone }
+        : prev,
+    );
+  }, [customerDetailQuery.data]);
 
   // Create mutation
   const createMutation = useMutation({
@@ -281,6 +304,14 @@ export default function NewAppointmentPage() {
 
             {debouncedTerm.length >= 2 && customersQuery.data?.length === 0 && (
               <p className="text-sm text-slate-500 text-center py-4">No customers found</p>
+            )}
+
+            {/* Pre-selected customer with no vehicle yet — booking needs a vehicle. */}
+            {selectedCustomer && customerDetailQuery.data && customerDetailQuery.data.vehicles.length === 0 && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {selectedCustomer.firstName || 'This customer'} {selectedCustomer.lastName} has no vehicles on file.{' '}
+                <a href={`/customers/${selectedCustomer.id}`} className="underline font-medium">Add a vehicle</a> first, then book.
+              </div>
             )}
           </div>
         </div>

@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { api } from '../../../../lib/api-client';
+import { useSiteId } from '../../../../hooks/use-site';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../components/status-badge';
@@ -81,6 +82,18 @@ export default function CustomerDetailPage() {
     queryFn: () => api.get(`/customers/${customerId}`),
     enabled: !!customerId,
   });
+
+  // Check-in is an appointment action: only offer it when this customer has a
+  // CONFIRMED appointment scheduled for today at this site. Fails closed (the
+  // button stays hidden) if the lookup errors or returns nothing.
+  const siteId = useSiteId();
+  const today = new Date().toISOString().split('T')[0];
+  const checkinableQuery = useQuery<Array<{ id: string; customer: { id: string } | null }>>({
+    queryKey: ['customer-checkinable', customerId, siteId, today],
+    queryFn: () => api.get(`/appointments?siteId=${siteId}&date=${today}&status=CONFIRMED`),
+    enabled: !!customerId && !!siteId,
+  });
+  const hasCheckinableToday = (checkinableQuery.data ?? []).some((a) => a.customer?.id === customerId);
 
   const addVehicleMutation = useMutation({
     mutationFn: () =>
@@ -312,10 +325,13 @@ export default function CustomerDetailPage() {
         </details>
       )}
 
-      {/* Quick Actions */}
+      {/* Quick Actions — booking always available; check-in only when there is a
+          CONFIRMED appointment for this customer today (check-in is per-appointment). */}
       <div className="flex items-center gap-3">
-        <Link href="/check-in" className="btn-primary">Check In This Customer</Link>
-        <Link href="/appointments/new" className="btn-secondary">Book Appointment</Link>
+        <Link href={`/appointments/new?customerId=${customer.id}`} className="btn-primary">Book Appointment</Link>
+        {hasCheckinableToday && (
+          <Link href="/check-in" className="btn-secondary">Check In Today&apos;s Appointment</Link>
+        )}
       </div>
     </div>
   );
