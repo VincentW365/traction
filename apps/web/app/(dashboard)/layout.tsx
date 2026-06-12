@@ -2,13 +2,14 @@
 
 import { useAuth } from '../../hooks/use-auth';
 import { Sidebar } from '../../components/sidebar';
+import { DevSandboxBanner } from '../../components/dev-sandbox-banner';
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, sandboxRunId, sandboxRole } = useAuth();
 
   if (loading) {
     return (
@@ -33,6 +34,18 @@ export default function DashboardLayout({
       <Sidebar />
 
       <div className="flex-1 flex flex-col min-w-0">
+        {/* CR-2026-023 — Dev Sandbox Mode banner (dev-login sessions only) */}
+        {sandboxRunId && (
+          <DevSandboxBanner
+            runId={sandboxRunId}
+            role={sandboxRole}
+            onCleanedUp={() => {
+              logout();
+              window.location.href = '/dev-login?cleaned=1';
+            }}
+          />
+        )}
+
         {/* Top bar */}
         <header className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
           <div className="text-xs text-slate-400">

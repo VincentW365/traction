@@ -148,6 +148,15 @@ Restart the API, then open **http://localhost:3000/dev-login** and click a role 
 - Each successful dev-login writes a `DEV_LOGIN` AuditLog row (no tokens logged).
 - **Never enable `ALLOW_DEV_LOGIN` in production.** There is no CUSTOMER card.
 
+### Dev Sandbox Mode — clean up what a test session created (CR-2026-023)
+
+Every `/dev-login` session is also an **ephemeral sandbox**: records you create while signed in that way (customers, vehicles, appointments, visits, orders, queue tickets, transport requests, …) are auto-tagged to that session so they can be removed afterward. Normal username/password sessions are **not** sandboxes and have none of this.
+
+- **The banner.** While signed in via dev-login, a slim **amber "Dev Sandbox Mode" bar** appears at the top of every page, showing your current role and the short session id (e.g. `#60a1c1d7`). It does **not** appear for normal logins. It survives page reloads (the session id is mirrored in `sessionStorage` and carried in the JWT).
+- **Ending a session.** Click **"End Session & Clean Up"** in the bar. A modal first calls the read-only preview (`POST /auth/dev-sandbox/cleanup/preview`) and shows the per-table delete counts, total rows, and the safety result. To proceed you must type the exact phrase **`CLEAN UP DEV SANDBOX`** — only then does the final button enable. Confirming calls `POST /auth/dev-sandbox/cleanup`, which deletes only that session's tagged records, signs you out, and returns you to `/dev-login` with a success notice.
+- **Safety.** Cleanup only ever removes records tagged to **your own** dev-login session. It refuses (and the commit button stays disabled) if the safety checks fail, and it can never touch imported/historical, placeholder, SharePoint/POS, or other live/untagged data. A session that created nothing is simply closed (0 rows deleted). If cleanup fails you stay signed in with your tokens intact and see the error.
+- **Scope reminder:** this UI cleanup is **only** for dev-login-created sandbox records. Batch test-data runs (CR-2026-020) are cleaned separately via `apps/api/scripts/test-data.ts cleanup` with its own `pg_dump` backup gate.
+
 ---
 
 ## 5. Database Commands

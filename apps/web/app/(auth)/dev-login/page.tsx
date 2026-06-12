@@ -26,6 +26,14 @@ export default function DevLoginPage() {
   const [disabled, setDisabled] = useState(false);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
   const [signingRole, setSigningRole] = useState<string | null>(null);
+  // CR-2026-023 — success notice after a dev sandbox session was cleaned up.
+  const [justCleaned, setJustCleaned] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('cleaned') === '1') {
+      setJustCleaned(true);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -66,6 +74,14 @@ export default function DevLoginPage() {
       </div>
 
       <div className="max-w-5xl mx-auto px-6 py-8">
+        {/* CR-2026-023 — sandbox cleanup success notice */}
+        {justCleaned && (
+          <div className="mb-6 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 flex items-center gap-3">
+            <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+            <p className="text-sm font-medium text-emerald-800">Dev sandbox session ended and its records were cleaned up. You can sign in again below.</p>
+          </div>
+        )}
+
         {/* Warning banner */}
         <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 flex items-center gap-3">
           <svg className="w-5 h-5 text-amber-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86l-8.48 14.7A1 1 0 002.69 20h18.62a1 1 0 00.87-1.5l-8.48-14.7a1 1 0 00-1.74 0z" /></svg>
