@@ -67,7 +67,7 @@ describe('dedupe + deterministic keys', () => {
     expect(dedupeKey('', '8765551234', '9')).toBe('__row_9');
   });
   it('vehicleCode uses plate, falls back to contactId when junk/missing', () => {
-    expect(vehicleCode('6354 KM', '5')).toBe('SC-6354KM');
+    expect(vehicleCode('6354 KM', '5')).toBe('SC6354KM');
     expect(vehicleCode('0', '5')).toBe('SC-CONTACT-5');
   });
 });
@@ -117,8 +117,8 @@ describe('planImport', () => {
     const v1 = plan.vehicles.find((v) => v.contactId === '1')!;
     const v2 = plan.vehicles.find((v) => v.contactId === '2')!;
     expect(plan.counts.vehiclesToCreate).toBe(2);
-    expect(v1.vehicleCode).toBe('SC-DUP123');
-    expect(v2.vehicleCode).toBe('SC-DUP123-2'); // unique, disambiguated
+    expect(v1.vehicleCode).toBe('SCDUP123');
+    expect(v2.vehicleCode).toBe('SCDUP123-2'); // unique, disambiguated
     expect(v2.plateNumber).toBe('DUP123'); // shared plate value retained (non-unique)
     expect(v2.flags).toContain('DUPLICATE_PLATE');
     expect(plan.counts.duplicatePlates).toBe(1);

@@ -171,7 +171,9 @@ export function customerNumberFromKey(key: string): string {
 }
 
 export function vehicleCode(plate: string, contactId: string): string {
-  if (!isJunkPlate(plate)) return `SC-${normalizePlate(plate)}`;
+  // CR-2026-027: SC{plate} (no hyphen) to match the SharePoint "Title" exactly.
+  // The junk fallback keeps its hyphens (it is not a plate-derived SC+plate code).
+  if (!isJunkPlate(plate)) return `SC${normalizePlate(plate)}`;
   return `SC-CONTACT-${contactId}`;
 }
 
@@ -344,7 +346,7 @@ export function planImport(rows: RawContactRow[]): ImportPlan {
     // value (plateNumber is non-unique) but get a disambiguated unique vehicleCode.
     let vCode = vehicleCode(r.plate, r.id);
     if (normPlate && plateOwner.has(normPlate)) {
-      vCode = `SC-${normPlate}-${r.id}`;
+      vCode = `SC${normPlate}-${r.id}`; // CR-2026-027: SC{plate}-{contactId} disambiguator
       flags.push('DUPLICATE_PLATE');
       duplicatePlates++;
     } else if (normPlate) {

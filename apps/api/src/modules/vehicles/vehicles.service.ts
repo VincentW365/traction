@@ -65,9 +65,9 @@ export class VehiclesService {
       );
     }
 
-    // Auto-generate vehicleCode from plate: "SC-{PLATE}"
+    // Auto-generate vehicleCode from plate: "SC{PLATE}" (matches SharePoint Title; CR-2026-027)
     const plateNormalized = data.plateNumber.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-    const vehicleCode = `SC-${plateNormalized}`;
+    const vehicleCode = `SC${plateNormalized}`;
 
     return this.prisma.vehicle.create({
       data: {
