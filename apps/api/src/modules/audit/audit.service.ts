@@ -32,6 +32,9 @@ export const AUDIT_ACTIONS = {
   PAYMENT_RELEASE_OVERRIDE: 'PAYMENT_RELEASE_OVERRIDE', // P4(c) — manager release exception (GOV-005)
   DEV_LOGIN: 'DEV_LOGIN', // CR-2026-022 — dev-only one-click role login (gated)
   DEV_SANDBOX_CLEANED_UP: 'DEV_SANDBOX_CLEANED_UP', // CR-2026-023 — dev-login sandbox session cleanup
+  SCHEDULE_HOLD_CREATED: 'SCHEDULE_HOLD_CREATED', // CR-2026-026 — advisory schedule hold
+  SCHEDULE_HOLD_RELEASED: 'SCHEDULE_HOLD_RELEASED', // CR-2026-026
+  SCHEDULE_HOLD_CONVERTED: 'SCHEDULE_HOLD_CONVERTED', // CR-2026-026 — hold → appointment
 } as const;
 
 @Injectable()
