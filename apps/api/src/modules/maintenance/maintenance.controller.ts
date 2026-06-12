@@ -37,7 +37,7 @@ export class MaintenanceVehicleController {
   @Post(':id/decode')
   @RequirePermission(PERMISSIONS.MAINTENANCE_VIEW)
   @ApiOperation({
-    summary: 'Decode vehicle VIN and store spec snapshot',
+    summary: 'Decode vehicle Chassis Number/VIN and store spec snapshot',
   })
   async decodeVehicle(
     @Param('id', ParseUUIDPipe) vehicleId: string,

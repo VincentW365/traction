@@ -303,7 +303,7 @@ export default function CustomerDetailPage() {
                 <div><label className="input-label">Color</label><input type="text" value={vColor} onChange={(e) => setVColor(e.target.value)} className="input-field" placeholder="e.g., Silver" /></div>
                 <div><label className="input-label">Odometer</label><input type="number" value={vOdometer} onChange={(e) => setVOdometer(e.target.value)} className="input-field" placeholder="e.g., 45000" /></div>
               </div>
-              <div><label className="input-label">VIN</label><input type="text" value={vVin} onChange={(e) => setVVin(e.target.value.toUpperCase())} className="input-field" placeholder="Optional" /></div>
+              <div><label className="input-label">Chassis Number/VIN</label><input type="text" value={vVin} onChange={(e) => setVVin(e.target.value.toUpperCase())} className="input-field" placeholder="Optional" /></div>
               {addVehicleMutation.isError && <p className="text-xs text-red-600">{addVehicleMutation.error instanceof Error ? addVehicleMutation.error.message : 'Failed to add vehicle'}</p>}
               <button onClick={() => addVehicleMutation.mutate()} disabled={!vPlate.trim() || addVehicleMutation.isPending} className="btn-primary text-xs">
                 {addVehicleMutation.isPending ? 'Adding...' : 'Add Vehicle'}
@@ -319,14 +319,14 @@ export default function CustomerDetailPage() {
                 <Link key={v.id} href={`/vehicles/${v.id}`} className="block border border-slate-200 rounded-lg p-4 hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <span className="badge bg-blue-50 text-blue-700 font-mono">{v.vehicleCode || `SC-${v.plateNumber}`}</span>
+                      <span className="badge bg-blue-50 text-blue-700 font-mono" title="Service Centre ID">{v.vehicleCode || `SC${v.plateNumber}`}</span>
                       <span className="text-sm font-medium text-slate-900">{[v.modelYear, v.make, v.model].filter(Boolean).join(' ') || 'Unknown vehicle'}</span>
                     </div>
                     {v.weightClass && <span className="badge bg-slate-100 text-slate-600">{v.weightClass}</span>}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500">
                     <span>Plate: <span className="font-medium text-slate-700">{v.plateNumber}</span></span>
-                    {v.vin && <span>VIN: <span className="font-medium text-slate-700">{v.vin}</span></span>}
+                    {v.vin && <span>Chassis Number/VIN: <span className="font-medium text-slate-700">{v.vin}</span></span>}
                     {v.odometer != null && <span>Odometer: <span className="font-medium text-slate-700">{v.odometer.toLocaleString()} mi</span></span>}
                     {v.color && <span>Color: <span className="font-medium text-slate-700">{v.color}</span></span>}
                   </div>

@@ -3,7 +3,7 @@ import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class VehicleSearchDto {
   @ApiProperty({
-    description: 'Search query — matches plate number, VIN, or customer name',
+    description: 'Search query — matches plate number, Chassis Number/VIN, or customer name',
     minLength: 2,
     example: 'ABC',
   })

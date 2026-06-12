@@ -8,7 +8,7 @@ export class UpdateVehicleDto {
   @IsNotEmpty()
   plateNumber?: string;
 
-  @ApiPropertyOptional({ description: 'Vehicle Identification Number (unique when provided)' })
+  @ApiPropertyOptional({ description: 'Chassis Number/VIN (unique when provided)' })
   @IsOptional()
   @IsString()
   @IsNotEmpty()

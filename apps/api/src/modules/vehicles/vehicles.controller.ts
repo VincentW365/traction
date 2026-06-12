@@ -28,7 +28,7 @@ export class VehiclesController {
 
   @Get()
   @RequirePermission(PERMISSIONS.CUSTOMER_SEARCH)
-  @ApiOperation({ summary: 'Search vehicles by plate, VIN, or customer name' })
+  @ApiOperation({ summary: 'Search vehicles by plate, Chassis Number/VIN, or customer name' })
   async search(@Query() dto: VehicleSearchDto) {
     return this.vehiclesService.search(dto.q, dto.includeHistorical === 'true');
   }

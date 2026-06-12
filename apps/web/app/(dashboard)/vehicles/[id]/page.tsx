@@ -125,8 +125,8 @@ export default function VehicleDetailPage() {
         ]}
         actions={
           <div className="flex items-center gap-2">
-            <span className="badge bg-blue-50 text-blue-700 font-mono">
-              {vehicle.vehicleCode || `SC-${vehicle.plateNumber}`}
+            <span className="badge bg-blue-50 text-blue-700 font-mono" title="Service Centre ID">
+              {vehicle.vehicleCode || `SC${vehicle.plateNumber}`}
             </span>
             {!isEditing && (
               <button onClick={startEdit} className="btn-secondary text-xs">Edit</button>
@@ -145,11 +145,15 @@ export default function VehicleDetailPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
                 <div>
+                  <div className="input-label">Service Centre ID</div>
+                  <p className="text-sm font-mono font-medium text-slate-900">{vehicle.vehicleCode}</p>
+                </div>
+                <div>
                   <div className="input-label">Plate Number</div>
                   <p className="text-sm font-medium text-slate-900">{vehicle.plateNumber}</p>
                 </div>
                 <div>
-                  <label className="input-label">VIN</label>
+                  <label className="input-label">Chassis Number/VIN</label>
                   <input type="text" value={editVin} onChange={(e) => setEditVin(e.target.value.toUpperCase())} className="input-field" />
                 </div>
                 <div>
@@ -192,11 +196,15 @@ export default function VehicleDetailPage() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
               <div>
+                <div className="input-label">Service Centre ID</div>
+                <p className="text-sm font-mono font-medium text-slate-900">{vehicle.vehicleCode}</p>
+              </div>
+              <div>
                 <div className="input-label">Plate Number</div>
                 <p className="text-sm font-medium text-slate-900">{vehicle.plateNumber}</p>
               </div>
               <div>
-                <div className="input-label">VIN</div>
+                <div className="input-label">Chassis Number/VIN</div>
                 <p className="text-sm font-medium text-slate-900">{vehicle.vin ?? 'Not recorded'}</p>
               </div>
               <div>
