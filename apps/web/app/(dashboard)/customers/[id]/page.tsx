@@ -377,7 +377,7 @@ export default function CustomerDetailPage() {
       {/* Quick Actions — booking always available; check-in only when there is a
           CONFIRMED appointment for this customer today (check-in is per-appointment). */}
       <div className="flex items-center gap-3">
-        <Link href={`/appointments/new?customerId=${customer.id}`} className="btn-primary">Book Appointment</Link>
+        <Link href={`/appointments/new?customerId=${customer.id}`} className="btn-primary">Schedule Appointment</Link>
         {hasCheckinableToday && (
           <Link href="/check-in" className="btn-secondary">Check In Today&apos;s Appointment</Link>
         )}

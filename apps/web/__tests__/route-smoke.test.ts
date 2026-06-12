@@ -86,7 +86,7 @@ const CROSS_PAGE_LINKS = [
   { source: 'appointments/page.tsx', target: '(dashboard)/appointments/new/page.tsx', description: 'New Appointment button' },
   { source: 'queue/page.tsx', target: '(dashboard)/queue/[id]/page.tsx', description: 'Ticket number drill-down' },
   { source: 'customers/[id]/page.tsx', target: '(dashboard)/check-in/page.tsx', description: 'Check In button' },
-  { source: 'customers/[id]/page.tsx', target: '(dashboard)/appointments/new/page.tsx', description: 'Book Appointment button' },
+  { source: 'customers/[id]/page.tsx', target: '(dashboard)/appointments/new/page.tsx', description: 'Schedule Appointment button' },
 ];
 
 describe('Route Inventory — all pages exist', () => {

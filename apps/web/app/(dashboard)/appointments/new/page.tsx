@@ -240,7 +240,7 @@ export default function NewAppointmentPage() {
                 View Appointments
               </a>
               <a href="/appointments/new" className="btn-primary">
-                Book Another
+                Schedule Another
               </a>
             </div>
           </div>

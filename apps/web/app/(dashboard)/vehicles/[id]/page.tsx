@@ -233,7 +233,7 @@ export default function VehicleDetailPage() {
           Check In
         </Link>
         <Link href="/appointments/new" className="btn-secondary">
-          Book Appointment
+          Schedule Appointment
         </Link>
       </div>
     </div>
