@@ -19,6 +19,11 @@ interface VehicleDetail {
   color: string | null;
   odometer: number | null;
   weightClass: string | null;
+  fuelType: string | null;
+  transmission: string | null;
+  drivetrain: string | null;
+  engineNo: string | null;
+  driveSide: 'RHD' | 'LHD' | null;
   customer: {
     id: string;
     customerNumber: string;
@@ -40,6 +45,11 @@ export default function VehicleDetailPage() {
   const [editColor, setEditColor] = useState('');
   const [editOdometer, setEditOdometer] = useState('');
   const [editVin, setEditVin] = useState('');
+  const [editTransmission, setEditTransmission] = useState('');
+  const [editDrivetrain, setEditDrivetrain] = useState('');
+  const [editFuelType, setEditFuelType] = useState('');
+  const [editEngineNo, setEditEngineNo] = useState('');
+  const [editDriveSide, setEditDriveSide] = useState('');
 
   const { data: vehicle, isLoading, error } = useQuery<VehicleDetail>({
     queryKey: ['vehicle', vehicleId],
@@ -63,6 +73,11 @@ export default function VehicleDetailPage() {
     setEditColor(vehicle.color ?? '');
     setEditOdometer(vehicle.odometer?.toString() ?? '');
     setEditVin(vehicle.vin ?? '');
+    setEditTransmission(vehicle.transmission ?? '');
+    setEditDrivetrain(vehicle.drivetrain ?? '');
+    setEditFuelType(vehicle.fuelType ?? '');
+    setEditEngineNo(vehicle.engineNo ?? '');
+    setEditDriveSide(vehicle.driveSide ?? '');
     setIsEditing(true);
   }
 
@@ -74,6 +89,11 @@ export default function VehicleDetailPage() {
       color: editColor || undefined,
       odometer: editOdometer ? parseInt(editOdometer, 10) : undefined,
       vin: editVin || undefined,
+      transmission: editTransmission || undefined,
+      drivetrain: editDrivetrain || undefined,
+      fuelType: editFuelType || undefined,
+      engineNo: editEngineNo || undefined,
+      driveSide: editDriveSide || undefined,
     });
   }
 
@@ -177,6 +197,30 @@ export default function VehicleDetailPage() {
                   <input type="number" value={editOdometer} onChange={(e) => setEditOdometer(e.target.value)} className="input-field" />
                 </div>
                 <div>
+                  <label className="input-label">Transmission</label>
+                  <input type="text" value={editTransmission} onChange={(e) => setEditTransmission(e.target.value)} className="input-field" />
+                </div>
+                <div>
+                  <label className="input-label">Drivetrain</label>
+                  <input type="text" value={editDrivetrain} onChange={(e) => setEditDrivetrain(e.target.value)} className="input-field" />
+                </div>
+                <div>
+                  <label className="input-label">Fuel Type</label>
+                  <input type="text" value={editFuelType} onChange={(e) => setEditFuelType(e.target.value)} className="input-field" />
+                </div>
+                <div>
+                  <label className="input-label">Drive Side</label>
+                  <select value={editDriveSide} onChange={(e) => setEditDriveSide(e.target.value)} className="input-field">
+                    <option value="">Unknown</option>
+                    <option value="RHD">Right-hand drive (RHD)</option>
+                    <option value="LHD">Left-hand drive (LHD)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="input-label">Engine No <span className="text-[10px] text-slate-400 font-normal">(staff only)</span></label>
+                  <input type="text" value={editEngineNo} onChange={(e) => setEditEngineNo(e.target.value)} className="input-field" />
+                </div>
+                <div>
                   <div className="input-label">Owner</div>
                   <p className="text-sm font-medium">
                     <Link href={`/customers/${vehicle.customer.id}`} className="text-blue-600 hover:underline">{ownerName}</Link>
@@ -220,6 +264,32 @@ export default function VehicleDetailPage() {
               <div>
                 <div className="input-label">Weight Class</div>
                 <p className="text-sm font-medium text-slate-900">{vehicle.weightClass ?? 'Not set'}</p>
+              </div>
+              <div>
+                <div className="input-label">Transmission</div>
+                <p className="text-sm font-medium text-slate-900">{vehicle.transmission ?? '--'}</p>
+              </div>
+              <div>
+                <div className="input-label">Drivetrain</div>
+                <p className="text-sm font-medium text-slate-900">{vehicle.drivetrain ?? '--'}</p>
+              </div>
+              <div>
+                <div className="input-label">Fuel Type</div>
+                <p className="text-sm font-medium text-slate-900">{vehicle.fuelType ?? '--'}</p>
+              </div>
+              <div>
+                <div className="input-label">Drive Side</div>
+                <p className="text-sm font-medium text-slate-900">
+                  {vehicle.driveSide === 'RHD'
+                    ? 'Right-hand drive (RHD)'
+                    : vehicle.driveSide === 'LHD'
+                      ? 'Left-hand drive (LHD)'
+                      : 'Not recorded'}
+                </p>
+              </div>
+              <div>
+                <div className="input-label">Engine No <span className="text-[10px] text-slate-400 font-normal">(staff only)</span></div>
+                <p className="text-sm font-medium text-slate-900">{vehicle.engineNo ?? 'Not recorded'}</p>
               </div>
               <div>
                 <div className="input-label">Owner</div>

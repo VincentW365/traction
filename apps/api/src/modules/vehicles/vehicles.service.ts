@@ -86,6 +86,11 @@ export class VehiclesService {
         modelYear: data.modelYear ?? null,
         color: data.color ?? null,
         odometer: data.odometer ?? null,
+        transmission: data.transmission ?? null,
+        drivetrain: data.drivetrain ?? null,
+        fuelType: data.fuelType ?? null,
+        engineNo: data.engineNo ?? null,
+        driveSide: data.driveSide ?? null,
       },
       include: { customer: true },
     });
@@ -128,6 +133,11 @@ export class VehiclesService {
         ...(data.modelYear !== undefined && { modelYear: data.modelYear }),
         ...(data.color !== undefined && { color: data.color }),
         ...(data.odometer !== undefined && { odometer: data.odometer }),
+        ...(data.transmission !== undefined && { transmission: data.transmission }),
+        ...(data.drivetrain !== undefined && { drivetrain: data.drivetrain }),
+        ...(data.fuelType !== undefined && { fuelType: data.fuelType }),
+        ...(data.engineNo !== undefined && { engineNo: data.engineNo }),
+        ...(data.driveSide !== undefined && { driveSide: data.driveSide }),
       },
       include: { customer: true },
     });

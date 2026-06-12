@@ -198,6 +198,12 @@ enum VehicleServiceClass {
   UNKNOWN_REQUIRES_REVIEW
 }
 
+// CR-2026-029: steering/drive side. Nullable on Vehicle — null means unknown.
+enum DriveSide {
+  RHD
+  LHD
+}
+
 // CR-2026-008: vehicle ServiceClass classification workflow.
 // Suggestions are advisory; the operational Vehicle.serviceClass is written
 // ONLY after staff confirmation. Until CONFIRMED a vehicle stays mobile-jack
@@ -387,6 +393,7 @@ model Vehicle {
   transmission String?
   drivetrain   String?
   engineNo     String?             @map("engine_no")
+  driveSide    DriveSide?          @map("drive_side")
   createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz
 

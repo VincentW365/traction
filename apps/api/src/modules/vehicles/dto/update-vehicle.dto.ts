@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsInt, IsNotEmpty, Min } from 'class-validator';
+import { IsString, IsOptional, IsInt, IsNotEmpty, IsEnum, Min } from 'class-validator';
+import { DriveSide } from '@prisma/client';
 
 export class UpdateVehicleDto {
   @ApiPropertyOptional({ description: 'Vehicle license plate number' })
@@ -40,4 +41,29 @@ export class UpdateVehicleDto {
   @IsInt()
   @Min(0)
   odometer?: number;
+
+  @ApiPropertyOptional({ description: 'Transmission type (e.g. Automatic, Manual)' })
+  @IsOptional()
+  @IsString()
+  transmission?: string;
+
+  @ApiPropertyOptional({ description: 'Drivetrain (e.g. FWD, RWD, AWD)' })
+  @IsOptional()
+  @IsString()
+  drivetrain?: string;
+
+  @ApiPropertyOptional({ description: 'Fuel type (e.g. Petrol, Diesel, Hybrid)' })
+  @IsOptional()
+  @IsString()
+  fuelType?: string;
+
+  @ApiPropertyOptional({ description: 'Engine number (sensitive — staff only)' })
+  @IsOptional()
+  @IsString()
+  engineNo?: string;
+
+  @ApiPropertyOptional({ description: 'Drive side: RHD or LHD', enum: DriveSide })
+  @IsOptional()
+  @IsEnum(DriveSide)
+  driveSide?: DriveSide;
 }
