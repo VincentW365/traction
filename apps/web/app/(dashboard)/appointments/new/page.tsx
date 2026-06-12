@@ -126,11 +126,20 @@ export default function NewAppointmentPage() {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
-  // Set default date to tomorrow
+  // Default date = tomorrow, unless the schedule deep-linked a specific slot
+  // (/appointments/new?date=YYYY-MM-DD&time=HH:MM from an empty-block click).
   useEffect(() => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    setScheduledDate(tomorrow.toISOString().split('T')[0]);
+    const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const qDate = params?.get('date');
+    const qTime = params?.get('time');
+    if (qDate) {
+      setScheduledDate(qDate);
+    } else {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      setScheduledDate(tomorrow.toISOString().split('T')[0]);
+    }
+    if (qTime) setScheduledTime(qTime);
   }, []);
 
   // Pre-select the customer when arriving from a customer page

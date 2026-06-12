@@ -5,6 +5,7 @@ import { TimeHeader } from './time-header';
 import { ResourceRow } from './resource-row';
 import { CurrentTimeIndicator } from './current-time-indicator';
 import { TimelineEventData } from './timeline-event';
+import { AppointmentsLane, ApptBlock } from './appointments-lane';
 
 interface ResourceData {
   id: string;
@@ -22,6 +23,10 @@ interface Props {
   date: string;
   zoom: 'compact' | 'standard' | 'detailed';
   onEventClick?: (event: TimelineEventData) => void;
+  // CR-2026-025 — appointments lane (not bay-bound; shown on its own time-aligned row)
+  appointments?: ApptBlock[];
+  onAppointmentClick?: (id: string) => void;
+  onEmptySlotClick?: (time: string) => void;
 }
 
 const ZOOM_PX: Record<string, number> = {
@@ -39,7 +44,7 @@ const GROUP_LABELS: Record<string, string> = {
   LIGHT_SLOT: 'Light Tasks',
 };
 
-export function ResourceTimeline({ resources, events, operatingHours, date, zoom, onEventClick }: Props) {
+export function ResourceTimeline({ resources, events, operatingHours, date, zoom, onEventClick, appointments, onAppointmentClick, onEmptySlotClick }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   if (!operatingHours) {
@@ -95,6 +100,19 @@ export function ResourceTimeline({ resources, events, operatingHours, date, zoom
           pxPerMinute={pxPerMinute}
           labelColumnWidth={LABEL_WIDTH}
         />
+
+        {/* Appointments lane (time-aligned; not bay-bound) */}
+        {(appointments || onEmptySlotClick) && (
+          <AppointmentsLane
+            appointments={appointments ?? []}
+            openMinutes={openMinutes}
+            closeMinutes={closeMinutes}
+            pxPerMinute={pxPerMinute}
+            labelColumnWidth={LABEL_WIDTH}
+            onAppointmentClick={onAppointmentClick}
+            onEmptySlotClick={onEmptySlotClick}
+          />
+        )}
 
         {/* Resource groups */}
         {Array.from(grouped.entries()).map(([cat, groupResources]) => (

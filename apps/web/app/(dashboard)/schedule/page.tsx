@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { api } from '../../../lib/api-client';
 import { useSiteId } from '../../../hooks/use-site';
@@ -12,6 +12,7 @@ import { ResourceTimeline } from '../../../components/schedule/resource-timeline
 import { QueueRail } from '../../../components/schedule/queue-rail';
 import { WeekView } from '../../../components/schedule/week-view';
 import { TimelineEventData } from '../../../components/schedule/timeline-event';
+import { AppointmentDetailModal } from '../../../components/appointment-detail-modal';
 
 // --- Types ---
 
@@ -73,12 +74,16 @@ function formatDateShort(dateStr: string): string {
 export default function SchedulePage() {
   const siteId = useSiteId();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const today = new Date().toISOString().split('T')[0];
 
   const [selectedDate, setSelectedDate] = useState(today);
   const [activeTab, setActiveTab] = useState<'day' | 'week'>('day');
   const [zoom, setZoom] = useState<ZoomLevel>('standard');
   const [railCollapsed, setRailCollapsed] = useState(false);
+  // CR-2026-025 — appointment detail modal + "create at time" popover
+  const [openApptId, setOpenApptId] = useState<string | null>(null);
+  const [createAtTime, setCreateAtTime] = useState<string | null>(null);
 
   // Session-persist zoom
   const setZoomPersist = useCallback((z: ZoomLevel) => {
@@ -101,6 +106,31 @@ export default function SchedulePage() {
     queryFn: () => api.get(`/schedule/week?siteId=${siteId}&weekStart=${weekStart}`),
     enabled: activeTab === 'week',
   });
+
+  // Appointments for the day (not bay-bound) → rendered on the timeline's Appointments lane.
+  const apptListQuery = useQuery<Array<{
+    id: string; scheduledStartAt: string; scheduledEndAt: string | null; status: string;
+    customer: { firstName: string; lastName: string };
+  }>>({
+    queryKey: ['schedule-appointments', siteId, selectedDate],
+    queryFn: () => api.get(`/appointments?siteId=${siteId}&date=${selectedDate}`),
+    enabled: activeTab === 'day' && !!siteId,
+    refetchInterval: activeTab === 'day' ? 10000 : false,
+  });
+  const apptBlocks = (apptListQuery.data ?? [])
+    .filter((a) => ['DRAFT', 'CONFIRMED', 'RESCHEDULED'].includes(a.status))
+    .map((a) => ({
+      id: a.id,
+      scheduledStartAt: a.scheduledStartAt,
+      scheduledEndAt: a.scheduledEndAt,
+      status: a.status,
+      customerName: `${a.customer.firstName} ${a.customer.lastName}`,
+    }));
+
+  const onScheduleChanged = () => {
+    queryClient.invalidateQueries({ queryKey: ['schedule-day'] });
+    queryClient.invalidateQueries({ queryKey: ['schedule-appointments'] });
+  };
 
   function prevDay() {
     const d = new Date(`${selectedDate}T12:00:00`);
@@ -228,6 +258,9 @@ export default function SchedulePage() {
                     date={selectedDate}
                     zoom={zoom}
                     onEventClick={handleEventClick}
+                    appointments={apptBlocks}
+                    onAppointmentClick={(id) => setOpenApptId(id)}
+                    onEmptySlotClick={(time) => setCreateAtTime(time)}
                   />
                 </div>
 
@@ -260,6 +293,34 @@ export default function SchedulePage() {
           </>
         )}
       </div>
+
+      {/* Appointment detail modal (from the Appointments lane) */}
+      {openApptId && (
+        <AppointmentDetailModal
+          appointmentId={openApptId}
+          onClose={() => setOpenApptId(null)}
+          onChanged={onScheduleChanged}
+        />
+      )}
+
+      {/* "Create at time" popover (empty-slot click on the Appointments lane) */}
+      {createAtTime && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setCreateAtTime(null)}>
+          <div className="card w-80 p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-slate-900">New appointment</h3>
+            <p className="mt-1 text-xs text-slate-500">{formatDateShort(selectedDate)} at {createAtTime}</p>
+            <div className="mt-4 flex flex-col gap-2">
+              <button
+                onClick={() => router.push(`/appointments/new?date=${selectedDate}&time=${createAtTime}`)}
+                className="btn-primary text-xs"
+              >
+                Schedule Appointment
+              </button>
+              <button onClick={() => setCreateAtTime(null)} className="btn-secondary text-xs">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
