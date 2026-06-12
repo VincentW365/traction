@@ -19,7 +19,8 @@ function build() {
     testDataRun: { create: vi.fn(async () => ({ id: 'run-xyz' })) },
   };
   const audit: any = { log: vi.fn(async () => ({})) };
-  return { svc: new AuthService(prisma as any, audit as any), prisma, audit };
+  const sandbox: any = { getRunId: () => undefined, run: (_id: string, cb: any) => cb(), exit: (cb: any) => cb() };
+  return { svc: new AuthService(prisma as any, audit as any, sandbox), prisma, audit };
 }
 const enable = () => { process.env.ALLOW_DEV_LOGIN = 'true'; process.env.NODE_ENV = 'development'; };
 const disable = () => { process.env.ALLOW_DEV_LOGIN = 'false'; process.env.NODE_ENV = 'test'; };

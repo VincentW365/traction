@@ -26,4 +26,13 @@ export class SandboxContextService {
   getRunId(): string | undefined {
     return this.als.getStore()?.runId;
   }
+
+  /**
+   * Run `cb` OUTSIDE any sandbox context (CR-2026-023). Used by the sandbox cleanup
+   * so its deletes bypass the tagging/modification-guard middleware (which would
+   * otherwise block deleting the very records being cleaned up).
+   */
+  exit<T>(cb: () => T): T {
+    return this.als.exit(cb);
+  }
 }

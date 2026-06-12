@@ -12,7 +12,7 @@ import {
 } from '../cleanup';
 
 const OK: SafetyFacts = {
-  runExists: true, status: 'ACTIVE', manifestTotal: 7,
+  runExists: true, status: 'ACTIVE', runType: 'BATCH', manifestTotal: 7,
   historicalVisitsInSet: 0, placeholderCustomersInSet: 0, placeholderVehiclesInSet: 0,
   protectedSystemRefs: 0, untaggedAnchors: 0, nonVwtestCustomers: 0, sharedInfraTypes: [],
 };
@@ -43,6 +43,39 @@ describe('evaluateSafety (pure)', () => {
       expect(checks.find((c) => c.name === checkName)?.ok).toBe(false);
     });
   }
+
+  it('BATCH (default) still requires firstName=VWTEST', () => {
+    const r = evaluateSafety({ ...OK, nonVwtestCustomers: 1 }, 'BATCH');
+    expect(r.pass).toBe(false);
+    expect(r.checks.find((c) => c.name === 'all customers firstName=VWTEST')?.ok).toBe(false);
+  });
+});
+
+describe('evaluateSafety — DEV_LOGIN_SESSION profile (CR-2026-023)', () => {
+  const DEV: SafetyFacts = { ...OK, runType: 'DEV_LOGIN_SESSION' };
+
+  it('passes with real (non-VWTEST) names + zero manifest', () => {
+    const r = evaluateSafety({ ...DEV, nonVwtestCustomers: 3, manifestTotal: 0 }, 'DEV_LOGIN_SESSION');
+    expect(r.pass).toBe(true);
+    expect(r.checks.some((c) => c.name === 'all customers firstName=VWTEST')).toBe(false); // no VWTEST check
+    expect(r.checks.some((c) => c.name === 'manifest non-empty')).toBe(false); // empty allowed
+    expect(r.checks.find((c) => c.name === 'runType DEV_LOGIN_SESSION')?.ok).toBe(true);
+  });
+
+  it('refuses a non-DEV_LOGIN_SESSION run under this profile', () => {
+    const r = evaluateSafety({ ...DEV, runType: 'BATCH' }, 'DEV_LOGIN_SESSION');
+    expect(r.pass).toBe(false);
+    expect(r.checks.find((c) => c.name === 'runType DEV_LOGIN_SESSION')?.ok).toBe(false);
+  });
+
+  it('still refuses historical / placeholder / protected / untagged / shared-infra', () => {
+    for (const patch of [
+      { historicalVisitsInSet: 1 }, { placeholderCustomersInSet: 1 }, { placeholderVehiclesInSet: 1 },
+      { protectedSystemRefs: 1 }, { untaggedAnchors: 1 }, { sharedInfraTypes: ['UserAccount'] },
+    ] as Partial<SafetyFacts>[]) {
+      expect(evaluateSafety({ ...DEV, ...patch }, 'DEV_LOGIN_SESSION').pass).toBe(false);
+    }
+  });
 });
 
 describe('delete sequence (dependency order)', () => {

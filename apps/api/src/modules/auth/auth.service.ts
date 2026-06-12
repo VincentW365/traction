@@ -13,6 +13,10 @@ import { ROLE_PERMISSIONS } from '../../common/constants/permissions';
 import { JwtPayload } from '../../common/decorators/current-user.decorator';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { DEV_LOGIN_PROFILES, findDevProfile, type DevLoginProfile } from './dev-login-profiles';
+import { SandboxContextService } from '../../common/sandbox/sandbox-context.service';
+import { loadCleanupPlan, evaluateSafety, executeCleanup } from '../data-import/test-data/cleanup';
+
+const DEV_SANDBOX_CONFIRM = 'CLEAN UP DEV SANDBOX';
 
 /** Minimal user shape needed to mint a session. */
 interface TokenUser {
@@ -32,6 +36,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private audit: AuditService,
+    private sandbox: SandboxContextService,
   ) {}
 
   /** Sign an access token. `sandboxRunId` (CR-2026-023) is added ONLY for dev-login sessions. */
@@ -180,6 +185,58 @@ export class AuthService {
     });
 
     return { ...this.issueTokensForUser(user, run.id), sandboxRunId: run.id };
+  }
+
+  // --- CR-2026-023: dev sandbox session cleanup (current session only; gated) ---
+
+  /** Resolve + gate the caller's own sandbox run id (never another run's). */
+  private requireSandboxRun(user: JwtPayload): string {
+    if (!this.devLoginEnabled()) throw new ForbiddenException('Dev login is disabled');
+    if (!user.sandboxRunId) throw new ForbiddenException('No active dev sandbox session');
+    return user.sandboxRunId;
+  }
+
+  /** Read-only preview: per-table counts + DEV_LOGIN_SESSION safety result. No deletes. */
+  async devSandboxCleanupPreview(user: JwtPayload) {
+    const runId = this.requireSandboxRun(user);
+    const plan = await loadCleanupPlan(this.prisma, runId);
+    const safety = evaluateSafety(plan.facts, 'DEV_LOGIN_SESSION');
+    return {
+      runId,
+      label: plan.run?.label ?? null,
+      status: plan.run?.status ?? null,
+      runType: plan.run?.runType ?? null,
+      counts: plan.deleteCounts,
+      totalRows: plan.totalRows,
+      safety,
+      confirmationPhrase: DEV_SANDBOX_CONFIRM,
+    };
+  }
+
+  /** Destructive: clean the caller's own sandbox run (typed confirmation required). */
+  async devSandboxCleanup(user: JwtPayload, confirm: string) {
+    const runId = this.requireSandboxRun(user);
+    if (confirm !== DEV_SANDBOX_CONFIRM) {
+      throw new BadRequestException(`Confirmation text must be exactly "${DEV_SANDBOX_CONFIRM}"`);
+    }
+    const plan = await loadCleanupPlan(this.prisma, runId);
+    const safety = evaluateSafety(plan.facts, 'DEV_LOGIN_SESSION');
+    if (!safety.pass) {
+      const failed = safety.checks.filter((c) => !c.ok).map((c) => c.name).join('; ');
+      throw new ForbiddenException(`Dev sandbox cleanup refused — safety failed: ${failed}`);
+    }
+    // Run the deletes OUTSIDE the sandbox context so the tagging/modification-guard
+    // middleware does not block deletion of the very records being cleaned up.
+    const result = await this.sandbox.exit(() =>
+      executeCleanup(this.prisma, {
+        runId,
+        backup: 'dev-sandbox session (UI; dry-run + typed confirmation; no pg_dump)',
+        actorUserId: user.sub,
+        auditAction: AUDIT_ACTIONS.DEV_SANDBOX_CLEANED_UP,
+        auditReasonCode: 'DEV_SANDBOX_CLEANUP',
+      }),
+    );
+    return { ...result, runType: plan.run?.runType ?? null };
   }
 
   async refresh(refreshToken: string) {

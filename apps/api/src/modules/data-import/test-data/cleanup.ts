@@ -73,6 +73,7 @@ export function assertBackupProvided(backup: string | undefined): asserts backup
 export interface SafetyFacts {
   runExists: boolean;
   status: string | null;
+  runType: string | null; // CR-2026-023
   manifestTotal: number;
   historicalVisitsInSet: number;
   placeholderCustomersInSet: number;
@@ -88,25 +89,44 @@ export interface SafetyCheck {
   detail: string;
 }
 
-export function evaluateSafety(f: SafetyFacts): { pass: boolean; checks: SafetyCheck[] } {
+/** Cleanup safety profile. BATCH = scripts/test-data.ts runs (unchanged). */
+export type CleanupProfile = 'BATCH' | 'DEV_LOGIN_SESSION';
+
+/**
+ * Safety gauntlet. Default profile BATCH is byte-for-byte the original (keeps the
+ * non-empty-manifest + firstName=VWTEST checks). The DEV_LOGIN_SESSION profile
+ * (CR-2026-023) instead requires runType=DEV_LOGIN_SESSION, drops the VWTEST check
+ * (UI-created records have real names) and the non-empty-manifest requirement
+ * (zero-child sessions clean to CLEANED_UP), while keeping every protected-data,
+ * anchor-tagging, and shared-infra guard.
+ */
+export function evaluateSafety(f: SafetyFacts, profile: CleanupProfile = 'BATCH'): { pass: boolean; checks: SafetyCheck[] } {
   const checks: SafetyCheck[] = [
     { name: 'run exists', ok: f.runExists, detail: f.runExists ? 'found' : 'run not found' },
     { name: 'status ACTIVE', ok: f.status === 'ACTIVE', detail: `status=${f.status ?? 'n/a'}` },
-    { name: 'manifest non-empty', ok: f.manifestTotal > 0, detail: `${f.manifestTotal} refs` },
+  ];
+  if (profile === 'DEV_LOGIN_SESSION') {
+    checks.push({ name: 'runType DEV_LOGIN_SESSION', ok: f.runType === 'DEV_LOGIN_SESSION', detail: `runType=${f.runType ?? 'n/a'}` });
+  } else {
+    checks.push({ name: 'manifest non-empty', ok: f.manifestTotal > 0, detail: `${f.manifestTotal} refs` });
+  }
+  checks.push(
     { name: 'no HISTORICAL_IMPORT visits', ok: f.historicalVisitsInSet === 0, detail: `${f.historicalVisitsInSet} in set` },
     { name: 'no placeholder customer', ok: f.placeholderCustomersInSet === 0, detail: `${f.placeholderCustomersInSet} in set` },
     { name: 'no placeholder vehicle', ok: f.placeholderVehiclesInSet === 0, detail: `${f.placeholderVehiclesInSet} in set` },
     { name: 'no protected system refs', ok: f.protectedSystemRefs === 0, detail: `${f.protectedSystemRefs} (${PROTECTED_SYSTEMS.join('/')})` },
     { name: 'all anchors tagged to run', ok: f.untaggedAnchors === 0, detail: `${f.untaggedAnchors} untagged` },
-    { name: 'all customers firstName=VWTEST', ok: f.nonVwtestCustomers === 0, detail: `${f.nonVwtestCustomers} not VWTEST` },
-    { name: 'no shared infra in set', ok: f.sharedInfraTypes.length === 0, detail: f.sharedInfraTypes.join(',') || 'none' },
-  ];
+  );
+  if (profile === 'BATCH') {
+    checks.push({ name: 'all customers firstName=VWTEST', ok: f.nonVwtestCustomers === 0, detail: `${f.nonVwtestCustomers} not VWTEST` });
+  }
+  checks.push({ name: 'no shared infra in set', ok: f.sharedInfraTypes.length === 0, detail: f.sharedInfraTypes.join(',') || 'none' });
   return { pass: checks.every((c) => c.ok), checks };
 }
 
 // --- read-only plan --------------------------------------------------------
 export interface CleanupPlan {
-  run: { id: string; label: string; status: string; createdByUserId: string } | null;
+  run: { id: string; label: string; status: string; createdByUserId: string; runType: string } | null;
   manifestByType: Record<string, string[]>;
   manifestTotal: number;
   testEntityIds: string[];
@@ -170,7 +190,7 @@ export async function loadCleanupPlan(db: Db, runId: string): Promise<CleanupPla
   const totalRows = Object.values(deleteCounts).reduce((a, b) => a + b, 0);
 
   return {
-    run: run ? { id: run.id, label: run.label, status: run.status, createdByUserId: run.createdByUserId } : null,
+    run: run ? { id: run.id, label: run.label, status: run.status, createdByUserId: run.createdByUserId, runType: run.runType } : null,
     manifestByType,
     manifestTotal,
     testEntityIds,
@@ -179,6 +199,7 @@ export async function loadCleanupPlan(db: Db, runId: string): Promise<CleanupPla
     facts: {
       runExists: !!run,
       status: run?.status ?? null,
+      runType: run?.runType ?? null,
       manifestTotal,
       historicalVisitsInSet,
       placeholderCustomersInSet,
@@ -207,8 +228,10 @@ export interface CleanupResult {
  */
 export async function executeCleanup(
   db: Db,
-  opts: { runId: string; backup: string; actorUserId: string },
+  opts: { runId: string; backup: string; actorUserId: string; auditAction?: string; auditReasonCode?: string },
 ): Promise<CleanupResult> {
+  const auditAction = opts.auditAction ?? 'TEST_DATA_RUN_CLEANED_UP';
+  const auditReasonCode = opts.auditReasonCode ?? 'TEST_DATA_CLEANUP';
   return db.$transaction(
     async (tx) => {
       const run = await tx.testDataRun.findUnique({ where: { id: opts.runId } });
@@ -261,11 +284,11 @@ export async function executeCleanup(
       await tx.auditLog.create({
         data: {
           actorUserId: opts.actorUserId,
-          action: 'TEST_DATA_RUN_CLEANED_UP',
+          action: auditAction,
           entityType: 'TestDataRun',
           entityId: opts.runId,
           afterJson: { counts, totalDeleted, backup: opts.backup },
-          reasonCode: 'TEST_DATA_CLEANUP',
+          reasonCode: auditReasonCode,
           notes: `Cleaned up test run ${run.label}; backup: ${opts.backup}`,
         },
       });

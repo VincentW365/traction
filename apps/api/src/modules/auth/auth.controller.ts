@@ -50,4 +50,21 @@ export class AuthController {
   async devLogin(@Body() dto: DevLoginDto) {
     return this.authService.devLogin(dto.role);
   }
+
+  // CR-2026-023 — dev sandbox session cleanup (current session only; gated inside the service).
+  @Post('dev-sandbox/cleanup/preview')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Dev-only: preview cleanup of the CURRENT sandbox session (no deletes)' })
+  async devSandboxCleanupPreview(@CurrentUser() user: JwtPayload) {
+    return this.authService.devSandboxCleanupPreview(user);
+  }
+
+  @Post('dev-sandbox/cleanup')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Dev-only: clean up the CURRENT sandbox session (typed confirmation required)' })
+  async devSandboxCleanup(@Body('confirm') confirm: string, @CurrentUser() user: JwtPayload) {
+    return this.authService.devSandboxCleanup(user, confirm);
+  }
 }

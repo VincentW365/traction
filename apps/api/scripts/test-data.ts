@@ -117,14 +117,19 @@ async function runCleanup(prisma: PrismaClient, env: ReturnType<typeof validateE
   assertRunIdProvided(runId);
   const commit = has('--commit');
   const backup = val('--backup');
+  // CR-2026-023 — explicit DEV_LOGIN_SESSION cleanup profile (BATCH is the default + unchanged).
+  const devSession = has('--dev-session');
+  const profile = devSession ? 'DEV_LOGIN_SESSION' : 'BATCH';
 
   const plan = await loadCleanupPlan(prisma, runId);
-  const safety = evaluateSafety(plan.facts);
+  const safety = evaluateSafety(plan.facts, profile);
 
   console.log(commit ? 'TEST DATA CLEANUP — COMMIT' : 'TEST DATA CLEANUP — DRY RUN (no deletes)');
   console.log(`  run ................ ${runId}`);
+  console.log(`  profile ............ ${profile}`);
   console.log(`  label .............. ${plan.run?.label ?? '(run not found)'}`);
   console.log(`  status ............. ${plan.run?.status ?? 'n/a'}`);
+  console.log(`  runType ............ ${plan.run?.runType ?? 'n/a'}`);
   console.log(`  manifest refs ...... ${plan.manifestTotal}`);
   console.log('  Rows to delete (dependency order):');
   for (const type of CLEANUP_DELETE_SEQUENCE) {
@@ -152,7 +157,12 @@ async function runCleanup(prisma: PrismaClient, env: ReturnType<typeof validateE
   assertBackupProvided(backup);
   if (!plan.run) throw new Error('Run not found — cannot clean up.');
 
-  const result = await executeCleanup(prisma, { runId, backup, actorUserId: plan.run.createdByUserId });
+  const result = await executeCleanup(prisma, {
+    runId,
+    backup,
+    actorUserId: plan.run.createdByUserId,
+    ...(devSession ? { auditAction: 'DEV_SANDBOX_CLEANED_UP', auditReasonCode: 'DEV_SANDBOX_CLEANUP' } : {}),
+  });
   console.log('  DELETED:');
   for (const [type, n] of Object.entries(result.counts)) console.log(`    ${type.padEnd(24, '.')} ${n}`);
   console.log(`    ${'TOTAL deleted'.padEnd(24, '.')} ${result.totalDeleted}`);

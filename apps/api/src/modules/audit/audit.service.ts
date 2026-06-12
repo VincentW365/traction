@@ -31,6 +31,7 @@ export const AUDIT_ACTIONS = {
   CUSTOMER_NOTIFICATION_OPTIN: 'CUSTOMER_NOTIFICATION_OPTIN', // P4(b) — consent captured at check-in
   PAYMENT_RELEASE_OVERRIDE: 'PAYMENT_RELEASE_OVERRIDE', // P4(c) — manager release exception (GOV-005)
   DEV_LOGIN: 'DEV_LOGIN', // CR-2026-022 — dev-only one-click role login (gated)
+  DEV_SANDBOX_CLEANED_UP: 'DEV_SANDBOX_CLEANED_UP', // CR-2026-023 — dev-login sandbox session cleanup
 } as const;
 
 @Injectable()
