@@ -725,6 +725,88 @@ export class ReportingService {
   }
 
   /**
+   * CR-2026-031 — Rework / First-Time-Fix report (LIVE operational).
+   *
+   * Surfaces jobs that "came back" — i.e. ServiceOrders with one or more
+   * ServiceOrderRework records — over LIVE service orders (excludes
+   * HISTORICAL_IMPORT + test-data via liveVisitWhere). Reports:
+   *   - reworkRate       = distinct reworked orders / total orders
+   *   - firstTimeFixRate = 100 - reworkRate
+   * plus the rework ledger (reason, count, original order, customer, vehicle,
+   * primary technician). Optional site + date window. No rule/engine change.
+   */
+  async getReworkReport(opts: { siteId?: string; from?: string; to?: string } = {}) {
+    const from = opts.from ? new Date(opts.from) : null;
+    const to = opts.to ? new Date(opts.to) : null;
+    if (to) to.setHours(23, 59, 59, 999);
+    const dateWhere: Prisma.ServiceVisitWhereInput =
+      from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {};
+    const visitWhere: Prisma.ServiceVisitWhereInput = {
+      ...liveVisitWhere(),
+      ...dateWhere,
+      ...(opts.siteId ? { siteId: opts.siteId } : {}),
+    };
+    const orderVisit: Prisma.ServiceOrderWhereInput = { serviceVisit: visitWhere };
+
+    const [totalOrders, reworkedDistinct, reworks] = await Promise.all([
+      this.prisma.serviceOrder.count({ where: orderVisit }),
+      this.prisma.serviceOrderRework.findMany({
+        where: { serviceOrder: orderVisit },
+        select: { serviceOrderId: true },
+        distinct: ['serviceOrderId'],
+      }),
+      this.prisma.serviceOrderRework.findMany({
+        where: { serviceOrder: orderVisit },
+        orderBy: { openedAt: 'desc' },
+        take: 200,
+        include: {
+          serviceOrder: {
+            select: {
+              id: true,
+              serviceVisit: {
+                select: {
+                  customer: { select: { firstName: true, lastName: true } },
+                  vehicle: { select: { plateNumber: true } },
+                },
+              },
+              assignments: {
+                where: { isPrimary: true },
+                select: { technician: { select: { userAccount: { select: { fullName: true } } } } },
+              },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const reworkedOrders = reworkedDistinct.length;
+    const reworkRate = totalOrders > 0 ? Math.round((reworkedOrders / totalOrders) * 1000) / 10 : 0;
+    const firstTimeFixRate = totalOrders > 0 ? Math.round((100 - reworkRate) * 10) / 10 : 0;
+
+    const items = reworks.map((rw) => {
+      const visit = rw.serviceOrder?.serviceVisit;
+      const primaryTech = rw.serviceOrder?.assignments?.[0]?.technician?.userAccount?.fullName ?? null;
+      return {
+        id: rw.id,
+        serviceOrderId: rw.serviceOrderId,
+        reasonCode: rw.reasonCode,
+        description: rw.description,
+        reworkCount: rw.reworkCount,
+        openedAt: rw.openedAt.toISOString(),
+        closedAt: rw.closedAt ? rw.closedAt.toISOString() : null,
+        customerName: visit?.customer ? `${visit.customer.firstName} ${visit.customer.lastName}` : '',
+        vehiclePlate: visit?.vehicle?.plateNumber ?? '',
+        primaryTechnician: primaryTech,
+      };
+    });
+
+    return {
+      summary: { totalOrders, reworkedOrders, reworkRate, firstTimeFixRate },
+      items,
+    };
+  }
+
+  /**
    * CR-2026-019 (P1c) — Service Mix / Job-Category analytics. READ-ONLY.
    * Built on ServiceJobMapping (historical) + ServiceCatalogItem (catalog/estimated
    * prices) + ServiceType.family (live). Never writes. No customer PII (categories,

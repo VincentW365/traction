@@ -120,6 +120,20 @@ export class ReportingController {
     return this.reportingService.getHistoricalAnalytics({ from, to });
   }
 
+  @Get('rework')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'Rework / first-time-fix report — live jobs that came back (CR-2026-031)' })
+  @ApiQuery({ name: 'siteId', required: false, type: String })
+  @ApiQuery({ name: 'from', required: false, type: String, description: 'ISO date (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'to', required: false, type: String, description: 'ISO date (YYYY-MM-DD)' })
+  async getRework(
+    @Query('siteId') siteId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.reportingService.getReworkReport({ siteId, from, to });
+  }
+
   @Get('service-mix')
   @RequirePermission(PERMISSIONS.REPORT_VIEW)
   @ApiOperation({ summary: 'Read-only Service Mix / Job-Category analytics (CR-2026-019 P1c)' })
