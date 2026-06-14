@@ -26,6 +26,7 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerSearchDto } from './dto/customer-search.dto';
 import { CustomerDirectoryDto } from './dto/customer-directory.dto';
+import { ServiceHistoryQueryDto } from './dto/service-history-query.dto';
 
 /** Roles that may browse the full directory + see admin-only Import Metadata. */
 const DIRECTORY_ROLES = ['ADMIN', 'MANAGER'];
@@ -68,6 +69,17 @@ export class CustomersController {
   @ApiOkResponse({ description: 'Customer detail; Import Metadata included only for ADMIN/MANAGER' })
   async findById(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findById(id, DIRECTORY_ROLES.includes(user.role));
+  }
+
+  @Get(':id/service-history')
+  @RequirePermission(PERMISSIONS.CUSTOMER_SEARCH)
+  @ApiOperation({ summary: "Full paginated service history for one customer (incl. historical; excludes test data)" })
+  @ApiOkResponse({ description: 'Paginated visits with vehicle, mileage, and services performed' })
+  async serviceHistory(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() dto: ServiceHistoryQueryDto,
+  ) {
+    return this.customersService.getServiceHistory(id, dto.limit, dto.offset);
   }
 
   @Patch(':id')

@@ -49,10 +49,36 @@ interface CustomerDetail {
   importMeta?: { batchId: string; rawName: string } | null;
 }
 
+// CR-2026-030: full paginated service history (derived from ServiceVisit).
+interface ServiceHistoryItem {
+  id: string;
+  visitedAt: string | null;
+  status: string;
+  sourceType: string;
+  mileageIn: number | null;
+  mileageOut: number | null;
+  vehicle: { id: string; vehicleCode: string; plateNumber: string; label: string | null } | null;
+  services: string[];
+}
+interface ServiceHistoryResponse {
+  items: ServiceHistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+const HISTORY_PAGE = 10;
+
 function fmtDate(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function fmtMileage(inM: number | null, outM: number | null): string {
+  if (inM == null && outM == null) return '—';
+  if (inM != null && outM != null) return `${inM.toLocaleString()} → ${outM.toLocaleString()}`;
+  return (outM ?? inM)!.toLocaleString();
 }
 
 function ConsentBadge({ on }: { on: boolean }) {
@@ -79,10 +105,18 @@ export default function CustomerDetailPage() {
 
   const [editingLoyalty, setEditingLoyalty] = useState(false);
   const [loyaltyInput, setLoyaltyInput] = useState('');
+  const [historyOffset, setHistoryOffset] = useState(0);
 
   const { data: customer, isLoading, error } = useQuery<CustomerDetail>({
     queryKey: ['customer', customerId],
     queryFn: () => api.get(`/customers/${customerId}`),
+    enabled: !!customerId,
+  });
+
+  // CR-2026-030: full paginated service history (separate from the 10-visit summary in findById).
+  const historyQuery = useQuery<ServiceHistoryResponse>({
+    queryKey: ['customer-history', customerId, historyOffset],
+    queryFn: () => api.get(`/customers/${customerId}/service-history?limit=${HISTORY_PAGE}&offset=${historyOffset}`),
     enabled: !!customerId,
   });
 
@@ -337,27 +371,63 @@ export default function CustomerDetailPage() {
         </div>
       </div>
 
-      {/* Visit / Service History */}
+      {/* Visit / Service History — CR-2026-030: full paginated history with vehicle, services, mileage */}
       <div className="card mb-6">
-        <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Visit &amp; Service History</h2></div>
+        <div className="card-header flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">Visit &amp; Service History</h2>
+          {historyQuery.data && historyQuery.data.total > 0 && (
+            <span className="text-xs text-slate-500">
+              {historyQuery.data.offset + 1}–{Math.min(historyQuery.data.offset + historyQuery.data.items.length, historyQuery.data.total)} of {historyQuery.data.total}
+            </span>
+          )}
+        </div>
         <div className="card-body">
-          {customer.recentVisits.length === 0 ? (
+          {historyQuery.isLoading ? (
+            <p className="text-sm text-slate-500">Loading history…</p>
+          ) : historyQuery.isError ? (
+            <p className="text-sm text-red-600">Failed to load service history.</p>
+          ) : !historyQuery.data || historyQuery.data.items.length === 0 ? (
             <p className="text-sm text-slate-500">No visits on record.</p>
           ) : (
-            <div className="table-container border-0 shadow-none">
-              <table className="w-full text-sm">
-                <thead className="table-header"><tr><th>Date</th><th>Source</th><th>Status</th></tr></thead>
-                <tbody>
-                  {customer.recentVisits.map((v) => (
-                    <tr key={v.id} className="table-row">
-                      <td className="text-slate-700">{fmtDate(v.visitedAt)}</td>
-                      <td className="text-xs text-slate-500">{v.sourceType.replace(/_/g, ' ')}</td>
-                      <td><StatusBadge status={v.status} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="table-container border-0 shadow-none">
+                <table className="w-full text-sm">
+                  <thead className="table-header"><tr><th>Date</th><th>Vehicle</th><th>Services</th><th>Mileage</th><th>Source</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {historyQuery.data.items.map((v) => (
+                      <tr key={v.id} className="table-row">
+                        <td className="text-slate-700 whitespace-nowrap">{fmtDate(v.visitedAt)}</td>
+                        <td className="text-slate-600">
+                          {v.vehicle ? (
+                            <Link href={`/vehicles/${v.vehicle.id}`} className="text-blue-600 hover:underline">
+                              {v.vehicle.label || v.vehicle.plateNumber}
+                            </Link>
+                          ) : '—'}
+                        </td>
+                        <td className="text-slate-600">{v.services.length ? v.services.join(', ') : '—'}</td>
+                        <td className="text-slate-600 whitespace-nowrap">{fmtMileage(v.mileageIn, v.mileageOut)}</td>
+                        <td className="text-xs text-slate-500">{v.sourceType.replace(/_/g, ' ')}</td>
+                        <td><StatusBadge status={v.status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {historyQuery.data.total > HISTORY_PAGE && (
+                <div className="flex items-center justify-between pt-3 mt-1 border-t border-slate-100">
+                  <button
+                    onClick={() => setHistoryOffset(Math.max(historyOffset - HISTORY_PAGE, 0))}
+                    disabled={historyOffset === 0}
+                    className="btn-secondary text-xs disabled:opacity-50"
+                  >Previous</button>
+                  <button
+                    onClick={() => setHistoryOffset(historyOffset + HISTORY_PAGE)}
+                    disabled={historyOffset + HISTORY_PAGE >= historyQuery.data.total}
+                    className="btn-secondary text-xs disabled:opacity-50"
+                  >Next</button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

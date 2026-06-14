@@ -4,7 +4,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerDirectoryDto } from './dto/customer-directory.dto';
-import { liveCustomerWhere, PLACEHOLDER_CUSTOMER_NUMBER } from '../../common/helpers/operational-scope';
+import { liveCustomerWhere, liveVisitWhere, PLACEHOLDER_CUSTOMER_NUMBER } from '../../common/helpers/operational-scope';
 import { normalizeCodeQuery } from '../../common/helpers/normalize-code-query';
 import {
   toCustomerListItem,
@@ -201,6 +201,59 @@ export class CustomersService {
       vehicleCount: customer._count.vehicles,
       includeImportMeta,
     });
+  }
+
+  /**
+   * Full, paginated service history for one customer (CR-2026-030).
+   *
+   * Derives directly from ServiceVisit (no snapshot table). INCLUDES historical-
+   * import visits — they are the customer's real past service and the basis for
+   * mileage-pattern outreach — while EXCLUDING test-data sandbox rows
+   * (`liveVisitWhere(true, false)` → `{ testDataRunId: null }`). Each row carries
+   * the vehicle, mileage in/out, and the services performed (from the appointment
+   * and/or the service orders).
+   */
+  async getServiceHistory(id: string, limit = 20, offset = 0) {
+    const take = Math.min(Math.max(Math.trunc(limit), 1), 100);
+    const skip = Math.max(Math.trunc(offset), 0);
+    const where: Prisma.ServiceVisitWhereInput = { customerId: id, ...liveVisitWhere(true, false) };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.serviceVisit.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take,
+        skip,
+        include: {
+          vehicle: { select: { id: true, vehicleCode: true, plateNumber: true, make: true, model: true, modelYear: true } },
+          appointment: { select: { services: { select: { serviceType: { select: { name: true } } } } } },
+          serviceOrders: { select: { items: { select: { serviceType: { select: { name: true } } } } } },
+        },
+      }),
+      this.prisma.serviceVisit.count({ where }),
+    ]);
+
+    const items = rows.map((v) => {
+      const services = [
+        ...(v.appointment?.services?.map((s) => s.serviceType.name) ?? []),
+        ...v.serviceOrders.flatMap((so) => so.items.map((i) => i.serviceType.name)),
+      ];
+      const label = [v.vehicle?.modelYear, v.vehicle?.make, v.vehicle?.model].filter(Boolean).join(' ');
+      return {
+        id: v.id,
+        visitedAt: v.checkedInAt ?? v.arrivalAt ?? v.createdAt,
+        status: v.status,
+        sourceType: v.sourceType,
+        mileageIn: v.mileageIn,
+        mileageOut: v.mileageOut,
+        vehicle: v.vehicle
+          ? { id: v.vehicle.id, vehicleCode: v.vehicle.vehicleCode, plateNumber: v.vehicle.plateNumber, label: label || null }
+          : null,
+        services: [...new Set(services)],
+      };
+    });
+
+    return { items, total, limit: take, offset: skip };
   }
 
   /**
