@@ -31,9 +31,10 @@ describe('Rule 5 @ walk-in intake', () => {
     expect(h.audit.log).not.toHaveBeenCalled();
   });
 
-  it('non-service walk-in → rejects when mileage is provided', async () => {
+  it('non-service walk-in → ALLOWS mileage (CR-2026-037 — mileage decoupled from service)', async () => {
     const h = build(false);
-    await expect(h.service.register(dto({ mileageIn: 1000 }), 'u1')).rejects.toThrow(/non-service/i);
+    await expect(h.service.register(dto({ mileageIn: 1000 }), 'u1')).resolves.toBeDefined();
+    expect(h.audit.log).not.toHaveBeenCalled();
   });
 
   it('manager override (with reason) → allowed AND audited', async () => {

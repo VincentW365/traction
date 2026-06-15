@@ -15,11 +15,11 @@ describe('assertMileageGate', () => {
     expect(() => assertMileageGate({ requiresMileage: false, mileageProvided: false })).not.toThrow();
   });
 
-  it('rejects a non-service job WITH mileage', () => {
-    expect(() => assertMileageGate({ requiresMileage: false, mileageProvided: true })).toThrow(/non-service/i);
+  it('allows a non-service job WITH mileage (CR-2026-037 — mileage decoupled from service)', () => {
+    expect(() => assertMileageGate({ requiresMileage: false, mileageProvided: true })).not.toThrow();
   });
 
-  it('manager override bypasses the gate in both blocking directions', () => {
+  it('manager override bypasses the mileage-required gate', () => {
     expect(() => assertMileageGate({ requiresMileage: true, mileageProvided: false, override: true })).not.toThrow();
     expect(() => assertMileageGate({ requiresMileage: false, mileageProvided: true, override: true })).not.toThrow();
   });
