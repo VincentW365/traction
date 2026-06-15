@@ -6,6 +6,8 @@ import { api } from '../../../../lib/api-client';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { EmptyState } from '../../../../components/ui/empty-state';
+import { ExportMenu } from '../../../../components/ui/export-menu';
+import type { ExportDocument } from '../../../../lib/export';
 
 interface AuditLogEntry {
   id: string;
@@ -58,6 +60,34 @@ export default function AuditLogsPage() {
 
   const logs = logsQuery.data ?? [];
 
+  const buildExport = (): ExportDocument | null => {
+    if (!logsQuery.data) return null;
+    return {
+      title: 'Audit Logs',
+      filename: `audit-logs_${dateFrom}_to_${dateTo}`,
+      subtitle: 'System activity and change history',
+      meta: [
+        ['Range', `${dateFrom} to ${dateTo}`],
+        ['Filters', [entityType && `Entity: ${entityType}`, action && `Action: ${action}`].filter(Boolean).join(' · ') || 'None'],
+        ['Entries', String(logs.length)],
+      ],
+      sections: [
+        {
+          columns: ['Timestamp', 'Actor', 'Action', 'Entity', 'Entity ID', 'Reason', 'Notes'],
+          rows: logs.map((log) => [
+            new Date(log.createdAt).toLocaleString(),
+            log.actor?.fullName ?? log.actorUserId ?? 'System',
+            log.action,
+            log.entityType,
+            log.entityId ?? '',
+            log.reasonCode ?? '',
+            log.notes ?? '',
+          ]),
+        },
+      ],
+    };
+  };
+
   return (
     <div className="page-container">
       <PageHeader
@@ -68,6 +98,7 @@ export default function AuditLogsPage() {
           { label: 'Admin' },
           { label: 'Audit Logs' },
         ]}
+        actions={<ExportMenu build={buildExport} disabled={!logsQuery.data} />}
       />
 
       {/* Filters */}

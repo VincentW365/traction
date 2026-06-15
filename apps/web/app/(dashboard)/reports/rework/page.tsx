@@ -10,6 +10,8 @@ import { PageHeader } from '../../../../components/ui/page-header';
 import { StatCard } from '../../../../components/ui/stat-card';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { EmptyState } from '../../../../components/ui/empty-state';
+import { ExportMenu } from '../../../../components/ui/export-menu';
+import type { ExportDocument } from '../../../../lib/export';
 
 const ALLOWED_ROLES = ['ADMIN', 'MANAGER'];
 
@@ -67,6 +69,36 @@ export default function ReworkReportPage() {
 
   const data = reworkQuery.data;
 
+  const buildExport = (): ExportDocument | null => {
+    if (!data) return null;
+    return {
+      title: 'Rework / First-Time-Fix Report',
+      filename: `rework-report${from || to ? `_${from || 'start'}_${to || 'now'}` : ''}`,
+      subtitle: "Jobs that came back because the work wasn't right the first time",
+      meta: [
+        ['Range', from || to ? `${from || '—'} to ${to || '—'}` : 'All time'],
+        ['First-Time-Fix rate', `${data.summary.firstTimeFixRate}%`],
+        ['Rework rate', `${data.summary.reworkRate}%`],
+        ['Reworked / Total orders', `${data.summary.reworkedOrders} / ${data.summary.totalOrders}`],
+      ],
+      sections: [
+        {
+          columns: ['Opened', 'Customer', 'Vehicle', 'Reason', 'Description', 'Times back', 'Primary tech', 'Status'],
+          rows: data.items.map((r) => [
+            fmtDate(r.openedAt),
+            r.customerName || '',
+            r.vehiclePlate || '',
+            r.reasonCode,
+            r.description || '',
+            r.reworkCount,
+            r.primaryTechnician ?? '',
+            r.closedAt ? `Closed ${fmtDate(r.closedAt)}` : 'Open',
+          ]),
+        },
+      ],
+    };
+  };
+
   return (
     <div className="page-container">
       <PageHeader
@@ -82,6 +114,7 @@ export default function ReworkReportPage() {
             <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="input-field w-auto" />
             <span className="text-sm text-slate-400">to</span>
             <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="input-field w-auto" />
+            <ExportMenu build={buildExport} disabled={!data} />
           </div>
         }
       />

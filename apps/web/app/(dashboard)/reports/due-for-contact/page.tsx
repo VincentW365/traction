@@ -9,6 +9,8 @@ import { useAuth } from '../../../../hooks/use-auth';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { EmptyState } from '../../../../components/ui/empty-state';
+import { ExportMenu } from '../../../../components/ui/export-menu';
+import type { ExportDocument } from '../../../../lib/export';
 
 const ALLOWED_ROLES = ['ADMIN', 'MANAGER'];
 
@@ -63,6 +65,38 @@ export default function DueForContactPage() {
 
   const rows = dueQuery.data ?? [];
 
+  const buildExport = (): ExportDocument | null => {
+    if (!dueQuery.data) return null;
+    return {
+      title: 'Due for Contact',
+      filename: 'due-for-contact',
+      subtitle: 'Customers approaching their next service (by mileage pattern or due date)',
+      meta: [
+        ['Threshold', `Within ${thresholdMiles} mi or ${thresholdDays} days`],
+        ['Vehicles due', String(rows.length)],
+      ],
+      sections: [
+        {
+          columns: ['Customer', 'Phone', 'Vehicle', 'Plate', 'Service due', 'Due date', 'Due odometer', 'Current odometer'],
+          rows: rows.map((r) => {
+            const cust = r.vehicle.customer;
+            const vehicleLabel = [r.vehicle.make, r.vehicle.model].filter(Boolean).join(' ') || r.vehicle.plateNumber;
+            return [
+              cust ? `${cust.firstName} ${cust.lastName}` : '',
+              cust?.phone ?? '',
+              vehicleLabel,
+              r.vehicle.plateNumber,
+              r.serviceTypeCode,
+              fmtDate(r.nextDueDate),
+              r.nextDueOdometer ?? '',
+              r.vehicle.odometer ?? '',
+            ];
+          }),
+        },
+      ],
+    };
+  };
+
   return (
     <div className="page-container">
       <PageHeader
@@ -95,6 +129,7 @@ export default function DueForContactPage() {
               />
               days
             </label>
+            <ExportMenu build={buildExport} disabled={!dueQuery.data} />
           </div>
         }
       />

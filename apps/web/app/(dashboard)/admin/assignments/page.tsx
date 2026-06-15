@@ -8,6 +8,8 @@ import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { EmptyState } from '../../../../components/ui/empty-state';
 import { StatusBadge } from '../../../../components/status-badge';
+import { ExportMenu } from '../../../../components/ui/export-menu';
+import type { ExportDocument } from '../../../../lib/export';
 
 interface AssignmentRow {
   id: string;
@@ -41,6 +43,32 @@ export default function AssignmentsPage() {
 
   const data = assignQuery.data ?? [];
 
+  const buildExport = (): ExportDocument | null => {
+    if (!assignQuery.data) return null;
+    return {
+      title: 'Technician Assignments',
+      filename: `assignments_${startDate}_to_${endDate}`,
+      subtitle: 'Technician job assignments',
+      meta: [['Range', `${startDate} to ${endDate}`], ['Assignments', String(data.length)]],
+      sections: [
+        {
+          columns: ['Date', 'Technician', 'Employee #', 'Customer', 'Vehicle', 'Role', 'Started', 'Duration (min)', 'Status'],
+          rows: data.map((row) => [
+            new Date(row.assignedAt).toLocaleDateString(),
+            row.technicianName,
+            row.employeeCode,
+            row.customerName,
+            row.vehiclePlate,
+            row.isPrimary ? 'Primary' : 'Helper',
+            row.startedAt ? new Date(row.startedAt).toLocaleTimeString() : '',
+            row.durationMinutes ?? '',
+            row.status,
+          ]),
+        },
+      ],
+    };
+  };
+
   return (
     <div className="page-container">
       <PageHeader
@@ -52,6 +80,7 @@ export default function AssignmentsPage() {
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="input-field w-auto" />
             <span className="text-xs text-slate-400">to</span>
             <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="input-field w-auto" />
+            <ExportMenu build={buildExport} disabled={!assignQuery.data} />
           </div>
         }
       />

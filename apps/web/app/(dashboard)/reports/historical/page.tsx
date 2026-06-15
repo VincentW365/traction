@@ -7,6 +7,8 @@ import { useAuth } from '../../../../hooks/use-auth';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { StatCard } from '../../../../components/ui/stat-card';
 import { LoadingState } from '../../../../components/ui/loading-state';
+import { ExportMenu } from '../../../../components/ui/export-menu';
+import type { ExportDocument } from '../../../../lib/export';
 
 const ALLOWED_ROLES = ['ADMIN', 'MANAGER'];
 
@@ -59,38 +61,32 @@ export default function HistoricalAnalyticsPage() {
 
   const d = q.data;
 
-  // CR-2026-016: client-side CSV export of the (already-fetched) historical
+  // CR-2026-016 / CR-2026-036: client-side export of the (already-fetched) historical
   // summary + tables. No backend call, no customer PII (counts + tech names only).
-  const downloadCsv = () => {
-    if (!d) return;
-    const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
-    const row = (cells: (string | number)[]) => cells.map(esc).join(',');
-    const lines: string[] = [
-      'Historical Analytics Export',
-      row(['Span from', 'Span to']),
-      row([d.span.from ?? '', d.span.to ?? '']),
-      '',
-      row(['Metric', 'Value', 'Detail']),
-      row(['Total jobs', d.headline.totalJobs, '']),
-      row(['Completed', d.headline.completed, `${d.headline.completionRate}%`]),
-      row(['Cancelled', d.headline.cancelled, `${d.headline.cancellationRate}%`]),
-      row(['Pause rate', `${d.pauseRate}%`, '']),
-      row(['Rework rate', `${d.reworkRate}%`, '']),
-      row(['Avg duration (min)', d.avgDurationMinutes ?? '', `sample ${d.durationSampleSize}`]),
-      '',
-      row(['Month', 'Jobs']),
-      ...d.monthlyVolume.map((m) => row([m.month, m.jobs])),
-      '',
-      row(['Technician', 'Jobs worked']),
-      ...d.byTechnician.map((t) => row([t.name, t.jobs])),
-    ];
-    const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `historical-analytics${d.span.from ? `_${d.span.from}_to_${d.span.to}` : ''}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const buildExport = (): ExportDocument | null => {
+    if (!d) return null;
+    return {
+      title: 'Historical Analytics',
+      filename: `historical-analytics${d.span.from ? `_${d.span.from}_to_${d.span.to}` : ''}`,
+      subtitle: 'Imported job history (read-only; does not affect live operations)',
+      meta: [['Span', `${d.span.from ?? '—'} → ${d.span.to ?? '—'}`], ['Imported jobs', d.headline.totalJobs.toLocaleString()]],
+      sections: [
+        {
+          heading: 'Summary',
+          columns: ['Metric', 'Value', 'Detail'],
+          rows: [
+            ['Total jobs', d.headline.totalJobs, ''],
+            ['Completed', d.headline.completed, `${d.headline.completionRate}%`],
+            ['Cancelled', d.headline.cancelled, `${d.headline.cancellationRate}%`],
+            ['Pause rate', `${d.pauseRate}%`, ''],
+            ['Rework rate', `${d.reworkRate}%`, ''],
+            ['Avg duration (min)', d.avgDurationMinutes ?? '', `sample ${d.durationSampleSize}`],
+          ],
+        },
+        { heading: 'Monthly volume', columns: ['Month', 'Jobs'], rows: d.monthlyVolume.map((m) => [m.month, m.jobs]) },
+        { heading: 'Technician workload', columns: ['Technician', 'Jobs worked'], rows: d.byTechnician.map((t) => [t.name, t.jobs]) },
+      ],
+    };
   };
 
   return (
@@ -108,7 +104,7 @@ export default function HistoricalAnalyticsPage() {
             <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="input-field w-auto" aria-label="From" />
             <span className="text-sm text-slate-400">to</span>
             <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="input-field w-auto" aria-label="To" />
-            <button onClick={downloadCsv} disabled={!d} className="btn-secondary whitespace-nowrap">Download CSV</button>
+            <ExportMenu build={buildExport} disabled={!d} />
           </div>
         }
       />

@@ -9,6 +9,8 @@ import { PageHeader } from '../../../components/ui/page-header';
 import { LoadingState } from '../../../components/ui/loading-state';
 import { EmptyState } from '../../../components/ui/empty-state';
 import { StatusBadge } from '../../../components/status-badge';
+import { ExportMenu } from '../../../components/ui/export-menu';
+import type { ExportDocument } from '../../../lib/export';
 
 interface InspectionRow {
   id: string;
@@ -43,6 +45,29 @@ export default function InspectionsPage() {
 
   const items = q.data?.items ?? [];
 
+  const buildExport = (): ExportDocument | null => {
+    if (!q.data) return null;
+    return {
+      title: 'Inspections',
+      filename: 'inspections',
+      subtitle: 'Visual inspection forms',
+      meta: [['Filter', status ? `Status: ${status}` : 'All statuses'], ['Inspections', String(items.length)]],
+      sections: [
+        {
+          columns: ['Inspection #', 'Customer', 'Vehicle', 'Status', 'Created', 'Signed off'],
+          rows: items.map((i) => [
+            i.inspectionNumber,
+            i.customer ? `${i.customer.firstName} ${i.customer.lastName}` : '',
+            i.vehicle?.plateNumber ?? '',
+            i.status,
+            fmtDate(i.createdAt),
+            fmtDate(i.signedOffAt),
+          ]),
+        },
+      ],
+    };
+  };
+
   return (
     <div className="page-container">
       <PageHeader
@@ -50,14 +75,17 @@ export default function InspectionsPage() {
         subtitle="Visual inspection forms"
         breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Inspections' }]}
         actions={
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className="input-field w-auto text-sm">
-            <option value="">All statuses</option>
-            <option value="DRAFT">Draft</option>
-            <option value="COMPLETED">Completed</option>
-            <option value="SIGNED_OFF">Signed off</option>
-            <option value="CLOSED">Closed</option>
-            <option value="CANCELLED">Cancelled</option>
-          </select>
+          <div className="flex items-center gap-2">
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className="input-field w-auto text-sm">
+              <option value="">All statuses</option>
+              <option value="DRAFT">Draft</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="SIGNED_OFF">Signed off</option>
+              <option value="CLOSED">Closed</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+            <ExportMenu build={buildExport} disabled={!q.data} />
+          </div>
         }
       />
 

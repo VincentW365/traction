@@ -10,6 +10,8 @@ import { PageHeader } from '../../../components/ui/page-header';
 import { LoadingState } from '../../../components/ui/loading-state';
 import { EmptyState } from '../../../components/ui/empty-state';
 import { StatusBadge } from '../../../components/status-badge';
+import { ExportMenu } from '../../../components/ui/export-menu';
+import type { ExportDocument } from '../../../lib/export';
 
 interface ComplaintRow {
   id: string;
@@ -63,6 +65,35 @@ export default function ComplaintsPage() {
 
   const items = query.data?.items ?? [];
 
+  const buildExport = (): ExportDocument | null => {
+    if (!query.data) return null;
+    return {
+      title: 'Complaints',
+      filename: 'complaints',
+      subtitle: 'Customer complaints log & triage',
+      meta: [
+        ['Filters', [status && `Status: ${status}`, severity && `Severity: ${severity}`, type && `Type: ${type}`].filter(Boolean).join(' · ') || 'None'],
+        ['Complaints', String(items.length)],
+      ],
+      sections: [
+        {
+          columns: ['Complaint #', 'Customer', 'Subject', 'Type', 'Severity', 'Status', 'SLA due', 'Overdue', 'Opened'],
+          rows: items.map((c) => [
+            c.complaintNumber,
+            c.customer ? `${c.customer.firstName} ${c.customer.lastName}` : '',
+            c.subject,
+            c.type.replace(/_/g, ' '),
+            c.severity,
+            c.status,
+            c.status === 'RESOLVED' ? '' : fmtDate(c.slaDueAt),
+            isOverdue(c) ? 'YES' : '',
+            fmtDate(c.createdAt),
+          ]),
+        },
+      ],
+    };
+  };
+
   return (
     <div className="page-container">
       <PageHeader
@@ -84,6 +115,7 @@ export default function ComplaintsPage() {
               <option value="HIGH">High</option>
               <option value="CRITICAL">Critical</option>
             </select>
+            <ExportMenu build={buildExport} disabled={!query.data} />
             {canCreate && <Link href="/complaints/new" className="btn-primary text-sm whitespace-nowrap">Log Complaint</Link>}
           </div>
         }

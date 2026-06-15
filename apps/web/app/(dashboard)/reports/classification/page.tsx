@@ -7,6 +7,8 @@ import { PageHeader } from '../../../../components/ui/page-header';
 import { StatCard } from '../../../../components/ui/stat-card';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { EmptyState } from '../../../../components/ui/empty-state';
+import { ExportMenu } from '../../../../components/ui/export-menu';
+import type { ExportDocument, ExportSection } from '../../../../lib/export';
 import { serviceClassLabel, type VehicleServiceClass, type ClassificationConfidence } from '../../../../lib/vehicle-classes';
 
 const ALLOWED_ROLES = ['ADMIN', 'MANAGER'];
@@ -62,6 +64,65 @@ export default function ClassificationProgressPage() {
 
   const s = statsQuery.data;
 
+  const buildExport = (): ExportDocument | null => {
+    if (!s) return null;
+    const p = prodQuery.data;
+    const sections: ExportSection[] = [
+      {
+        heading: 'Summary',
+        columns: ['Metric', 'Value'],
+        rows: [
+          ['Live vehicles', s.totalLive],
+          ['Classified', s.classified],
+          ['Classified %', `${s.percentClassified}%`],
+          ['Remaining unclassified', s.unclassified],
+          ['Mobile-jack eligible (sedan)', s.mobileJackEligible],
+        ],
+      },
+      {
+        heading: 'Confirmed by service class',
+        columns: ['Service class', 'Vehicles'],
+        rows: s.confirmedByClass.map((c) => [serviceClassLabel(c.serviceClass), c.count]),
+      },
+      {
+        heading: 'Remaining unclassified, by suggestion confidence',
+        columns: ['Confidence', 'Vehicles'],
+        rows: s.pendingByConfidence.map((p2) => [p2.confidence, p2.count]),
+      },
+    ];
+    if (p) {
+      sections.push(
+        {
+          heading: `Productivity (last ${p.days} days)`,
+          columns: ['Metric', 'Value'],
+          rows: [
+            ['Confirmed today vs target', `${p.today.confirmed} / ${p.today.target}`],
+            ['Avg confirmed / active day', p.recentAvgPerDay],
+            ['Days to clear (recent pace)', p.projectionDaysAtRecent ?? '—'],
+            ['Days to clear (target pace)', p.projectionDaysAtTarget ?? '—'],
+            ['Remaining unclassified', p.remainingUnclassified],
+          ],
+        },
+        {
+          heading: 'Confirmation velocity',
+          columns: ['Date', 'Confirmed'],
+          rows: p.velocity.map((v) => [v.date, v.confirmed]),
+        },
+        {
+          heading: 'Confirmations by reviewer',
+          columns: ['Reviewer', 'Confirmed'],
+          rows: p.byReviewer.map((r) => [r.reviewerName, r.confirmed]),
+        },
+      );
+    }
+    return {
+      title: 'Classification Progress',
+      filename: 'classification-progress',
+      subtitle: 'Vehicle service-class classification burn-down (live vehicles only)',
+      sections,
+    };
+  };
+
   return (
     <div className="page-container">
       <PageHeader
@@ -72,6 +133,7 @@ export default function ClassificationProgressPage() {
           { label: 'Reports', href: '/reports' },
           { label: 'Classification Progress' },
         ]}
+        actions={<ExportMenu build={buildExport} disabled={!s} />}
       />
 
       {statsQuery.isLoading && <LoadingState message="Loading classification progress..." />}

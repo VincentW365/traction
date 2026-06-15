@@ -9,6 +9,8 @@ import { useAuth } from '../../../hooks/use-auth';
 import { PageHeader } from '../../../components/ui/page-header';
 import { LoadingState } from '../../../components/ui/loading-state';
 import { EmptyState } from '../../../components/ui/empty-state';
+import { ExportMenu } from '../../../components/ui/export-menu';
+import type { ExportDocument } from '../../../lib/export';
 
 // CR-2026-021: privacy-safe list shape — NO phone is ever returned in lists.
 interface CustomerListItem {
@@ -130,6 +132,38 @@ export default function CustomersPage() {
 
   const toggleFilter = (k: keyof typeof filters) => setFilters((f) => ({ ...f, [k]: !f[k] }));
 
+  // Export the currently-loaded view. Privacy-safe: list shape carries no phone.
+  const exportItems = isDirectory ? (directoryQuery.data?.items ?? []) : (searchQuery.data ?? []);
+  const buildExport = (): ExportDocument | null => {
+    if (exportItems.length === 0) return null;
+    const meta: Array<[string, string]> = [];
+    if (isDirectory && directoryQuery.data) {
+      meta.push(['Showing', `${offset + 1}–${Math.min(offset + PAGE_SIZE, directoryQuery.data.total)} of ${directoryQuery.data.total.toLocaleString()}`]);
+    } else {
+      meta.push(['Results', String(exportItems.length)]);
+    }
+    meta.push(['Note', 'Phone numbers are not included in list exports (privacy)']);
+    return {
+      title: 'Customers',
+      filename: 'customers',
+      subtitle: isDirectory ? 'Customer directory (current page)' : 'Customer search results',
+      meta,
+      sections: [
+        {
+          columns: ['Name', 'Customer #', 'Loyalty', 'Vehicles', 'Last visit', 'Missing contact'],
+          rows: exportItems.map((c) => [
+            `${c.firstName} ${c.lastName}`,
+            c.customerNumber,
+            c.hasLoyalty ? 'Yes' : '',
+            c.vehicleCount,
+            c.lastVisitAt ? new Date(c.lastVisitAt).toLocaleDateString() : '',
+            c.missingContact ? 'YES' : '',
+          ]),
+        },
+      ],
+    };
+  };
+
   return (
     <div className="page-container">
       <PageHeader
@@ -137,9 +171,12 @@ export default function CustomersPage() {
         subtitle={isDirectory ? 'Customer directory — browse, search and manage records' : 'Search and manage customer records'}
         breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Customers' }]}
         actions={
-          <button onClick={() => setShowCreateForm(!showCreateForm)} className={showCreateForm ? 'btn-secondary' : 'btn-primary'}>
-            {showCreateForm ? 'Cancel' : '+ New Customer'}
-          </button>
+          <div className="flex items-center gap-2">
+            <ExportMenu build={buildExport} disabled={exportItems.length === 0} />
+            <button onClick={() => setShowCreateForm(!showCreateForm)} className={showCreateForm ? 'btn-secondary' : 'btn-primary'}>
+              {showCreateForm ? 'Cancel' : '+ New Customer'}
+            </button>
+          </div>
         }
       />
 

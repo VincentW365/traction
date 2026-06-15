@@ -8,6 +8,8 @@ import { PageHeader } from '../../../../components/ui/page-header';
 import { StatCard } from '../../../../components/ui/stat-card';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { EmptyState } from '../../../../components/ui/empty-state';
+import { ExportMenu } from '../../../../components/ui/export-menu';
+import type { ExportDocument } from '../../../../lib/export';
 
 const ALLOWED_ROLES = ['ADMIN', 'MANAGER'];
 const CATEGORIES = ['SERVICE', 'ENGINE & OTHER', 'FULL SERVICE', 'TRANSMISSIONS', 'FUEL FILTERS', 'RADIATOR', 'ENGINE MOUNTS', 'SUSPENSION', 'BRAKES', 'STEERING', 'DRIVETRAIN', 'LIGHTING & BODY', 'CAR CARE'];
@@ -34,15 +36,6 @@ interface ServiceMix {
 }
 
 const money = (n: number | null) => (n == null ? '—' : `~$${Math.round(n).toLocaleString()}`);
-
-// shared client-side CSV download (no PII — categories/counts/values/tech names only)
-function csv(filename: string, lines: (string | number)[][]) {
-  const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
-  const blob = new Blob([lines.map((r) => r.map(esc).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
-}
 
 function Bars({ rows, max }: { rows: { label: string; value: number }[]; max: number }) {
   const m = Math.max(max, 1);
@@ -115,27 +108,58 @@ export default function ServiceMixPage() {
   const d = q.data;
   const h = d?.historical;
 
-  const exportCategory = () => {
-    if (!h) return;
-    csv('service-mix-categories.csv', [['Service Mix — category summary (estimated catalog value, not invoice)'], ['Mode', d!.mode], [],
-      ['Category', 'Jobs', 'AUTO_MATCHED', 'NEEDS_REVIEW', 'Est. value (auto)', 'Missing-price mappings'],
-      ...h.categorySummary.map((c) => [c.category, c.jobs, c.auto, c.review, Math.round(c.estValueAuto), c.missingPriceMappings])]);
+  // Shared report context for every export (no PII — categories/counts/values/tech names only).
+  const reportMeta = (): Array<[string, string]> => [
+    ['Mode', d?.mode === 'suggested' ? 'incl. suggested (fuzzy)' : 'confirmed/auto only'],
+    ['Span', `${d?.span.from ?? '—'} → ${d?.span.to ?? '—'}`],
+    ['Note', 'Estimated catalog value, not invoice revenue'],
+  ];
+
+  const catSection = () => ({
+    heading: 'Category summary',
+    columns: ['Category', 'Jobs', 'Auto', 'Review', 'Est. value (auto)', 'Missing-price mappings'],
+    rows: h!.categorySummary.map((c) => [c.category, c.jobs, c.auto, c.review, Math.round(c.estValueAuto), c.missingPriceMappings]),
+  });
+  const trendSections = () => [
+    { heading: 'Monthly volume', columns: ['Month', 'Jobs', 'Rolling 3-mo avg'], rows: h!.timeline.overallMonthly.map((m) => [m.month, m.jobs, m.rolling3]) },
+    { heading: 'Top growing (recent vs prior 3 mo)', columns: ['Category', 'Recent', 'Prior', 'Delta'], rows: h!.timeline.topGrowing.map((g) => [g.category, g.recent, g.prior, g.delta]) },
+    { heading: 'Top shrinking', columns: ['Category', 'Recent', 'Prior', 'Delta'], rows: h!.timeline.topShrinking.map((g) => [g.category, g.recent, g.prior, g.delta]) },
+  ];
+  const reviewSections = () => {
+    const c = h!.coverage;
+    return [
+      { heading: 'Coverage', columns: ['Metric', 'Value'], rows: [
+        ['Total historical orders', c.totalHistoricalOrders], ['Auto-mapped orders', c.autoMappedOrders], ['Any-mapped orders', c.anyMappedOrders],
+        ['Unmapped orders', c.unmappedOrders], ['Analytics-ready %', c.analyticsReadyPct], ['Potential after review %', c.potentialAfterReviewPct],
+        ['Unmapped %', c.unmappedPct], ['Suggested-review mappings', c.suggestedReviewMappings],
+      ] as (string | number)[][] },
+      { heading: 'Review backlog by category', columns: ['Category', 'Needs review'], rows: c.reviewBacklogByCategory.map((r) => [r.category, r.review]) },
+    ];
   };
-  const exportTrend = () => {
-    if (!h) return;
-    csv('service-mix-trends.csv', [['Service Mix — job trend summary'], [], ['Month', 'Jobs', 'Rolling 3-mo avg'],
-      ...h.timeline.overallMonthly.map((m) => [m.month, m.jobs, m.rolling3]), [],
-      ['Top growing (recent vs prior 3 mo)'], ['Category', 'Recent', 'Prior', 'Delta'], ...h.timeline.topGrowing.map((g) => [g.category, g.recent, g.prior, g.delta]), [],
-      ['Top shrinking'], ['Category', 'Recent', 'Prior', 'Delta'], ...h.timeline.topShrinking.map((g) => [g.category, g.recent, g.prior, g.delta])]);
-  };
-  const exportReview = () => {
-    if (!h) return;
-    const c = h.coverage;
-    csv('service-mix-review-backlog.csv', [['Service Mix — unmapped / review backlog'], [],
-      ['Metric', 'Value'], ['Total historical orders', c.totalHistoricalOrders], ['Auto-mapped orders', c.autoMappedOrders], ['Any-mapped orders', c.anyMappedOrders], ['Unmapped orders', c.unmappedOrders],
-      ['Analytics-ready %', c.analyticsReadyPct], ['Potential after review %', c.potentialAfterReviewPct], ['Unmapped %', c.unmappedPct], ['Suggested-review mappings', c.suggestedReviewMappings], [],
-      ['Review backlog by category'], ['Category', 'NEEDS_REVIEW'], ...c.reviewBacklogByCategory.map((r) => [r.category, r.review])]);
-  };
+  const operationalSection = () => ({
+    heading: 'Operational metrics by category',
+    columns: ['Category', 'Orders', 'Avg dur (min)', 'Sample', 'Pause %', 'Rework %', 'Closed', 'Cancelled'],
+    rows: h!.operationalByCategory.map((o) => [o.category, o.orders, o.avgDurationMinutes ?? '—', o.durationSampleSize, o.pauseRate, o.reworkRate, o.completed, o.cancelled]),
+  });
+  const techMixSection = () => ({
+    heading: 'Technician workload mix by category (top 3)',
+    columns: ['Category', 'Technician', 'Jobs'],
+    rows: h!.technicianMixByCategory.flatMap((t) => t.technicians.map((x) => [t.category, x.name, x.jobs] as (string | number)[])),
+  });
+
+  const buildCategoryExport = (): ExportDocument | null => (!h || !d ? null : { title: 'Service Mix — Category Summary', filename: 'service-mix-categories', meta: reportMeta(), sections: [catSection()] });
+  const buildTrendExport = (): ExportDocument | null => (!h || !d ? null : { title: 'Service Mix — Job Trends', filename: 'service-mix-trends', meta: reportMeta(), sections: trendSections() });
+  const buildReviewExport = (): ExportDocument | null => (!h || !d ? null : { title: 'Service Mix — Unmapped / Review Backlog', filename: 'service-mix-review-backlog', meta: reportMeta(), sections: reviewSections() });
+  const buildFullExport = (): ExportDocument | null =>
+    !h || !d
+      ? null
+      : {
+          title: 'Service Mix / Job Trends',
+          filename: 'service-mix-report',
+          subtitle: 'Imported job categories & trends (read-only; estimated catalog value, not invoice revenue)',
+          meta: reportMeta(),
+          sections: [catSection(), ...trendSections(), operationalSection(), techMixSection(), ...reviewSections()],
+        };
 
   return (
     <div className="page-container">
@@ -156,6 +180,7 @@ export default function ServiceMixPage() {
               <option value="auto">Confirmed/auto only</option>
               <option value="suggested">Include suggested (fuzzy)</option>
             </select>
+            <ExportMenu build={buildFullExport} disabled={!h} label="Export all" />
           </div>
         }
       />
@@ -180,7 +205,7 @@ export default function ServiceMixPage() {
           <div className="card mt-6">
             <div className="card-header flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-900">Category summary</h2>
-              <button onClick={exportCategory} className="btn-secondary text-xs">Download CSV</button>
+              <ExportMenu build={buildCategoryExport} disabled={!h} />
             </div>
             <div className="table-container">
               <table className="w-full text-sm">
@@ -206,7 +231,7 @@ export default function ServiceMixPage() {
             <div className="card">
               <div className="card-header flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-900">Monthly volume (rolling 3-mo)</h3>
-                <button onClick={exportTrend} className="btn-secondary text-xs">Download CSV</button>
+                <ExportMenu build={buildTrendExport} disabled={!h} />
               </div>
               <div className="card-body">
                 {h.timeline.overallMonthly.length === 0 ? <p className="text-sm text-slate-500">No data in range.</p> :
@@ -281,7 +306,7 @@ export default function ServiceMixPage() {
           <div className="card mt-6">
             <div className="card-header flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-900">Unmapped & review backlog</h2>
-              <button onClick={exportReview} className="btn-secondary text-xs">Download CSV</button>
+              <ExportMenu build={buildReviewExport} disabled={!h} />
             </div>
             <div className="card-body">
               <p className="text-xs text-slate-500 mb-2">
