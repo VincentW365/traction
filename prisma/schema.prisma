@@ -278,6 +278,7 @@ model Site {
   businessRules        BusinessRuleConfig[]
   resourceReservations ResourceReservation[]
   scheduleHolds        ScheduleHold[] // CR-2026-026 — advisory schedule holds
+  complaints           Complaint[] // CR-2026-032 — customer complaints
 
   @@map("sites")
 }
@@ -314,6 +315,65 @@ model ScheduleHold {
   @@index([siteId, scheduledStartAt])
   @@index([status])
   @@map("schedule_holds")
+}
+
+// CR-2026-032 — Customer complaints log (new entity + audited state machine).
+enum ComplaintStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum ComplaintType {
+  SERVICE_QUALITY
+  WAIT_TIME
+  STAFF_CONDUCT
+  PRICING
+  VEHICLE_DAMAGE
+  COMMUNICATION
+  OTHER
+}
+
+enum ComplaintSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Complaint {
+  id                   String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  complaintNumber      String            @unique @map("complaint_number") // immutable CMP-NNNNNN
+  siteId               String            @map("site_id") @db.Uuid
+  customerId           String            @map("customer_id") @db.Uuid
+  serviceVisitId       String?           @map("service_visit_id") @db.Uuid // optional soft link
+  serviceOrderId       String?           @map("service_order_id") @db.Uuid // optional; NO rework->complaint FK
+  type                 ComplaintType
+  severity             ComplaintSeverity @default(MEDIUM)
+  status               ComplaintStatus   @default(OPEN)
+  subject              String
+  description          String
+  slaDueAt             DateTime?         @map("sla_due_at") @db.Timestamptz // display/report only
+  acknowledgedAt       DateTime?         @map("acknowledged_at") @db.Timestamptz
+  acknowledgedByUserId String?           @map("acknowledged_by_user_id") @db.Uuid // soft ref (from JWT)
+  resolvedAt           DateTime?         @map("resolved_at") @db.Timestamptz
+  resolvedByUserId     String?           @map("resolved_by_user_id") @db.Uuid // soft ref (from JWT)
+  resolutionNotes      String?           @map("resolution_notes") // required at resolve; manager-internal
+  createdByUserId      String?           @map("created_by_user_id") @db.Uuid // soft ref (from JWT)
+  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime          @updatedAt @map("updated_at") @db.Timestamptz
+
+  site         Site          @relation(fields: [siteId], references: [id])
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  serviceVisit ServiceVisit? @relation(fields: [serviceVisitId], references: [id])
+  serviceOrder ServiceOrder? @relation(fields: [serviceOrderId], references: [id])
+
+  @@index([siteId, status])
+  @@index([customerId])
+  @@index([status])
+  @@index([serviceVisitId])
+  @@index([serviceOrderId])
+  @@map("complaints")
 }
 
 model UserAccount {
@@ -364,6 +424,7 @@ model Customer {
   appointments         Appointment[]
   serviceVisits        ServiceVisit[]
   maintenanceReminders MaintenanceReminder[]
+  complaints           Complaint[] // CR-2026-032 — customer complaints
 
   // CR-2026-020 — nullable test-data run tag (null for all real & imported rows)
   testDataRunId String?      @map("test_data_run_id") @db.Uuid
@@ -562,6 +623,8 @@ model ServiceVisit {
   testDataRunId String?      @map("test_data_run_id") @db.Uuid
   testDataRun   TestDataRun? @relation(fields: [testDataRunId], references: [id], onDelete: Restrict)
 
+  complaints    Complaint[] // CR-2026-032 — customer complaints
+
   @@index([siteId, status])
   @@index([customerId, vehicleId])
   @@index([testDataRunId])
@@ -715,6 +778,7 @@ model ServiceOrder {
   maintenanceRecommendations MaintenanceRecommendation[]
   pauses                     ServiceOrderPause[]
   reworks                    ServiceOrderRework[]
+  complaints                 Complaint[] // CR-2026-032 — customer complaints
 
   @@index([serviceVisitId])
   @@index([status])

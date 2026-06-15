@@ -72,6 +72,12 @@ export const PERMISSIONS = {
 
   // Resource/Bay Management
   RESOURCE_MANAGE: 'resource:manage',
+
+  // Complaints (CR-2026-032)
+  COMPLAINT_CREATE: 'complaint:create',
+  COMPLAINT_VIEW: 'complaint:view',
+  COMPLAINT_MANAGE: 'complaint:manage',
+  COMPLAINT_RESOLVE: 'complaint:resolve',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -90,6 +96,9 @@ const FRONT_DESK_PERMISSIONS: PermissionKey[] = [
   // Front desk owns no-show/abandon handling; inherited by SERVICE_ADVISOR + MANAGER.
   PERMISSIONS.QUEUE_ABANDON,
   PERMISSIONS.MAINTENANCE_VIEW,
+  // Complaints: front desk + advisor + manager can log and view (CR-2026-032)
+  PERMISSIONS.COMPLAINT_CREATE,
+  PERMISSIONS.COMPLAINT_VIEW,
 ];
 
 const SERVICE_ADVISOR_PERMISSIONS: PermissionKey[] = [
@@ -137,6 +146,9 @@ const MANAGER_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.AVAILABILITY_MANAGE,
   PERMISSIONS.SERVICE_TYPE_MANAGE,
   PERMISSIONS.RESOURCE_MANAGE,
+  // Complaints: managers acknowledge/resolve/edit (CR-2026-032)
+  PERMISSIONS.COMPLAINT_MANAGE,
+  PERMISSIONS.COMPLAINT_RESOLVE,
 ];
 
 export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
