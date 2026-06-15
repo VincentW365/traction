@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { api } from '../../../../lib/api-client';
@@ -128,7 +128,10 @@ export default function QueueTicketDetailPage() {
   const ticketId = params.id as string;
   const siteId = useSiteId();
   const queryClient = useQueryClient();
+  const router = useRouter();
   const { user } = useAuth();
+  // CR-2026-034 (C-4) — who can start a visual inspection (API enforces).
+  const canInspect = ['ADMIN', 'MANAGER', 'SERVICE_ADVISOR', 'TECHNICIAN'].includes(user?.roleCode ?? '');
 
   // Override form state
   const [showOverrideForm, setShowOverrideForm] = useState(false);
@@ -184,6 +187,17 @@ export default function QueueTicketDetailPage() {
     queryFn: () => api.get(`/service-orders/by-visit/${ticket!.serviceVisit.id}`),
     enabled: !!ticket?.serviceVisit?.id,
     refetchInterval: 10000,
+  });
+
+  // CR-2026-034 (C-4) — visual inspections for this visit.
+  const inspectionsQuery = useQuery<{ items: Array<{ id: string; inspectionNumber: string; status: string }> }>({
+    queryKey: ['inspections-by-visit', ticket?.serviceVisit?.id],
+    queryFn: () => api.get(`/inspections?serviceVisitId=${ticket!.serviceVisit.id}`),
+    enabled: !!ticket?.serviceVisit?.id,
+  });
+  const startInspection = useMutation({
+    mutationFn: () => api.post<{ id: string }>('/inspections', { serviceVisitId: ticket!.serviceVisit.id }),
+    onSuccess: (created) => router.push(`/inspections/${created.id}`),
   });
 
   const transportQuery = useQuery<TransportRequestRow[]>({
@@ -762,6 +776,33 @@ export default function QueueTicketDetailPage() {
                 </div>
               ))}
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* Visual Inspection Section (CR-2026-034 C-4) */}
+      <div className="card mb-6">
+        <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Visual Inspection</h2></div>
+        <div className="card-body space-y-2">
+          {(inspectionsQuery.data?.items ?? []).length === 0 ? (
+            <p className="text-sm text-slate-500">No inspection for this visit yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {inspectionsQuery.data!.items.map((insp) => (
+                <Link key={insp.id} href={`/inspections/${insp.id}`} className="flex items-center justify-between border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300">
+                  <span className="font-mono text-xs font-semibold text-blue-600">{insp.inspectionNumber}</span>
+                  <StatusBadge status={insp.status} />
+                </Link>
+              ))}
+            </div>
+          )}
+          {canInspect && (
+            <>
+              {startInspection.isError && <p className="text-xs text-red-600">{startInspection.error instanceof Error ? startInspection.error.message : 'Failed to start inspection'}</p>}
+              <button onClick={() => startInspection.mutate()} disabled={startInspection.isPending} className="btn-secondary text-xs">
+                {startInspection.isPending ? 'Starting...' : 'Start Visual Inspection'}
+              </button>
+            </>
           )}
         </div>
       </div>
