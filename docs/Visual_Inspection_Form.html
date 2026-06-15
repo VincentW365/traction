@@ -16,64 +16,60 @@
   :root { --g:#16a34a; --y:#eab308; --r:#dc2626; --ink:#111827; --line:#94a3b8; }
   * { box-sizing: border-box; }
   body { font-family: "Segoe UI", Calibri, Arial, sans-serif; color: var(--ink); margin: 0; background: #e2e8f0; }
-  .sheet { background: #fff; max-width: 1000px; margin: 16px auto; padding: 18px 22px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
-  .toolbar { max-width: 1000px; margin: 12px auto 0; display: flex; justify-content: flex-end; gap: 8px; }
-  .btn { font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 6px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; }
+  .sheet { background: #fff; max-width: 1040px; margin: 16px auto; padding: 22px 28px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+  .toolbar { max-width: 1040px; margin: 12px auto 0; display: flex; justify-content: flex-end; gap: 8px; }
+  .btn { font: inherit; font-size: 14px; padding: 8px 16px; border-radius: 6px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; }
   .btn.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
 
-  .brand { display: flex; justify-content: space-between; align-items: baseline; font-size: 10px; color: #475569; letter-spacing: .04em; }
-  h1 { text-align: center; font-size: 22px; letter-spacing: .02em; margin: 2px 0 6px; border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink); padding: 4px 0; }
+  .brand { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: #475569; letter-spacing: .04em; }
+  h1 { text-align: center; font-size: 26px; letter-spacing: .02em; margin: 4px 0 8px; border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink); padding: 6px 0; }
 
-  .fields { font-size: 11px; }
-  .fields .frow { display: flex; gap: 18px; margin: 5px 0; }
+  .fields { font-size: 13px; }
+  .fields .frow { display: flex; gap: 20px; margin: 9px 0; }
   .fld { flex: 1; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
   .fld label { color: #475569; }
-  .fld input { flex: 1; border: none; border-bottom: 1px solid var(--line); font: inherit; font-size: 11px; padding: 1px 2px; min-width: 40px; }
-  .vin { display: inline-flex; gap: 2px; }
-  .vin input { width: 16px; height: 18px; border: 1px solid var(--line); text-align: center; font-size: 10px; padding: 0; }
+  .fld input { flex: 1; border: none; border-bottom: 1px solid var(--line); font: inherit; font-size: 13px; padding: 4px 2px; min-width: 40px; }
+  .vin { display: inline-flex; gap: 3px; }
+  .vin input { width: 21px; height: 26px; border: 1px solid var(--line); text-align: center; font-size: 13px; padding: 0; }
 
-  .legend { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 10px 0 8px; }
-  .lg { color: #fff; font-weight: 700; font-size: 11px; text-align: center; padding: 3px 4px; border-radius: 2px; }
+  .legend { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 13px 0 10px; }
+  .lg { color: #fff; font-weight: 700; font-size: 13px; text-align: center; padding: 6px 4px; border-radius: 2px; }
   .lg.g { background: var(--g); } .lg.y { background: var(--y); color:#3b2f00; } .lg.r { background: var(--r); }
 
-  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
-  .section { background: var(--ink); color: #fff; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 3px 8px; margin: 8px 0 0; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  .section { background: var(--ink); color: #fff; font-weight: 700; font-size: 13.5px; text-transform: uppercase; letter-spacing: .03em; padding: 6px 10px; margin: 12px 0 0; }
   .grid { border: 1px solid #cbd5e1; border-top: none; }
-  .row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-bottom: 1px solid #eef2f7; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 5.5px 9px; border-bottom: 1px solid #eef2f7; }
   .row:last-child { border-bottom: none; }
-  .cks { display: inline-flex; gap: 5px; flex: 0 0 auto; }
-  .lbl { font-size: 10.5px; line-height: 1.15; }
+  .cks { display: inline-flex; gap: 7px; flex: 0 0 auto; }
+  .lbl { font-size: 13px; line-height: 1.25; }
 
-  input.ck { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border: 2px solid; border-radius: 2px; cursor: pointer; margin: 0; position: relative; }
+  input.ck { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border: 2px solid; border-radius: 3px; cursor: pointer; margin: 0; position: relative; }
   input.ck.g { border-color: var(--g); } input.ck.y { border-color: var(--y); } input.ck.r { border-color: var(--r); }
   input.ck.g:checked { background: var(--g); } input.ck.y:checked { background: var(--y); } input.ck.r:checked { background: var(--r); }
-  input.ck:checked::after { content: "✓"; position: absolute; inset: 0; color: #fff; font-size: 11px; line-height: 13px; text-align: center; }
+  input.ck:checked::after { content: "✓"; position: absolute; inset: 0; color: #fff; font-size: 15px; line-height: 18px; text-align: center; }
   input.ck.y:checked::after { color: #3b2f00; }
 
-  .blk { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10.5px; }
-  .inline { border: none; border-bottom: 1px solid var(--line); font: inherit; font-size: 10.5px; width: 46px; text-align: center; }
-  .wheelgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .wheel { border: 1px solid #cbd5e1; padding: 5px 6px; font-size: 10px; }
-  .wheel h4 { margin: 0 0 3px; font-size: 10px; color: #475569; display: flex; justify-content: space-between; }
-  .wheel .ln { display: flex; align-items: center; gap: 4px; margin: 2px 0; }
-  .chip { display: inline-flex; gap: 4px; margin-right: 4px; }
-  .damage { border: 1px solid #cbd5e1; min-height: 120px; display: flex; justify-content: center; align-items: center; padding: 8px; }
-  .cardiag { max-width: 100%; max-height: 220px; height: auto; display: block; }
+  .blk { border: 1px solid #cbd5e1; padding: 10px 11px; font-size: 13px; line-height: 2; }
+  .inline { border: none; border-bottom: 1px solid var(--line); font: inherit; font-size: 13px; width: 60px; text-align: center; }
+  .wheelgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .wheel { border: 1px solid #cbd5e1; padding: 8px 9px; font-size: 12.5px; }
+  .wheel h4 { margin: 0 0 6px; font-size: 12.5px; color: #475569; display: flex; justify-content: space-between; align-items: center; }
+  .wheel .ln { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+  .chip { display: inline-flex; gap: 6px; margin-right: 4px; }
+  .damage { border: 1px solid #cbd5e1; min-height: 150px; display: flex; justify-content: center; align-items: center; padding: 8px; }
+  .cardiag { max-width: 100%; max-height: 200px; height: auto; display: block; }
   .dbox { border: 1px dashed #94a3b8; min-height: 52px; border-radius: 4px; font-size: 9px; color: #94a3b8; padding: 2px 4px; }
-  /* Tire illustration centered over the brake/tire wheel grid (as in the reference form).
-     mix-blend-mode:multiply drops the image's white background so the linework blends in. */
-  .wheelwrap { position: relative; }
-  .tire { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 104px; height: auto; pointer-events: none; mix-blend-mode: multiply; opacity: .9; }
   .lines { border: 1px solid #cbd5e1; padding: 8px; }
-  .lines .l { border-bottom: 1px solid var(--line); height: 20px; }
-  .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 10px; font-size: 10px; }
-  .sigline { border-top: 1px solid var(--ink); padding-top: 2px; }
+  .lines .l { border-bottom: 1px solid var(--line); height: 26px; }
+  .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 10px; font-size: 12.5px; }
+  .sigline { border-top: 1px solid var(--ink); padding-top: 3px; }
 
   @media print {
     body { background: #fff; } .toolbar { display: none; }
     .sheet { box-shadow: none; margin: 0; max-width: none; padding: 0; }
     .lg, .section, input.ck:checked { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    @page { size: A4; margin: 10mm; }
+    @page { size: A4; margin: 8mm; }
     aside { display: none !important; }
   }
 </style>
@@ -136,12 +132,9 @@
         </div>
 
         <div class="section">Brake and Tire</div>
-        <div class="wheelwrap">
-          <div class="wheelgrid">
-            <div class="wheel" data-wheel></div><div class="wheel" data-wheel></div>
-            <div class="wheel" data-wheel></div><div class="wheel" data-wheel></div>
-          </div>
-          <img class="tire" src="../tire.webp" alt="Tire">
+        <div class="wheelgrid">
+          <div class="wheel" data-wheel></div><div class="wheel" data-wheel></div>
+          <div class="wheel" data-wheel></div><div class="wheel" data-wheel></div>
         </div>
         <div class="blk">
           <span class="chip"><input class="ck y" type="checkbox"></span> Alignment Check Needed &nbsp;
