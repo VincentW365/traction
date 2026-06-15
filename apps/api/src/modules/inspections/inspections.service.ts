@@ -7,6 +7,9 @@ import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { UpdateInspectionDto } from './dto/update-inspection.dto';
 import { AddRecommendationDto } from './dto/add-recommendation.dto';
 import { InspectionQueryDto } from './dto/inspection-query.dto';
+import { SignoffInspectionDto } from './dto/signoff-inspection.dto';
+import { DecideRecommendationDto } from './dto/decide-recommendation.dto';
+import { CustomerSignoffDto } from './dto/customer-signoff.dto';
 
 const ENTITY = 'VehicleInspection';
 const ALL_WHEELS: WheelPosition[] = ['LEFT_FRONT', 'RIGHT_FRONT', 'LEFT_REAR', 'RIGHT_REAR'];
@@ -250,6 +253,91 @@ export class InspectionsService {
     await this.statusHistory.record({ entityType: ENTITY, entityId: id, fromStatus: existing.status, toStatus: 'CANCELLED', changedByUserId: actor.sub });
     await this.audit.log({ actorUserId: actor.sub, action: AUDIT_ACTIONS.INSPECTION_CANCELLED, entityType: ENTITY, entityId: id, beforeJson: { status: existing.status }, afterJson: { status: 'CANCELLED' }, reasonCode: 'INSPECTION_CANCEL' });
 
+    return this.findById(id, actor);
+  }
+
+  // ─── C-3: sign-off + customer decisions (results are immutable once SIGNED_OFF — the
+  // DRAFT-only guards on update()/addRecommendation() enforce that) ────────────
+
+  /** Senior-tech sign-off: COMPLETED → SIGNED_OFF + typed acknowledgment signature. */
+  async signoff(id: string, actor: InspectionActor, dto: SignoffInspectionDto) {
+    const existing = await this.prisma.vehicleInspection.findUnique({ where: { id }, select: { id: true, siteId: true } });
+    if (!existing) throw new NotFoundException('Inspection not found');
+    this.assertSameSite(existing.siteId, actor);
+    const typedName = dto.typedName?.trim();
+    if (!typedName) throw new BadRequestException('A typed acknowledgment name is required to sign off');
+
+    // Status flip + signature are atomic; the conditional updateMany is the race guard.
+    await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.vehicleInspection.updateMany({
+        where: { id, status: 'COMPLETED' },
+        data: { status: 'SIGNED_OFF', signedOffByUserId: actor.sub, signedOffAt: new Date() },
+      });
+      if (count === 0) throw new BadRequestException('Inspection must be COMPLETED to sign off');
+      await tx.inspectionSignature.create({
+        data: { inspectionId: id, role: 'SENIOR_TECH', type: 'TYPED', typedName, signedByUserId: actor.sub },
+      });
+    });
+
+    await this.statusHistory.record({ entityType: ENTITY, entityId: id, fromStatus: 'COMPLETED', toStatus: 'SIGNED_OFF', changedByUserId: actor.sub });
+    await this.audit.log({ actorUserId: actor.sub, action: AUDIT_ACTIONS.INSPECTION_SIGNED_OFF, entityType: ENTITY, entityId: id, afterJson: { status: 'SIGNED_OFF' }, reasonCode: 'INSPECTION_SIGNOFF' });
+    return this.findById(id, actor);
+  }
+
+  /** Record the customer's decision on a recommendation (only while SIGNED_OFF). */
+  async decideRecommendation(id: string, recommendationId: string, actor: InspectionActor, dto: DecideRecommendationDto) {
+    const existing = await this.prisma.vehicleInspection.findUnique({ where: { id }, select: { id: true, siteId: true, status: true } });
+    if (!existing) throw new NotFoundException('Inspection not found');
+    this.assertSameSite(existing.siteId, actor);
+    if (existing.status !== 'SIGNED_OFF') throw new BadRequestException('Decisions can only be recorded after sign-off and before close');
+
+    const rec = await this.prisma.inspectionRecommendation.findFirst({ where: { id: recommendationId, inspectionId: id }, select: { id: true } });
+    if (!rec) throw new NotFoundException('Recommendation not found for this inspection');
+
+    const updated = await this.prisma.inspectionRecommendation.update({
+      where: { id: recommendationId },
+      data: { customerDecision: dto.decision, decisionByUserId: actor.sub, decisionAt: new Date() },
+    });
+    await this.audit.log({
+      actorUserId: actor.sub,
+      action: AUDIT_ACTIONS.INSPECTION_RECOMMENDATION_DECISION,
+      entityType: ENTITY,
+      entityId: id,
+      afterJson: { recommendationId, decision: dto.decision },
+      reasonCode: 'INSPECTION_REC_DECISION',
+    });
+    return updated;
+  }
+
+  /** Customer sign-off: SIGNED_OFF → CLOSED + customer signature (drawn or typed). */
+  async customerSignoff(id: string, actor: InspectionActor, dto: CustomerSignoffDto) {
+    const existing = await this.prisma.vehicleInspection.findUnique({ where: { id }, select: { id: true, siteId: true } });
+    if (!existing) throw new NotFoundException('Inspection not found');
+    this.assertSameSite(existing.siteId, actor);
+    const typedName = dto.typedName?.trim();
+    if (dto.type === 'DRAWN' && !dto.imageData) throw new BadRequestException('A drawn signature image is required');
+    if (dto.type === 'TYPED' && !typedName) throw new BadRequestException('A typed name is required');
+
+    await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.vehicleInspection.updateMany({
+        where: { id, status: 'SIGNED_OFF' },
+        data: { status: 'CLOSED', customerAckByUserId: actor.sub, customerAckAt: new Date() },
+      });
+      if (count === 0) throw new BadRequestException('Inspection must be SIGNED_OFF before customer sign-off');
+      await tx.inspectionSignature.create({
+        data: {
+          inspectionId: id,
+          role: 'CUSTOMER',
+          type: dto.type,
+          typedName: dto.type === 'TYPED' ? typedName : null,
+          imageData: dto.type === 'DRAWN' ? dto.imageData : null,
+          signedByUserId: actor.sub,
+        },
+      });
+    });
+
+    await this.statusHistory.record({ entityType: ENTITY, entityId: id, fromStatus: 'SIGNED_OFF', toStatus: 'CLOSED', changedByUserId: actor.sub });
+    await this.audit.log({ actorUserId: actor.sub, action: AUDIT_ACTIONS.INSPECTION_CUSTOMER_SIGNED, entityType: ENTITY, entityId: id, afterJson: { status: 'CLOSED', signatureType: dto.type }, reasonCode: 'INSPECTION_CUSTOMER_SIGNOFF' });
     return this.findById(id, actor);
   }
 }

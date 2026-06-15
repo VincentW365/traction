@@ -83,6 +83,8 @@ export const PERMISSIONS = {
   INSPECTION_VIEW: 'inspection:view',
   INSPECTION_CREATE: 'inspection:create',
   INSPECTION_EDIT: 'inspection:edit',
+  INSPECTION_SIGNOFF: 'inspection:signoff', // senior-tech sign-off (ADMIN/MANAGER in v1)
+  INSPECTION_DECISION: 'inspection:decision', // record customer decisions + customer sign-off
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -104,8 +106,9 @@ const FRONT_DESK_PERMISSIONS: PermissionKey[] = [
   // Complaints: front desk + advisor + manager can log and view (CR-2026-032)
   PERMISSIONS.COMPLAINT_CREATE,
   PERMISSIONS.COMPLAINT_VIEW,
-  // Inspections: front desk can view (CR-2026-034)
+  // Inspections: front desk can view + record customer decisions/sign-off (CR-2026-034)
   PERMISSIONS.INSPECTION_VIEW,
+  PERMISSIONS.INSPECTION_DECISION,
 ];
 
 const SERVICE_ADVISOR_PERMISSIONS: PermissionKey[] = [
@@ -163,6 +166,8 @@ const MANAGER_PERMISSIONS: PermissionKey[] = [
   // Complaints: managers acknowledge/resolve/edit (CR-2026-032)
   PERMISSIONS.COMPLAINT_MANAGE,
   PERMISSIONS.COMPLAINT_RESOLVE,
+  // Inspections: managers (senior gate) sign off (CR-2026-034)
+  PERMISSIONS.INSPECTION_SIGNOFF,
 ];
 
 export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {

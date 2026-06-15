@@ -5,6 +5,9 @@ import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { UpdateInspectionDto } from './dto/update-inspection.dto';
 import { AddRecommendationDto } from './dto/add-recommendation.dto';
 import { InspectionQueryDto } from './dto/inspection-query.dto';
+import { SignoffInspectionDto } from './dto/signoff-inspection.dto';
+import { DecideRecommendationDto } from './dto/decide-recommendation.dto';
+import { CustomerSignoffDto } from './dto/customer-signoff.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -73,5 +76,33 @@ export class InspectionsController {
   @ApiOperation({ summary: 'Cancel a DRAFT or COMPLETED inspection' })
   cancel(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.service.cancel(id, user);
+  }
+
+  // ─── C-3: sign-off + customer decisions ──────────────────────────────────────
+
+  @Post(':id/signoff')
+  @RequirePermission(PERMISSIONS.INSPECTION_SIGNOFF)
+  @ApiOperation({ summary: 'Senior-tech sign-off (COMPLETED → SIGNED_OFF; locks results)' })
+  signoff(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SignoffInspectionDto, @CurrentUser() user: JwtPayload) {
+    return this.service.signoff(id, user, dto);
+  }
+
+  @Patch(':id/recommendations/:rid/decision')
+  @RequirePermission(PERMISSIONS.INSPECTION_DECISION)
+  @ApiOperation({ summary: 'Record the customer decision on a recommendation (APPROVED/DECLINED/DEFERRED)' })
+  decide(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('rid', ParseUUIDPipe) rid: string,
+    @Body() dto: DecideRecommendationDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.decideRecommendation(id, rid, user, dto);
+  }
+
+  @Post(':id/customer-signoff')
+  @RequirePermission(PERMISSIONS.INSPECTION_DECISION)
+  @ApiOperation({ summary: 'Capture customer sign-off (drawn or typed) → CLOSED' })
+  customerSignoff(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CustomerSignoffDto, @CurrentUser() user: JwtPayload) {
+    return this.service.customerSignoff(id, user, dto);
   }
 }
