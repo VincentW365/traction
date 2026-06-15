@@ -13,6 +13,13 @@ export const envSchema = z.object({
   NOTIFICATION_PROVIDER: z
     .enum(['stub', 'twilio', 'sendgrid'])
     .default('stub'),
+  // CR-2026-033 — Twilio SMS credentials. Optional in the schema; the provider
+  // factory requires SID + token + (from-number OR messaging-service-sid) only
+  // when NOTIFICATION_PROVIDER=twilio. Never committed — set in env/.env.
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_FROM_NUMBER: z.string().optional(),
+  TWILIO_MESSAGING_SERVICE_SID: z.string().optional(),
   // VIN decode: STUB (no outbound calls) by default; LIVE opt-in enables NHTSA vPIC.
   VIN_DECODE_PROVIDER: z.enum(['STUB', 'LIVE']).default('STUB'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),

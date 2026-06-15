@@ -40,6 +40,7 @@
     "reflect-metadata": "^0.2",
     "rxjs": "^7",
     "socket.io": "^4",
+    "twilio": "^6.0.2",
     "zod": "^3"
   },
   "devDependencies": {
