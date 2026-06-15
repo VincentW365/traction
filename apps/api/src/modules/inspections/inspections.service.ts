@@ -3,6 +3,8 @@ import { Prisma, WheelPosition } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { StatusHistoryService } from '../audit/status-history.service';
+import { ServiceOrdersService } from '../service-orders/service-orders.service';
+import { ToWorkOrderDto } from './dto/to-work-order.dto';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { UpdateInspectionDto } from './dto/update-inspection.dto';
 import { AddRecommendationDto } from './dto/add-recommendation.dto';
@@ -45,6 +47,7 @@ export class InspectionsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly statusHistory: StatusHistoryService,
+    private readonly serviceOrders: ServiceOrdersService,
   ) {}
 
   private assertSameSite(siteId: string, actor: InspectionActor): void {
@@ -339,5 +342,55 @@ export class InspectionsService {
     await this.statusHistory.record({ entityType: ENTITY, entityId: id, fromStatus: 'SIGNED_OFF', toStatus: 'CLOSED', changedByUserId: actor.sub });
     await this.audit.log({ actorUserId: actor.sub, action: AUDIT_ACTIONS.INSPECTION_CUSTOMER_SIGNED, entityType: ENTITY, entityId: id, afterJson: { status: 'CLOSED', signatureType: dto.type }, reasonCode: 'INSPECTION_CUSTOMER_SIGNOFF' });
     return this.findById(id, actor);
+  }
+
+  // ─── C-5: turn an APPROVED recommendation into follow-up service work ─────────
+
+  /**
+   * Reuses the existing service-orders create path to make a DRAFT ServiceOrder
+   * (one item, by service-type code) for the visit, and soft-links it back on the
+   * recommendation. Does NOT modify the service-order flow; the original inspection
+   * result is untouched (only the recommendation gains result* links).
+   */
+  async recommendationToWorkOrder(id: string, recommendationId: string, actor: InspectionActor, dto: ToWorkOrderDto) {
+    const inspection = await this.prisma.vehicleInspection.findUnique({
+      where: { id },
+      select: { id: true, siteId: true, status: true, serviceVisitId: true, inspectionNumber: true },
+    });
+    if (!inspection) throw new NotFoundException('Inspection not found');
+    this.assertSameSite(inspection.siteId, actor);
+    if (!['SIGNED_OFF', 'CLOSED'].includes(inspection.status)) {
+      throw new BadRequestException('Recommendations can be converted to work only after sign-off');
+    }
+
+    const rec = await this.prisma.inspectionRecommendation.findFirst({ where: { id: recommendationId, inspectionId: id } });
+    if (!rec) throw new NotFoundException('Recommendation not found for this inspection');
+    if (rec.customerDecision !== 'APPROVED') throw new BadRequestException('Only APPROVED recommendations can become work');
+    if (rec.resultingServiceOrderItemId) throw new BadRequestException('This recommendation is already linked to work');
+
+    const serviceTypeCode = (dto.serviceTypeCode ?? rec.suggestedServiceTypeCode ?? '').trim();
+    if (!serviceTypeCode) throw new BadRequestException('A service type code is required to create work');
+
+    // Reuse the normal service-order creation flow (new DRAFT order with this item).
+    const order = await this.serviceOrders.create(
+      { serviceVisitId: inspection.serviceVisitId, items: [{ serviceTypeCode, notes: `From inspection ${inspection.inspectionNumber}: ${rec.description}` }] },
+      actor.sub,
+    );
+    const itemId = order.items?.[0]?.id ?? null;
+
+    const updated = await this.prisma.inspectionRecommendation.update({
+      where: { id: recommendationId },
+      data: { resultingServiceOrderId: order.id, resultingServiceOrderItemId: itemId },
+    });
+
+    await this.audit.log({
+      actorUserId: actor.sub,
+      action: AUDIT_ACTIONS.INSPECTION_REC_TO_WORK_ORDER,
+      entityType: ENTITY,
+      entityId: id,
+      afterJson: { recommendationId, serviceOrderId: order.id, serviceOrderItemId: itemId, serviceTypeCode },
+      reasonCode: 'INSPECTION_REC_TO_WORK_ORDER',
+    });
+    return updated;
   }
 }

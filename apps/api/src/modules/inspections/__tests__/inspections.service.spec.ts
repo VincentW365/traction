@@ -42,8 +42,9 @@ function build(over: { inspection?: any; visit?: any; template?: any; updateMany
   };
   const audit = { log: vi.fn(async () => ({})) };
   const statusHistory = { record: vi.fn(async () => ({})), findByEntity: vi.fn(async () => []) };
-  const service = new InspectionsService(prisma as any, audit as any, statusHistory as any);
-  return { service, prisma, tx, audit, statusHistory };
+  const serviceOrders = { create: vi.fn(async () => ({ id: 'so1', items: [{ id: 'soi1' }] })) };
+  const service = new InspectionsService(prisma as any, audit as any, statusHistory as any, serviceOrders as any);
+  return { service, prisma, tx, audit, statusHistory, serviceOrders };
 }
 
 const MGR = { sub: 'm1', siteId: 'site1', role: 'MANAGER' };

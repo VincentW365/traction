@@ -13,7 +13,7 @@ import { SignaturePad } from '../../../../components/signature-pad';
 
 interface InspItem { id: string; category: string; label: string; orderIndex: number; result: string; note: string | null }
 interface Wheel { id: string; position: string; brakeLiningMm: number | null; tireTread32nds: number | null; wearPattern: string | null; tirePressureBeforePsi: number | null; tirePressureAfterPsi: number | null; rotorOrDrum: string | null }
-interface Rec { id: string; severity: string; description: string; suggestedServiceTypeCode: string | null; customerDecision: string; inspectionItemId: string | null }
+interface Rec { id: string; severity: string; description: string; suggestedServiceTypeCode: string | null; customerDecision: string; inspectionItemId: string | null; resultingServiceOrderItemId: string | null }
 interface Sig { id: string; role: string; type: string; typedName: string | null; imageData: string | null; signedAt: string }
 interface TimelineRow { id: string; fromStatus: string | null; toStatus: string; changedAt: string; changedBy: { fullName: string } | null }
 interface Inspection {
@@ -135,6 +135,10 @@ export default function InspectionDetailPage() {
   const signoff = useMutation({ mutationFn: () => api.post(`/inspections/${id}/signoff`, { typedName: signoffName.trim() }), onSuccess: () => { setSignoffName(''); invalidate(); } });
   const decide = useMutation({
     mutationFn: (v: { rid: string; decision: string }) => api.patch(`/inspections/${id}/recommendations/${v.rid}/decision`, { decision: v.decision }),
+    onSuccess: invalidate,
+  });
+  const toWorkOrder = useMutation({
+    mutationFn: (rid: string) => api.post(`/inspections/${id}/recommendations/${rid}/to-work-order`, {}),
     onSuccess: invalidate,
   });
   const customerSignoff = useMutation({
@@ -266,14 +270,21 @@ export default function InspectionDetailPage() {
                 <span className={`badge mr-2 ${r.severity === 'IMMEDIATE' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>{r.severity}</span>
                 {r.description}{r.suggestedServiceTypeCode ? <span className="text-xs text-slate-400 ml-1">({r.suggestedServiceTypeCode})</span> : ''}
               </div>
-              <div className="flex items-center gap-1">
-                {c.status === 'SIGNED_OFF' && canDecision ? (
-                  ['APPROVED', 'DECLINED', 'DEFERRED'].map((d) => (
-                    <button key={d} onClick={() => decide.mutate({ rid: r.id, decision: d })} disabled={decide.isPending}
-                      className={`text-[11px] px-2 py-1 rounded border ${r.customerDecision === d ? 'bg-blue-600 text-white border-transparent' : 'bg-white text-slate-500 border-slate-200'}`}>{d}</button>
-                  ))
-                ) : (
-                  <span className="badge bg-slate-100 text-slate-600">{r.customerDecision}</span>
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-1">
+                  {c.status === 'SIGNED_OFF' && canDecision ? (
+                    ['APPROVED', 'DECLINED', 'DEFERRED'].map((d) => (
+                      <button key={d} onClick={() => decide.mutate({ rid: r.id, decision: d })} disabled={decide.isPending}
+                        className={`text-[11px] px-2 py-1 rounded border ${r.customerDecision === d ? 'bg-blue-600 text-white border-transparent' : 'bg-white text-slate-500 border-slate-200'}`}>{d}</button>
+                    ))
+                  ) : (
+                    <span className="badge bg-slate-100 text-slate-600">{r.customerDecision}</span>
+                  )}
+                </div>
+                {r.customerDecision === 'APPROVED' && (c.status === 'SIGNED_OFF' || c.status === 'CLOSED') && canDecision && (
+                  r.resultingServiceOrderItemId
+                    ? <span className="text-[11px] text-emerald-600">✓ In work order</span>
+                    : <button onClick={() => toWorkOrder.mutate(r.id)} disabled={toWorkOrder.isPending} className="text-[11px] text-blue-600 hover:underline">Add to work order</button>
                 )}
               </div>
             </div>

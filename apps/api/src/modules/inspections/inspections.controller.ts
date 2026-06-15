@@ -8,6 +8,7 @@ import { InspectionQueryDto } from './dto/inspection-query.dto';
 import { SignoffInspectionDto } from './dto/signoff-inspection.dto';
 import { DecideRecommendationDto } from './dto/decide-recommendation.dto';
 import { CustomerSignoffDto } from './dto/customer-signoff.dto';
+import { ToWorkOrderDto } from './dto/to-work-order.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -104,5 +105,17 @@ export class InspectionsController {
   @ApiOperation({ summary: 'Capture customer sign-off (drawn or typed) → CLOSED' })
   customerSignoff(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CustomerSignoffDto, @CurrentUser() user: JwtPayload) {
     return this.service.customerSignoff(id, user, dto);
+  }
+
+  @Post(':id/recommendations/:rid/to-work-order')
+  @RequirePermission(PERMISSIONS.INSPECTION_DECISION)
+  @ApiOperation({ summary: 'Turn an APPROVED recommendation into a service-order item (C-5)' })
+  toWorkOrder(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('rid', ParseUUIDPipe) rid: string,
+    @Body() dto: ToWorkOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.recommendationToWorkOrder(id, rid, user, dto);
   }
 }

@@ -8,7 +8,7 @@ import { InspectionsService } from '../inspections.service';
  */
 function build(over: { inspection?: any; txUpdateCount?: number; rec?: any } = {}) {
   const inspection = 'inspection' in over ? over.inspection : {
-    id: 'insp1', siteId: 'site1', status: 'SIGNED_OFF',
+    id: 'insp1', siteId: 'site1', status: 'SIGNED_OFF', serviceVisitId: 'v1', inspectionNumber: 'INS-000001',
     items: [], wheelMeasurements: [], recommendations: [], signatures: [], customer: null, vehicle: null, serviceVisit: null,
   };
   const tx: any = {
@@ -25,8 +25,9 @@ function build(over: { inspection?: any; txUpdateCount?: number; rec?: any } = {
   };
   const audit = { log: vi.fn(async () => ({})) };
   const statusHistory = { record: vi.fn(async () => ({})), findByEntity: vi.fn(async () => []) };
-  const service = new InspectionsService(prisma as any, audit as any, statusHistory as any);
-  return { service, prisma, tx, audit, statusHistory };
+  const serviceOrders = { create: vi.fn(async () => ({ id: 'so1', items: [{ id: 'soi1' }] })) };
+  const service = new InspectionsService(prisma as any, audit as any, statusHistory as any, serviceOrders as any);
+  return { service, prisma, tx, audit, statusHistory, serviceOrders };
 }
 
 const MGR = { sub: 'm1', siteId: 'site1', role: 'MANAGER' };
@@ -105,5 +106,43 @@ describe('InspectionsService immutability after sign-off (C-3)', () => {
   it('update() is rejected once SIGNED_OFF (results locked)', async () => {
     const h = build({ inspection: { id: 'insp1', siteId: 'site1', status: 'SIGNED_OFF' } });
     await expect(h.service.update('insp1', { comments: 'x' } as any, MGR)).rejects.toThrow(/DRAFT/);
+  });
+});
+
+describe('InspectionsService.recommendationToWorkOrder (C-5)', () => {
+  const approvedRec = { id: 'rec1', inspectionId: 'insp1', customerDecision: 'APPROVED', suggestedServiceTypeCode: 'OIL-01', resultingServiceOrderItemId: null, description: 'Worn pads' };
+
+  it('creates a service order via the existing path and links the recommendation + audits', async () => {
+    const h = build({ rec: approvedRec });
+    await h.service.recommendationToWorkOrder('insp1', 'rec1', MGR, {} as any);
+    expect(h.serviceOrders.create).toHaveBeenCalledWith(
+      expect.objectContaining({ serviceVisitId: 'v1', items: [expect.objectContaining({ serviceTypeCode: 'OIL-01' })] }),
+      'm1',
+    );
+    expect(h.prisma.inspectionRecommendation.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ resultingServiceOrderId: 'so1', resultingServiceOrderItemId: 'soi1' }) }),
+    );
+    expect(h.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'INSPECTION_REC_TO_WORK_ORDER' }));
+  });
+
+  it('rejects a non-approved recommendation (no order created)', async () => {
+    const h = build({ rec: { ...approvedRec, customerDecision: 'PENDING' } });
+    await expect(h.service.recommendationToWorkOrder('insp1', 'rec1', MGR, {} as any)).rejects.toThrow(/APPROVED/);
+    expect(h.serviceOrders.create).not.toHaveBeenCalled();
+  });
+
+  it('requires a service type code (errors when none suggested/provided)', async () => {
+    const h = build({ rec: { ...approvedRec, suggestedServiceTypeCode: null } });
+    await expect(h.service.recommendationToWorkOrder('insp1', 'rec1', MGR, {} as any)).rejects.toThrow(/service type code/);
+  });
+
+  it('rejects when already linked to work', async () => {
+    const h = build({ rec: { ...approvedRec, resultingServiceOrderItemId: 'soi0' } });
+    await expect(h.service.recommendationToWorkOrder('insp1', 'rec1', MGR, {} as any)).rejects.toThrow(/already linked/);
+  });
+
+  it('rejects before sign-off', async () => {
+    const h = build({ inspection: { id: 'insp1', siteId: 'site1', status: 'DRAFT', serviceVisitId: 'v1', inspectionNumber: 'INS-1' }, rec: approvedRec });
+    await expect(h.service.recommendationToWorkOrder('insp1', 'rec1', MGR, {} as any)).rejects.toThrow(/after sign-off/);
   });
 });
