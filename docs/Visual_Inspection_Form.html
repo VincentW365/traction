@@ -60,9 +60,10 @@
   .damage { border: 1px solid #cbd5e1; min-height: 120px; display: flex; justify-content: center; align-items: center; padding: 8px; }
   .cardiag { max-width: 100%; max-height: 220px; height: auto; display: block; }
   .dbox { border: 1px dashed #94a3b8; min-height: 52px; border-radius: 4px; font-size: 9px; color: #94a3b8; padding: 2px 4px; }
-  /* Tire illustration centered over the brake/tire wheel grid (as in the reference form) */
+  /* Tire illustration centered over the brake/tire wheel grid (as in the reference form).
+     mix-blend-mode:multiply drops the image's white background so the linework blends in. */
   .wheelwrap { position: relative; }
-  .tire { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 120px; height: auto; pointer-events: none; }
+  .tire { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 104px; height: auto; pointer-events: none; mix-blend-mode: multiply; opacity: .9; }
   .lines { border: 1px solid #cbd5e1; padding: 8px; }
   .lines .l { border-bottom: 1px solid var(--line); height: 20px; }
   .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 10px; font-size: 10px; }
