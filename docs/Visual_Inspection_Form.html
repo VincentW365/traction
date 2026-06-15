@@ -49,6 +49,11 @@
   input.ck.g:checked { background: var(--g); } input.ck.y:checked { background: var(--y); } input.ck.r:checked { background: var(--r); }
   input.ck:checked::after { content: "✓"; position: absolute; inset: 0; color: #fff; font-size: 15px; line-height: 18px; text-align: center; }
   input.ck.y:checked::after { color: #3b2f00; }
+  /* Black-and-white friendly: each O/F/I triad box shows its letter so the three columns are
+     identifiable from the LETTER, not the colour. Standalone boxes (Pass/Fail, Rotor/Drum) stay blank. */
+  input.ck.tri::after { content: attr(data-l); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #475569; }
+  input.ck.tri:checked::after { content: "✓"; color: #fff; font-size: 15px; }
+  input.ck.tri.y:checked::after { color: #3b2f00; }
 
   .blk { border: 1px solid #cbd5e1; padding: 10px 11px; font-size: 13px; line-height: 2; }
   .inline { border: none; border-bottom: 1px solid var(--line); font: inherit; font-size: 13px; width: 60px; text-align: center; }
@@ -104,9 +109,9 @@
     </div>
 
     <div class="legend">
-      <div class="lg g">CHECKED AND OKAY</div>
-      <div class="lg y">MAY NEED FUTURE ATTENTION</div>
-      <div class="lg r">REQUIRES IMMEDIATE ATTENTION</div>
+      <div class="lg g">O = CHECKED AND OKAY</div>
+      <div class="lg y">F = MAY NEED FUTURE ATTENTION</div>
+      <div class="lg r">I = REQUIRES IMMEDIATE ATTENTION</div>
     </div>
 
     <div class="cols">
@@ -186,7 +191,7 @@
   };
   function row(label) {
     return '<div class="row"><span class="cks">' +
-      '<input class="ck g" type="checkbox"><input class="ck y" type="checkbox"><input class="ck r" type="checkbox">' +
+      '<input class="ck tri g" type="checkbox" data-l="O"><input class="ck tri y" type="checkbox" data-l="F"><input class="ck tri r" type="checkbox" data-l="I">' +
       '</span><span class="lbl">' + label + '</span></div>';
   }
   for (const id in DATA) document.getElementById(id).innerHTML = DATA[id].map(row).join('');
@@ -194,7 +199,7 @@
   const WHEELS = ['Left Front', 'Right Front', 'Left Rear', 'Right Rear'];
   document.querySelectorAll('[data-wheel]').forEach((el, i) => {
     el.innerHTML =
-      '<h4><span>' + WHEELS[i] + '</span><span><input class="ck g" type="checkbox"><input class="ck y" type="checkbox"><input class="ck r" type="checkbox"></span></h4>' +
+      '<h4><span>' + WHEELS[i] + '</span><span><input class="ck tri g" type="checkbox" data-l="O"><input class="ck tri y" type="checkbox" data-l="F"><input class="ck tri r" type="checkbox" data-l="I"></span></h4>' +
       '<div class="ln">Brake Lining <input class="inline"> mm</div>' +
       '<div class="ln">Tire Tread <input class="inline"> 32nds</div>' +
       '<div class="ln">Wear Pattern <input class="inline" style="width:90px"></div>' +
