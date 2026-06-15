@@ -84,6 +84,20 @@ interface TechOption {
   userAccount: { fullName: string };
 }
 
+// CR-2026-035 — recommended technicians (advisory ranking).
+interface RecommendedTech {
+  technicianId: string;
+  employeeCode: string;
+  fullName: string;
+  openAssignments: number;
+  shiftStatus: string;
+  score: number;
+}
+interface RecommendedResult {
+  compatibleBays: Array<{ id: string; code: string; bayType: string }>;
+  technicians: RecommendedTech[];
+}
+
 const OVERRIDE_REASONS = ['CUSTOMER_REQUEST', 'MANAGER_ESCALATION', 'VIP', 'URGENT_REPAIR', 'OTHER'];
 const DISPATCHABLE_STATUSES = ['WAITING', 'ISSUED', 'PENDING_RANK', 'BLOCKED'];
 
@@ -210,6 +224,13 @@ export default function QueueTicketDetailPage() {
   const techsQuery = useQuery<TechOption[]>({
     queryKey: ['technicians-list', siteId],
     queryFn: () => api.get(`/technicians?siteId=${siteId}`),
+    enabled: !!assigningOrderId,
+  });
+
+  // CR-2026-035 — ranked recommendations for the order being assigned (advisory).
+  const recommendationsQuery = useQuery<RecommendedResult>({
+    queryKey: ['tech-recommendations', assigningOrderId],
+    queryFn: () => api.get(`/technicians/recommended/${assigningOrderId}`),
     enabled: !!assigningOrderId,
   });
 
@@ -749,6 +770,29 @@ export default function QueueTicketDetailPage() {
                   {/* Assign form (inline) */}
                   {assigningOrderId === order.id && (
                     <div className="mt-3 pt-3 border-t border-slate-100 space-y-2">
+                      {/* CR-2026-035 — recommended technicians (advisory; staff still confirm below) */}
+                      {recommendationsQuery.data && recommendationsQuery.data.technicians.length > 0 && (
+                        <div>
+                          <div className="input-label">Recommended</div>
+                          <div className="space-y-1">
+                            {recommendationsQuery.data.technicians.slice(0, 5).map((rt, idx) => (
+                              <div key={rt.technicianId} className={`flex items-center justify-between rounded px-2 py-1 text-xs border ${idx === 0 ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200'}`}>
+                                <span className="text-slate-700">
+                                  {idx === 0 ? '★ ' : ''}{rt.employeeCode} — {rt.fullName}
+                                  <span className="text-slate-400"> · load {rt.openAssignments} · {rt.shiftStatus.replace(/_/g, ' ').toLowerCase()} · score {rt.score}</span>
+                                </span>
+                                <button
+                                  onClick={() => { setAssignTechId(rt.technicianId); const bay = recommendationsQuery.data!.compatibleBays[0]; if (bay) setAssignBayId(bay.id); }}
+                                  className="btn-secondary text-[10px] py-0.5 px-1.5"
+                                >Use</button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {recommendationsQuery.data && recommendationsQuery.data.technicians.length === 0 && (
+                        <p className="text-[11px] text-amber-600">No active technicians match this order&apos;s required skills.</p>
+                      )}
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="input-label">Technician *</label>

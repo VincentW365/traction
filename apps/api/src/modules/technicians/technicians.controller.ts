@@ -72,6 +72,14 @@ export class TechniciansController {
     );
   }
 
+  // Declared BEFORE `:id` so the literal segment isn't captured as a technician id.
+  @Get('recommended/:serviceOrderId')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_ASSIGN)
+  @ApiOperation({ summary: 'Ranked recommended technicians for a service order (advisory; staff still confirm)' })
+  async getRecommended(@Param('serviceOrderId', ParseUUIDPipe) serviceOrderId: string) {
+    return this.techniciansService.getRecommendedTechnicians(serviceOrderId);
+  }
+
   @Get(':id')
   @RequirePermission(PERMISSIONS.QUEUE_VIEW)
   @ApiOperation({ summary: 'Get technician detail with skills' })

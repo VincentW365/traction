@@ -3,6 +3,10 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { AddSkillDto } from './dto/add-skill.dto';
 import { UpdateSkillDto } from './dto/update-skill.dto';
+import { matchResources } from '../scheduling/engine/resource.matcher';
+import type { VisitCandidate, DetailedSiteResources } from '../scheduling/engine/types';
+
+const OPEN_ASSIGNMENT_STATUSES = ['ASSIGNED', 'IN_PROGRESS'];
 
 @Injectable()
 export class TechniciansService {
@@ -150,6 +154,89 @@ export class TechniciansService {
         },
       },
     });
+  }
+
+  /**
+   * CR-2026-035 (Phase B) — ranked "recommended technicians" for a service order.
+   * Read-only / advisory: reuses the scheduling-engine matcher for skill candidacy,
+   * then adds current load + today's shift availability + a transparent score. Does
+   * NOT assign anything — staff still confirm via the existing assign endpoint, which
+   * remains the authoritative skill/bay/double-booking gate.
+   */
+  async getRecommendedTechnicians(serviceOrderId: string, now: Date = new Date()) {
+    const order = await this.prisma.serviceOrder.findUnique({
+      where: { id: serviceOrderId },
+      include: {
+        items: { include: { serviceType: { select: { requiredSkillCode: true, requiredBayType: true } } } },
+        serviceVisit: { select: { siteId: true } },
+      },
+    });
+    if (!order) throw new NotFoundException(`Service order ${serviceOrderId} not found`);
+    const siteId = order.serviceVisit.siteId;
+
+    const requiredSkillCodes = [...new Set(order.items.map((i) => i.serviceType.requiredSkillCode).filter((c): c is string => !!c))];
+    const requiredBayTypes = [...new Set(order.items.map((i) => i.serviceType.requiredBayType).filter((c): c is string => !!c))];
+
+    // Today's date (UTC midnight) for the @db.Date shift-availability lookup.
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    const technicians = await this.prisma.technician.findMany({
+      where: { homeSiteId: siteId, status: 'ACTIVE' },
+      include: {
+        userAccount: { select: { fullName: true } },
+        skills: { select: { skillCode: true } },
+        assignments: { where: { status: { in: OPEN_ASSIGNMENT_STATUSES }, endedAt: null }, select: { id: true } },
+        availability: { where: { date: today }, select: { status: true, shiftStart: true, shiftEnd: true } },
+      },
+      orderBy: { employeeCode: 'asc' },
+    });
+
+    const bays = await this.prisma.workBay.findMany({
+      where: { siteId, status: 'ACTIVE' },
+      select: { id: true, code: true, bayType: true },
+      orderBy: { code: 'asc' },
+    });
+
+    // Reuse the scheduling-engine matcher for skill candidacy (ALL required skills).
+    const resources = {
+      technicians: technicians.map((t) => ({ id: t.id, skillCodes: t.skills.map((s) => s.skillCode) })),
+      bays: bays.map((b) => ({ id: b.id, bayType: b.bayType })),
+    } as unknown as DetailedSiteResources;
+    const { candidateTechnicianIds } = matchResources(
+      { requiredSkillCodes, requiredBayTypes } as unknown as VisitCandidate,
+      resources,
+    );
+    const candidates = new Set(candidateTechnicianIds);
+
+    // Any active bay works when the order needs no specific bay type.
+    const compatibleBays = requiredBayTypes.length === 0 ? bays : bays.filter((b) => requiredBayTypes.includes(b.bayType));
+
+    const ranked = technicians
+      .filter((t) => candidates.has(t.id))
+      .map((t) => {
+        const openAssignments = t.assignments.length;
+        const shiftStatus = t.availability[0]?.status ?? 'NOT_SCHEDULED';
+        const availabilityBonus =
+          shiftStatus === 'AVAILABLE' ? 50 : shiftStatus === 'ON_BREAK' ? 10 : shiftStatus === 'NOT_SCHEDULED' ? 0 : -50;
+        const loadPenalty = openAssignments * 40;
+        const skillBreadthBonus = t.skills.length;
+        const score = 100 + availabilityBonus - loadPenalty + skillBreadthBonus;
+        return {
+          technicianId: t.id,
+          employeeCode: t.employeeCode,
+          fullName: t.userAccount.fullName,
+          skillCodes: t.skills.map((s) => s.skillCode),
+          openAssignments,
+          shiftStatus,
+          shift: t.availability[0] ? { start: t.availability[0].shiftStart, end: t.availability[0].shiftEnd } : null,
+          available: openAssignments === 0 && (shiftStatus === 'AVAILABLE' || shiftStatus === 'NOT_SCHEDULED'),
+          score,
+          scoreBreakdown: { base: 100, availabilityBonus, loadPenalty: -loadPenalty, skillBreadthBonus },
+        };
+      })
+      .sort((a, b) => b.score - a.score || a.openAssignments - b.openAssignments || a.employeeCode.localeCompare(b.employeeCode));
+
+    return { serviceOrderId, siteId, requiredSkillCodes, requiredBayTypes, compatibleBays, technicians: ranked };
   }
 
   // --- Skill CRUD ---
