@@ -279,6 +279,7 @@ model Site {
   resourceReservations ResourceReservation[]
   scheduleHolds        ScheduleHold[] // CR-2026-026 — advisory schedule holds
   complaints           Complaint[] // CR-2026-032 — customer complaints
+  inspections          VehicleInspection[] // CR-2026-034 — visual inspections
 
   @@map("sites")
 }
@@ -376,6 +377,212 @@ model Complaint {
   @@map("complaints")
 }
 
+// CR-2026-034 — Digital Visual Inspection Form (template-driven; additive). C-1 = schema only.
+enum InspectionStatus {
+  DRAFT
+  COMPLETED
+  SIGNED_OFF
+  CLOSED
+  CANCELLED
+}
+
+enum InspectionItemResult {
+  OK
+  FUTURE
+  IMMEDIATE
+  NOT_APPLICABLE
+}
+
+enum BatteryTestResult {
+  PASS
+  RECHARGE_RETEST
+  FAIL
+}
+
+enum WheelPosition {
+  LEFT_FRONT
+  RIGHT_FRONT
+  LEFT_REAR
+  RIGHT_REAR
+}
+
+enum RotorOrDrum {
+  ROTOR
+  DRUM
+}
+
+enum InspectionCustomerDecision {
+  PENDING
+  APPROVED
+  DECLINED
+  DEFERRED
+}
+
+enum RecommendationSeverity {
+  FUTURE
+  IMMEDIATE
+}
+
+enum InspectionSignatureRole {
+  SENIOR_TECH
+  CUSTOMER
+}
+
+enum InspectionSignatureType {
+  TYPED
+  DRAWN
+}
+
+// Versioned checklist source (seeded from docs/56). Each inspection snapshots the
+// active template's items so historical inspections stay immutable.
+model InspectionTemplate {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version   Int      @unique
+  name      String
+  isActive  Boolean  @default(false) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  items       InspectionTemplateItem[]
+  inspections VehicleInspection[]
+
+  @@map("inspection_templates")
+}
+
+model InspectionTemplateItem {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId String  @map("template_id") @db.Uuid
+  category   String
+  label      String
+  orderIndex Int     @map("order_index")
+  allowsNa   Boolean @default(false) @map("allows_na")
+
+  template InspectionTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+  @@map("inspection_template_items")
+}
+
+model VehicleInspection {
+  id                       String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inspectionNumber         String             @unique @map("inspection_number") // INS-NNNNNN
+  siteId                   String             @map("site_id") @db.Uuid
+  serviceVisitId           String             @map("service_visit_id") @db.Uuid
+  vehicleId                String             @map("vehicle_id") @db.Uuid
+  customerId               String             @map("customer_id") @db.Uuid
+  templateId               String             @map("template_id") @db.Uuid
+  templateVersion          Int                @map("template_version")
+  status                   InspectionStatus   @default(DRAFT)
+  performedByUserId        String?            @map("performed_by_user_id") @db.Uuid
+  batteryTestResult        BatteryTestResult? @map("battery_test_result")
+  batteryFactoryCca        Int?               @map("battery_factory_cca")
+  batteryActualCca         Int?               @map("battery_actual_cca")
+  alignmentCheckNeeded     Boolean            @default(false) @map("alignment_check_needed")
+  wheelBalanceNeeded       Boolean            @default(false) @map("wheel_balance_needed")
+  brakeInspectionPerformed Boolean            @default(true) @map("brake_inspection_performed")
+  priorBodyDamageNotes     String?            @map("prior_body_damage_notes")
+  comments                 String?
+  signedOffByUserId        String?            @map("signed_off_by_user_id") @db.Uuid
+  signedOffAt              DateTime?          @map("signed_off_at") @db.Timestamptz
+  customerAckByUserId      String?            @map("customer_ack_by_user_id") @db.Uuid
+  customerAckAt            DateTime?          @map("customer_ack_at") @db.Timestamptz
+  createdByUserId          String?            @map("created_by_user_id") @db.Uuid
+  createdAt                DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+
+  site         Site               @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  serviceVisit ServiceVisit       @relation(fields: [serviceVisitId], references: [id], onDelete: Restrict)
+  vehicle      Vehicle            @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+  customer     Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  template     InspectionTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+
+  items             InspectionItem[]
+  wheelMeasurements InspectionWheelMeasurement[]
+  recommendations   InspectionRecommendation[]
+  signatures        InspectionSignature[]
+
+  @@index([siteId, status])
+  @@index([serviceVisitId])
+  @@index([vehicleId])
+  @@index([customerId])
+  @@index([status])
+  @@map("vehicle_inspections")
+}
+
+model InspectionItem {
+  id           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inspectionId String               @map("inspection_id") @db.Uuid
+  category     String
+  label        String
+  orderIndex   Int                  @map("order_index")
+  result       InspectionItemResult @default(OK)
+  note         String?
+
+  inspection      VehicleInspection          @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  recommendations InspectionRecommendation[]
+
+  @@index([inspectionId])
+  @@map("inspection_items")
+}
+
+model InspectionWheelMeasurement {
+  id                    String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inspectionId          String        @map("inspection_id") @db.Uuid
+  position              WheelPosition
+  brakeLiningMm         Float?        @map("brake_lining_mm")
+  tireTread32nds        Int?          @map("tire_tread_32nds")
+  wearPattern           String?       @map("wear_pattern")
+  tirePressureBeforePsi Int?          @map("tire_pressure_before_psi")
+  tirePressureAfterPsi  Int?          @map("tire_pressure_after_psi")
+  rotorOrDrum           RotorOrDrum?  @map("rotor_or_drum")
+
+  inspection VehicleInspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@unique([inspectionId, position])
+  @@index([inspectionId])
+  @@map("inspection_wheel_measurements")
+}
+
+model InspectionRecommendation {
+  id                          String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inspectionId                String                     @map("inspection_id") @db.Uuid
+  inspectionItemId            String?                    @map("inspection_item_id") @db.Uuid
+  severity                    RecommendationSeverity
+  description                 String
+  suggestedServiceTypeCode    String?                    @map("suggested_service_type_code")
+  customerDecision            InspectionCustomerDecision @default(PENDING) @map("customer_decision")
+  decisionByUserId            String?                    @map("decision_by_user_id") @db.Uuid
+  decisionAt                  DateTime?                  @map("decision_at") @db.Timestamptz
+  // Soft references (no FK) — set when an approved rec becomes work (C-5).
+  resultingServiceOrderId     String?                    @map("resulting_service_order_id") @db.Uuid
+  resultingServiceOrderItemId String?                    @map("resulting_service_order_item_id") @db.Uuid
+  createdAt                   DateTime                   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                   DateTime                   @updatedAt @map("updated_at") @db.Timestamptz
+
+  inspection     VehicleInspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  inspectionItem InspectionItem?   @relation(fields: [inspectionItemId], references: [id], onDelete: SetNull)
+
+  @@index([inspectionId])
+  @@map("inspection_recommendations")
+}
+
+model InspectionSignature {
+  id             String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inspectionId   String                  @map("inspection_id") @db.Uuid
+  role           InspectionSignatureRole
+  type           InspectionSignatureType
+  typedName      String?                 @map("typed_name")
+  imageData      String?                 @map("image_data") // base64 data-URL for DRAWN signatures
+  signedByUserId String?                 @map("signed_by_user_id") @db.Uuid
+  signedAt       DateTime                @default(now()) @map("signed_at") @db.Timestamptz
+
+  inspection VehicleInspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@unique([inspectionId, role])
+  @@index([inspectionId])
+  @@map("inspection_signatures")
+}
+
 model UserAccount {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   siteId       String?  @map("site_id") @db.Uuid
@@ -425,6 +632,7 @@ model Customer {
   serviceVisits        ServiceVisit[]
   maintenanceReminders MaintenanceReminder[]
   complaints           Complaint[] // CR-2026-032 — customer complaints
+  inspections          VehicleInspection[] // CR-2026-034 — visual inspections
 
   // CR-2026-020 — nullable test-data run tag (null for all real & imported rows)
   testDataRunId String?      @map("test_data_run_id") @db.Uuid
@@ -467,6 +675,7 @@ model Vehicle {
   maintenanceRecommendations MaintenanceRecommendation[]
   maintenanceReminders       MaintenanceReminder[]
   classification             VehicleClassification? // CR-2026-008
+  inspections                VehicleInspection[] // CR-2026-034 — visual inspections
 
   // CR-2026-020 — nullable test-data run tag (null for all real & imported rows)
   testDataRunId String?      @map("test_data_run_id") @db.Uuid
@@ -624,6 +833,7 @@ model ServiceVisit {
   testDataRun   TestDataRun? @relation(fields: [testDataRunId], references: [id], onDelete: Restrict)
 
   complaints    Complaint[] // CR-2026-032 — customer complaints
+  inspections   VehicleInspection[] // CR-2026-034 — visual inspections
 
   @@index([siteId, status])
   @@index([customerId, vehicleId])
