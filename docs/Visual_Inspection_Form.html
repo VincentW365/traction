@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<!--
+  Visual Inspection Form — high-fidelity, INTERACTIVE (tick the colored boxes + fill the
+  fields right in the browser), and print/PDF-ready. Modeled on the official Visual Vehicle
+  Inspection Report and Bert's blank service-centre job card.
+    • Use: open in any browser, tick/fill, then Print > Save as PDF (button top-right).
+    • Word .docx: open this file in Microsoft Word, then Save As > Word Document.
+  Mirrors docs/56_Visual_Inspection_Form.md (the digital app's source spec; CR-2026-034).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Visual Inspection Form — Bert's Auto Parts Service Centre</title>
+<style>
+  :root { --g:#16a34a; --y:#eab308; --r:#dc2626; --ink:#111827; --line:#94a3b8; }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", Calibri, Arial, sans-serif; color: var(--ink); margin: 0; background: #e2e8f0; }
+  .sheet { background: #fff; max-width: 1000px; margin: 16px auto; padding: 18px 22px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+  .toolbar { max-width: 1000px; margin: 12px auto 0; display: flex; justify-content: flex-end; gap: 8px; }
+  .btn { font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 6px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; }
+  .btn.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+
+  .brand { display: flex; justify-content: space-between; align-items: baseline; font-size: 10px; color: #475569; letter-spacing: .04em; }
+  h1 { text-align: center; font-size: 22px; letter-spacing: .02em; margin: 2px 0 6px; border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink); padding: 4px 0; }
+
+  .fields { font-size: 11px; }
+  .fields .frow { display: flex; gap: 18px; margin: 5px 0; }
+  .fld { flex: 1; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+  .fld label { color: #475569; }
+  .fld input { flex: 1; border: none; border-bottom: 1px solid var(--line); font: inherit; font-size: 11px; padding: 1px 2px; min-width: 40px; }
+  .vin { display: inline-flex; gap: 2px; }
+  .vin input { width: 16px; height: 18px; border: 1px solid var(--line); text-align: center; font-size: 10px; padding: 0; }
+
+  .legend { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 10px 0 8px; }
+  .lg { color: #fff; font-weight: 700; font-size: 11px; text-align: center; padding: 3px 4px; border-radius: 2px; }
+  .lg.g { background: var(--g); } .lg.y { background: var(--y); color:#3b2f00; } .lg.r { background: var(--r); }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  .section { background: var(--ink); color: #fff; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 3px 8px; margin: 8px 0 0; }
+  .grid { border: 1px solid #cbd5e1; border-top: none; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-bottom: 1px solid #eef2f7; }
+  .row:last-child { border-bottom: none; }
+  .cks { display: inline-flex; gap: 5px; flex: 0 0 auto; }
+  .lbl { font-size: 10.5px; line-height: 1.15; }
+
+  input.ck { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border: 2px solid; border-radius: 2px; cursor: pointer; margin: 0; position: relative; }
+  input.ck.g { border-color: var(--g); } input.ck.y { border-color: var(--y); } input.ck.r { border-color: var(--r); }
+  input.ck.g:checked { background: var(--g); } input.ck.y:checked { background: var(--y); } input.ck.r:checked { background: var(--r); }
+  input.ck:checked::after { content: "✓"; position: absolute; inset: 0; color: #fff; font-size: 11px; line-height: 13px; text-align: center; }
+  input.ck.y:checked::after { color: #3b2f00; }
+
+  .blk { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 10.5px; }
+  .inline { border: none; border-bottom: 1px solid var(--line); font: inherit; font-size: 10.5px; width: 46px; text-align: center; }
+  .wheelgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .wheel { border: 1px solid #cbd5e1; padding: 5px 6px; font-size: 10px; }
+  .wheel h4 { margin: 0 0 3px; font-size: 10px; color: #475569; display: flex; justify-content: space-between; }
+  .wheel .ln { display: flex; align-items: center; gap: 4px; margin: 2px 0; }
+  .chip { display: inline-flex; gap: 4px; margin-right: 4px; }
+  .damage { border: 1px solid #cbd5e1; min-height: 120px; display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; padding: 8px; }
+  .dbox { border: 1px dashed #94a3b8; min-height: 52px; border-radius: 4px; font-size: 9px; color: #94a3b8; padding: 2px 4px; }
+  .lines { border: 1px solid #cbd5e1; padding: 8px; }
+  .lines .l { border-bottom: 1px solid var(--line); height: 20px; }
+  .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 10px; font-size: 10px; }
+  .sigline { border-top: 1px solid var(--ink); padding-top: 2px; }
+
+  @media print {
+    body { background: #fff; } .toolbar { display: none; }
+    .sheet { box-shadow: none; margin: 0; max-width: none; padding: 0; }
+    .lg, .section, input.ck:checked { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    @page { size: A4; margin: 10mm; }
+    aside { display: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="btn" onclick="document.querySelectorAll('input').forEach(i=>{if(i.type==='checkbox')i.checked=false;else i.value='';})">Reset</button>
+    <button class="btn primary" onclick="window.print()">Print / Save as PDF</button>
+  </div>
+
+  <div class="sheet">
+    <div class="brand"><span>BERT'S AUTO PARTS SERVICE CENTRE</span><span>Visual Inspection</span></div>
+    <h1>VISUAL VEHICLE INSPECTION REPORT</h1>
+
+    <div class="fields">
+      <div class="frow">
+        <span class="fld"><label>Customer:</label><input></span>
+        <span class="fld"><label>Technician:</label><input></span>
+        <span class="fld"><label>Date:</label><input></span>
+      </div>
+      <div class="frow">
+        <span class="fld"><label>Yr./Make/Model:</label><input></span>
+        <span class="fld"><label>Plate / Tag #:</label><input></span>
+        <span class="fld"><label>Repair Order #:</label><input></span>
+      </div>
+      <div class="frow">
+        <span class="fld"><label>Mileage:</label><input style="max-width:90px"></span>
+        <span class="fld"><label>Chassis / VIN:</label>
+          <span class="vin"><input><input><input><input><input><input><input><input><input><input><input><input><input><input><input><input><input></span>
+        </span>
+      </div>
+    </div>
+
+    <div class="legend">
+      <div class="lg g">CHECKED AND OKAY</div>
+      <div class="lg y">MAY NEED FUTURE ATTENTION</div>
+      <div class="lg r">REQUIRES IMMEDIATE ATTENTION</div>
+    </div>
+
+    <div class="cols">
+      <!-- LEFT COLUMN -->
+      <div>
+        <div class="section">Interior / Exterior</div>
+        <div class="grid" id="interior"></div>
+        <div class="section">Under Vehicle</div>
+        <div class="grid" id="undervehicle"></div>
+        <div class="section">Under Hood</div>
+        <div class="grid" id="underhood"></div>
+      </div>
+
+      <!-- RIGHT COLUMN -->
+      <div>
+        <div class="section">Battery</div>
+        <div class="grid" id="battery"></div>
+        <div class="blk">
+          <span class="chip"><input class="ck g" type="checkbox"></span> Pass &nbsp;
+          <span class="chip"><input class="ck y" type="checkbox"></span> Recharge &amp; Retest &nbsp;
+          <span class="chip"><input class="ck r" type="checkbox"></span> Fail<br>
+          Factory spec cold cranking amps: <input class="inline"> &nbsp; Actual cold cranking amps: <input class="inline">
+        </div>
+
+        <div class="section">Brake and Tire</div>
+        <div class="wheelgrid">
+          <div class="wheel" data-wheel></div><div class="wheel" data-wheel></div>
+          <div class="wheel" data-wheel></div><div class="wheel" data-wheel></div>
+        </div>
+        <div class="blk">
+          <span class="chip"><input class="ck y" type="checkbox"></span> Alignment Check Needed &nbsp;
+          <span class="chip"><input class="ck y" type="checkbox"></span> Wheel Balance Needed &nbsp;
+          <span class="chip"><input class="ck r" type="checkbox"></span> Brake Inspection Not Performed This Visit
+        </div>
+
+        <div class="section">Prior Body Damage</div>
+        <div class="damage">
+          <div class="dbox">Front</div><div class="dbox">Roof / Top</div><div class="dbox">Rear</div>
+          <div class="dbox">Driver Side</div><div class="dbox">Notes</div><div class="dbox">Passenger Side</div>
+        </div>
+
+        <div class="section">Comments / Estimates</div>
+        <div class="lines"><div class="l"></div><div class="l"></div><div class="l"></div><div class="l"></div></div>
+
+        <div class="sign">
+          <div><div style="height:26px"></div><div class="sigline">X &nbsp; Senior Technician / Advisor</div></div>
+          <div><div style="height:26px"></div><div class="sigline">X &nbsp; Customer Acknowledgement</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // Checklist content — mirrors docs/56_Visual_Inspection_Form.md (single source of truth).
+  const DATA = {
+    interior: [
+      'Head Lights / Tail Lights / Turn Signals / Brake Lights / Hazard Warning Lights / Exterior Lamps / License Plate Lights',
+      'Windshield Washer Spray / Wiper Operation / Wiper Blades',
+      'Windshield Condition (inspect for cracks, chips, or pitting)',
+      'Mirrors / Glass', 'Emergency Brake Adjustment', 'Horn Operation', 'Fuel Tank Cap Gasket',
+      'Air Conditioning Filter (if equipped)', 'Clutch Operation (if equipped)',
+      'Back-up Lights Left / Right', 'Dash Warning Lights', 'Carpet / Upholstery / Floor Mats',
+    ],
+    battery: ['Battery Terminals / Cables / Mountings', 'Check Condition of Battery (storage capacity test)'],
+    undervehicle: [
+      'Shock Absorbers / Suspension / Struts', 'Steering Gear Box / Linkage and Boots / Ball Joints / Dust Covers',
+      'Muffler / Exhaust Pipes / Mountings / Catalytic Converter', 'Engine Oil and/or Fluid Leaks',
+      'Brake Lines / Hoses / Parking Brake Cable', 'Drive Shaft Boots / CV Boots / U-joints / Transmission Linkage (if equipped)',
+      'Transmission / Differential / Transfer Case (check fluid level, condition, leaks)',
+      'Fuel Lines and Connections / Fuel Tank Band / Fuel Tank Vapor Vent System Hoses', 'Inspect Nuts and Bolts on Body Chassis',
+    ],
+    underhood: [
+      'Fluid Levels: Oil / Coolant / Battery / Power Steering / Brake / Washer / Automatic Transmission',
+      'Engine Air Filter', 'Drive Belts (condition and adjustment)',
+      'Cooling System Hoses / Heater Hoses / A/C Hoses and Connections', 'Radiator Core / A/C Condenser (if equipped)',
+      'Coolant Recovery Reservoir Fluid Level / Condition', 'Clutch Reservoir Fluid / Condition (as equipped)',
+    ],
+  };
+  function row(label) {
+    return '<div class="row"><span class="cks">' +
+      '<input class="ck g" type="checkbox"><input class="ck y" type="checkbox"><input class="ck r" type="checkbox">' +
+      '</span><span class="lbl">' + label + '</span></div>';
+  }
+  for (const id in DATA) document.getElementById(id).innerHTML = DATA[id].map(row).join('');
+
+  const WHEELS = ['Left Front', 'Right Front', 'Left Rear', 'Right Rear'];
+  document.querySelectorAll('[data-wheel]').forEach((el, i) => {
+    el.innerHTML =
+      '<h4><span>' + WHEELS[i] + '</span><span><input class="ck g" type="checkbox"><input class="ck y" type="checkbox"><input class="ck r" type="checkbox"></span></h4>' +
+      '<div class="ln">Brake Lining <input class="inline"> mm</div>' +
+      '<div class="ln">Tire Tread <input class="inline"> 32nds</div>' +
+      '<div class="ln">Wear Pattern <input class="inline" style="width:90px"></div>' +
+      '<div class="ln">PSI Before <input class="inline" style="width:38px"> After <input class="inline" style="width:38px"></div>' +
+      '<div class="ln"><input class="ck g" type="checkbox"> Rotor &nbsp; <input class="ck g" type="checkbox"> Drum</div>';
+  });
+</script>
+</body>
+</html>
