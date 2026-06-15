@@ -4,6 +4,8 @@
 # Output: repo-root Visual_Inspection_Form.docx. Re-run any time to regenerate.
 $ErrorActionPreference = 'Stop'
 $OUT = 'C:\Users\vwilson\Desktop\Projects\Traction\Visual_Inspection_Form.docx'
+$TIRE = 'C:\Users\vwilson\Desktop\Projects\Traction\tire.webp'
+$CAR = 'C:\Users\vwilson\Desktop\Projects\Traction\car.webp'
 
 function Bgr([int]$r, [int]$g, [int]$b) { return $r + ($g * 256) + ($b * 65536) }
 $GREEN = Bgr 22 163 74;  $LGREEN = Bgr 220 252 231
@@ -131,6 +133,16 @@ try {
   for ($c = 1; $c -le 7; $c++) { $h = $bt.Cell(2, $c); $h.Shading.BackgroundPatternColor = $GREY; $h.Range.Font.Bold = $true; $h.Range.Text = $bth[$c - 1] }
   $wheels = @('Left Front', 'Right Front', 'Left Rear', 'Right Rear')
   for ($i = 0; $i -lt 4; $i++) { $bt.Cell($i + 3, 1).Range.Text = $wheels[$i] }
+  # Tire illustration — floating, centered over the brake/tire grid (as in the reference form).
+  $tireShape = $doc.Shapes.AddPicture($TIRE, $false, $true, 0, 0, 92, 61, $bt.Cell(3, 4).Range)
+  $tireShape.LockAspectRatio = -1
+  $tireShape.Width = 92
+  $tireShape.WrapFormat.Type = 3            # wdWrapNone (float, no text wrap)
+  $tireShape.RelativeHorizontalPosition = 0 # wdRelativeHorizontalPositionMargin
+  $tireShape.Left = -999995                 # wdShapeCenter -> centered horizontally
+  $tireShape.RelativeVerticalPosition = 3   # wdRelativeVerticalPositionParagraph (anchored in the grid)
+  $tireShape.Top = -2
+  $tireShape.ZOrder(0)                       # msoBringToFront -> in front of the grid
   GoEnd; NL
   CkRow @('Alignment Check Needed', 'Wheel Balance Needed', 'Brake Inspection Not Performed This Visit'); NL
 
@@ -142,7 +154,15 @@ try {
     $tb.Cell(2, 1).Height = $h; $tb.Rows.Item(2).Height = $h
     GoEnd; NL
   }
-  BarThenBox 'Prior Body Damage (mark / describe existing damage)' 90
+  # Prior Body Damage — black bar + the car diagram filling the box (as in the reference form).
+  $word.Selection.EndKey(6) | Out-Null
+  $pb = $doc.Tables.Add($word.Selection.Range, 2, 1); $pb.Borders.Enable = $true
+  $pt = $pb.Cell(1, 1); $pt.Shading.BackgroundPatternColor = $BLACK; $pt.Range.Font.Bold = $true; $pt.Range.Font.Color = $WHITE; $pt.Range.Font.Size = 10; $pt.Range.Text = 'PRIOR BODY DAMAGE (mark / describe existing damage)'
+  $pbox = $pb.Cell(2, 1); $pbox.Range.ParagraphFormat.Alignment = 1
+  $carImg = $pbox.Range.InlineShapes.AddPicture($CAR, $false, $true)
+  $carImg.LockAspectRatio = -1
+  $carImg.Width = 200
+  GoEnd; NL
   BarThenBox 'Comments / Estimates' 90
 
   # Signatures
