@@ -24,6 +24,7 @@ import { StatusModule } from './modules/status/status.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { ScheduleHoldsModule } from './modules/schedule-holds/schedule-holds.module';
 import { ComplaintsModule } from './modules/complaints/complaints.module';
+import { InspectionsModule } from './modules/inspections/inspections.module';
 import { StaffModule } from './modules/staff/staff.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 
@@ -54,6 +55,7 @@ import { AvailabilityModule } from './modules/availability/availability.module';
     ScheduleModule,
     ScheduleHoldsModule,
     ComplaintsModule,
+    InspectionsModule,
     StaffModule,
     AvailabilityModule,
   ],

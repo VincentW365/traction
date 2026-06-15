@@ -78,6 +78,11 @@ export const PERMISSIONS = {
   COMPLAINT_VIEW: 'complaint:view',
   COMPLAINT_MANAGE: 'complaint:manage',
   COMPLAINT_RESOLVE: 'complaint:resolve',
+
+  // Visual Inspections (CR-2026-034)
+  INSPECTION_VIEW: 'inspection:view',
+  INSPECTION_CREATE: 'inspection:create',
+  INSPECTION_EDIT: 'inspection:edit',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -99,6 +104,8 @@ const FRONT_DESK_PERMISSIONS: PermissionKey[] = [
   // Complaints: front desk + advisor + manager can log and view (CR-2026-032)
   PERMISSIONS.COMPLAINT_CREATE,
   PERMISSIONS.COMPLAINT_VIEW,
+  // Inspections: front desk can view (CR-2026-034)
+  PERMISSIONS.INSPECTION_VIEW,
 ];
 
 const SERVICE_ADVISOR_PERMISSIONS: PermissionKey[] = [
@@ -114,11 +121,18 @@ const SERVICE_ADVISOR_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.PRIOR_SERVICE_ENTRY,
   PERMISSIONS.PARTS_MANAGE,
   PERMISSIONS.TRANSPORT_MANAGE,
+  // Inspections: advisors perform/fill inspections (CR-2026-034)
+  PERMISSIONS.INSPECTION_CREATE,
+  PERMISSIONS.INSPECTION_EDIT,
 ];
 
 const TECHNICIAN_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.QUEUE_VIEW,
   PERMISSIONS.SERVICE_ORDER_STATUS,
+  // Inspections: technicians perform/fill inspections (CR-2026-034)
+  PERMISSIONS.INSPECTION_VIEW,
+  PERMISSIONS.INSPECTION_CREATE,
+  PERMISSIONS.INSPECTION_EDIT,
 ];
 
 const PARTS_STAFF_PERMISSIONS: PermissionKey[] = [
