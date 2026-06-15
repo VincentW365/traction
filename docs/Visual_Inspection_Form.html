@@ -16,8 +16,8 @@
   :root { --g:#16a34a; --y:#eab308; --r:#dc2626; --ink:#111827; --line:#94a3b8; }
   * { box-sizing: border-box; }
   body { font-family: "Segoe UI", Calibri, Arial, sans-serif; color: var(--ink); margin: 0; background: #e2e8f0; }
-  .sheet { background: #fff; max-width: 1040px; margin: 16px auto; padding: 22px 28px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
-  .toolbar { max-width: 1040px; margin: 12px auto 0; display: flex; justify-content: flex-end; gap: 8px; }
+  .sheet { background: #fff; max-width: 1140px; margin: 16px auto; padding: 22px 28px; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
+  .toolbar { max-width: 1140px; margin: 12px auto 0; display: flex; justify-content: flex-end; gap: 8px; }
   .btn { font: inherit; font-size: 14px; padding: 8px 16px; border-radius: 6px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; }
   .btn.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
 
@@ -44,37 +44,37 @@
   .cks { display: inline-flex; gap: 7px; flex: 0 0 auto; }
   .lbl { font-size: 13px; line-height: 1.25; }
 
-  input.ck { -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border: 2px solid; border-radius: 3px; cursor: pointer; margin: 0; position: relative; }
+  input.ck { -webkit-appearance: none; appearance: none; width: 23px; height: 23px; border: 2px solid; border-radius: 3px; cursor: pointer; margin: 0; position: relative; }
   input.ck.g { border-color: var(--g); } input.ck.y { border-color: var(--y); } input.ck.r { border-color: var(--r); }
   input.ck.g:checked { background: var(--g); } input.ck.y:checked { background: var(--y); } input.ck.r:checked { background: var(--r); }
-  input.ck:checked::after { content: "✓"; position: absolute; inset: 0; color: #fff; font-size: 15px; line-height: 18px; text-align: center; }
+  input.ck:checked::after { content: "✓"; position: absolute; inset: 0; color: #fff; font-size: 17px; line-height: 20px; text-align: center; }
   input.ck.y:checked::after { color: #3b2f00; }
   /* Black-and-white friendly: each O/F/I triad box shows its letter so the three columns are
      identifiable from the LETTER, not the colour. Standalone boxes (Pass/Fail, Rotor/Drum) stay blank. */
-  input.ck.tri::after { content: attr(data-l); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #475569; }
-  input.ck.tri:checked::after { content: "✓"; color: #fff; font-size: 15px; }
+  input.ck.tri::after { content: attr(data-l); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 700; color: #475569; }
+  input.ck.tri:checked::after { content: "✓"; color: #fff; font-size: 17px; }
   input.ck.tri.y:checked::after { color: #3b2f00; }
 
-  .blk { border: 1px solid #cbd5e1; padding: 10px 11px; font-size: 13px; line-height: 2; }
+  .blk { border: 1px solid #cbd5e1; padding: 8px 11px; font-size: 13px; line-height: 1.75; }
   .inline { border: none; border-bottom: 1px solid var(--line); font: inherit; font-size: 13px; width: 60px; text-align: center; }
   .wheelgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .wheel { border: 1px solid #cbd5e1; padding: 8px 9px; font-size: 12.5px; }
-  .wheel h4 { margin: 0 0 6px; font-size: 12.5px; color: #475569; display: flex; justify-content: space-between; align-items: center; }
-  .wheel .ln { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+  .wheel { border: 1px solid #cbd5e1; padding: 6px 8px; font-size: 12.5px; }
+  .wheel h4 { margin: 0 0 3px; font-size: 12.5px; color: #475569; display: flex; justify-content: space-between; align-items: center; }
+  .wheel .ln { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
   .chip { display: inline-flex; gap: 6px; margin-right: 4px; }
-  .damage { border: 1px solid #cbd5e1; min-height: 150px; display: flex; justify-content: center; align-items: center; padding: 8px; }
-  .cardiag { max-width: 100%; max-height: 200px; height: auto; display: block; }
+  .damage { border: 1px solid #cbd5e1; min-height: 180px; display: flex; justify-content: center; align-items: center; padding: 10px; }
+  .cardiag { max-width: 100%; max-height: 250px; height: auto; display: block; }
   .dbox { border: 1px dashed #94a3b8; min-height: 52px; border-radius: 4px; font-size: 9px; color: #94a3b8; padding: 2px 4px; }
   .lines { border: 1px solid #cbd5e1; padding: 8px; }
   .lines .l { border-bottom: 1px solid var(--line); height: 26px; }
-  .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 10px; font-size: 12.5px; }
+  .sign { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 6px; font-size: 12.5px; }
   .sigline { border-top: 1px solid var(--ink); padding-top: 3px; }
 
   @media print {
     body { background: #fff; } .toolbar { display: none; }
     .sheet { box-shadow: none; margin: 0; max-width: none; padding: 0; }
     .lg, .section, input.ck:checked { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    @page { size: A4; margin: 8mm; }
+    @page { size: A4; margin: 6mm; }
     aside { display: none !important; }
   }
 </style>
@@ -153,7 +153,7 @@
         </div>
 
         <div class="section">Comments / Estimates</div>
-        <div class="lines"><div class="l"></div><div class="l"></div><div class="l"></div><div class="l"></div></div>
+        <div class="lines"><div class="l"></div><div class="l"></div><div class="l"></div></div>
 
         <div class="sign">
           <div><div style="height:26px"></div><div class="sigline">X &nbsp; Senior Technician / Advisor</div></div>
