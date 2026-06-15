@@ -62,8 +62,8 @@
   .wheel h4 { margin: 0 0 3px; font-size: 12.5px; color: #475569; display: flex; justify-content: space-between; align-items: center; }
   .wheel .ln { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
   .chip { display: inline-flex; gap: 6px; margin-right: 4px; }
-  .damage { border: 1px solid #cbd5e1; min-height: 180px; display: flex; justify-content: center; align-items: center; padding: 10px; }
-  .cardiag { max-width: 100%; max-height: 250px; height: auto; display: block; }
+  .damage { border: 1px solid #cbd5e1; min-height: 360px; display: flex; justify-content: center; align-items: center; padding: 16px; }
+  .cardiag { max-width: 100%; max-height: 440px; height: auto; display: block; }
   .dbox { border: 1px dashed #94a3b8; min-height: 52px; border-radius: 4px; font-size: 9px; color: #94a3b8; padding: 2px 4px; }
   .lines { border: 1px solid #cbd5e1; padding: 8px; }
   .lines .l { border-bottom: 1px solid var(--line); height: 26px; }
@@ -147,19 +147,20 @@
           <span class="chip"><input class="ck r" type="checkbox"></span> Brake Inspection Not Performed This Visit
         </div>
 
-        <div class="section">Prior Body Damage</div>
-        <div class="damage">
-          <img class="cardiag" src="../car.webp" alt="Vehicle damage diagram">
-        </div>
-
         <div class="section">Comments / Estimates</div>
-        <div class="lines"><div class="l"></div><div class="l"></div><div class="l"></div></div>
-
-        <div class="sign">
-          <div><div style="height:26px"></div><div class="sigline">X &nbsp; Senior Technician / Advisor</div></div>
-          <div><div style="height:26px"></div><div class="sigline">X &nbsp; Customer Acknowledgement</div></div>
-        </div>
+        <div class="lines"><div class="l"></div><div class="l"></div><div class="l"></div><div class="l"></div><div class="l"></div><div class="l"></div><div class="l"></div></div>
       </div>
+    </div>
+
+    <!-- Full-width band: large vehicle diagram + sign-off -->
+    <div class="section">Prior Body Damage</div>
+    <div class="damage">
+      <img class="cardiag" src="../car.webp" alt="Vehicle damage diagram">
+    </div>
+
+    <div class="sign">
+      <div><div style="height:26px"></div><div class="sigline">X &nbsp; Senior Technician / Advisor</div></div>
+      <div><div style="height:26px"></div><div class="sigline">X &nbsp; Customer Acknowledgement</div></div>
     </div>
   </div>
 
