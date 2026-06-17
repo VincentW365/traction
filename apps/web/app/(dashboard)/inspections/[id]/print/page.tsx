@@ -114,7 +114,9 @@ export default function InspectionPrintPage() {
 
       <div className="grid grid-cols-2 gap-8 mt-6 pt-4 border-t border-slate-300 text-xs">
         <div>
-          <div className="h-12">{sig('SENIOR_TECH')?.typedName ? <span className="italic">{sig('SENIOR_TECH')!.typedName}</span> : ''}</div>
+          <div className="h-12">
+            {sig('SENIOR_TECH')?.imageData ? <img src={sig('SENIOR_TECH')!.imageData!} alt="signature" className="h-12" /> : (sig('SENIOR_TECH')?.typedName ? <span className="italic">{sig('SENIOR_TECH')!.typedName}</span> : '')}
+          </div>
           <div className="border-t border-slate-400 pt-1">Senior Technician {sig('SENIOR_TECH') ? `· ${new Date(sig('SENIOR_TECH')!.signedAt).toLocaleDateString()}` : ''}</div>
         </div>
         <div>

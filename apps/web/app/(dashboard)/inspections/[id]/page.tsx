@@ -97,8 +97,10 @@ export default function InspectionDetailPage() {
   const [recDesc, setRecDesc] = useState('');
   const [recItemId, setRecItemId] = useState('');
   const [recCode, setRecCode] = useState('');
-  // sign-off
+  // sign-off (senior technician — drawn or typed)
+  const [signoffMethod, setSignoffMethod] = useState<'DRAWN' | 'TYPED'>('DRAWN');
   const [signoffName, setSignoffName] = useState('');
+  const [signoffImage, setSignoffImage] = useState<string | null>(null);
   // customer sign-off
   const [custMethod, setCustMethod] = useState<'DRAWN' | 'TYPED'>('DRAWN');
   const [custTypedName, setCustTypedName] = useState('');
@@ -132,7 +134,12 @@ export default function InspectionDetailPage() {
   });
   const complete = useMutation({ mutationFn: () => api.post(`/inspections/${id}/complete`, {}), onSuccess: invalidate });
   const cancel = useMutation({ mutationFn: () => api.post(`/inspections/${id}/cancel`, {}), onSuccess: invalidate });
-  const signoff = useMutation({ mutationFn: () => api.post(`/inspections/${id}/signoff`, { typedName: signoffName.trim() }), onSuccess: () => { setSignoffName(''); invalidate(); } });
+  const signoff = useMutation({
+    mutationFn: () => api.post(`/inspections/${id}/signoff`, signoffMethod === 'DRAWN'
+      ? { type: 'DRAWN', imageData: signoffImage }
+      : { type: 'TYPED', typedName: signoffName.trim() }),
+    onSuccess: () => { setSignoffName(''); setSignoffImage(null); invalidate(); },
+  });
   const decide = useMutation({
     mutationFn: (v: { rid: string; decision: string }) => api.patch(`/inspections/${id}/recommendations/${v.rid}/decision`, { decision: v.decision }),
     onSuccess: invalidate,
@@ -316,10 +323,20 @@ export default function InspectionDetailPage() {
           <div className="card-body space-y-3">
             {canSignoff ? (
               <>
-                <div><label className="input-label">Typed acknowledgment (your name)</label><input value={signoffName} onChange={(e) => setSignoffName(e.target.value)} className="input-field text-sm max-w-sm" /></div>
+                <p className="text-xs text-slate-500">Sign to confirm you reviewed this inspection. Draw a signature or type your name.</p>
+                <div className="flex items-center gap-3 text-xs">
+                  <label className="flex items-center gap-1"><input type="radio" checked={signoffMethod === 'DRAWN'} onChange={() => setSignoffMethod('DRAWN')} /> Drawn</label>
+                  <label className="flex items-center gap-1"><input type="radio" checked={signoffMethod === 'TYPED'} onChange={() => setSignoffMethod('TYPED')} /> Typed</label>
+                </div>
+                {signoffMethod === 'DRAWN'
+                  ? <SignaturePad onChange={setSignoffImage} />
+                  : <div><label className="input-label">Typed acknowledgment (your name)</label><input value={signoffName} onChange={(e) => setSignoffName(e.target.value)} className="input-field text-sm max-w-sm" /></div>}
                 {signoff.isError && <p className="text-xs text-red-600">{(signoff.error as Error).message}</p>}
                 <div className="flex gap-2">
-                  <button onClick={() => signoff.mutate()} disabled={!signoffName.trim() || signoff.isPending} className="btn-primary text-sm">{signoff.isPending ? 'Signing...' : 'Sign off'}</button>
+                  <button
+                    onClick={() => signoff.mutate()}
+                    disabled={signoff.isPending || (signoffMethod === 'DRAWN' ? !signoffImage : !signoffName.trim())}
+                    className="btn-primary text-sm">{signoff.isPending ? 'Signing...' : 'Sign off'}</button>
                   {canEdit && <button onClick={() => cancel.mutate()} disabled={cancel.isPending} className="btn-secondary text-sm">Cancel inspection</button>}
                 </div>
               </>

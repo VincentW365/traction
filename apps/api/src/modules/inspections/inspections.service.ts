@@ -262,13 +262,17 @@ export class InspectionsService {
   // ─── C-3: sign-off + customer decisions (results are immutable once SIGNED_OFF — the
   // DRAFT-only guards on update()/addRecommendation() enforce that) ────────────
 
-  /** Senior-tech sign-off: COMPLETED → SIGNED_OFF + typed acknowledgment signature. */
+  /** Senior-tech sign-off: COMPLETED → SIGNED_OFF + acknowledgment signature (drawn or typed). */
   async signoff(id: string, actor: InspectionActor, dto: SignoffInspectionDto) {
     const existing = await this.prisma.vehicleInspection.findUnique({ where: { id }, select: { id: true, siteId: true } });
     if (!existing) throw new NotFoundException('Inspection not found');
     this.assertSameSite(existing.siteId, actor);
+
+    // `type` is optional → default TYPED (back-compat with `{ typedName }` callers).
+    const type = dto.type ?? 'TYPED';
     const typedName = dto.typedName?.trim();
-    if (!typedName) throw new BadRequestException('A typed acknowledgment name is required to sign off');
+    if (type === 'DRAWN' && !dto.imageData) throw new BadRequestException('A drawn signature image is required to sign off');
+    if (type === 'TYPED' && !typedName) throw new BadRequestException('A typed acknowledgment name is required to sign off');
 
     // Status flip + signature are atomic; the conditional updateMany is the race guard.
     await this.prisma.$transaction(async (tx) => {
@@ -278,7 +282,14 @@ export class InspectionsService {
       });
       if (count === 0) throw new BadRequestException('Inspection must be COMPLETED to sign off');
       await tx.inspectionSignature.create({
-        data: { inspectionId: id, role: 'SENIOR_TECH', type: 'TYPED', typedName, signedByUserId: actor.sub },
+        data: {
+          inspectionId: id,
+          role: 'SENIOR_TECH',
+          type,
+          typedName: type === 'TYPED' ? typedName : null,
+          imageData: type === 'DRAWN' ? dto.imageData : null,
+          signedByUserId: actor.sub,
+        },
       });
     });
 

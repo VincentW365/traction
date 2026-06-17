@@ -42,6 +42,23 @@ describe('InspectionsService.signoff (C-3)', () => {
     expect(h.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'INSPECTION_SIGNED_OFF' }));
   });
 
+  // CR-2026-046 — senior-tech may also DRAW a signature (parity with the customer flow).
+  it('DRAWN valid: COMPLETED→SIGNED_OFF + SENIOR_TECH drawn signature (imageData, no typedName)', async () => {
+    const h = build();
+    await h.service.signoff('insp1', MGR, { type: 'DRAWN', imageData: 'data:image/png;base64,AAAA' } as any);
+    expect(h.tx.inspectionSignature.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ role: 'SENIOR_TECH', type: 'DRAWN', imageData: 'data:image/png;base64,AAAA', typedName: null, signedByUserId: 'm1' }),
+    }));
+    expect(h.statusHistory.record).toHaveBeenCalledWith(expect.objectContaining({ fromStatus: 'COMPLETED', toStatus: 'SIGNED_OFF' }));
+    expect(h.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'INSPECTION_SIGNED_OFF' }));
+  });
+
+  it('DRAWN without imageData is rejected before any write', async () => {
+    const h = build();
+    await expect(h.service.signoff('insp1', MGR, { type: 'DRAWN' } as any)).rejects.toThrow(/drawn signature image/);
+    expect(h.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it('rejects empty typed acknowledgment before any write', async () => {
     const h = build();
     await expect(h.service.signoff('insp1', MGR, { typedName: '   ' } as any)).rejects.toThrow(/typed acknowledgment/);
