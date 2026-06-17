@@ -211,7 +211,7 @@ export class ReportingService {
       },
       {
         code: 'KPI-09',
-        name: 'Queue Overrides Today',
+        name: 'Queue Overrides',
         value: overrideCount,
         target: null,
       },
