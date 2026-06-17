@@ -16,7 +16,10 @@ import { ReportingModule } from './modules/reporting/reporting.module';
 import { TechniciansModule } from './modules/technicians/technicians.module';
 import { ServiceOrdersModule } from './modules/service-orders/service-orders.module';
 import { PartsModule } from './modules/parts/parts.module';
-import { TransportModule } from './modules/transport/transport.module';
+// CR-2026-040 — Transport (customer drop-off / request pick-up) archived: feature
+// unregistered (not deleted). Module files kept under ./modules/transport for easy
+// re-enable. Restore: uncomment this import + the TransportModule entry below.
+// import { TransportModule } from './modules/transport/transport.module';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { ResourcesModule } from './modules/resources/resources.module';
 import { IntegrationModule } from './modules/integrations/integration.module';
@@ -47,7 +50,7 @@ import { AvailabilityModule } from './modules/availability/availability.module';
     TechniciansModule,
     ServiceOrdersModule,
     PartsModule,
-    TransportModule,
+    // TransportModule,  // CR-2026-040 — archived (see import note above)
     MaintenanceModule,
     ResourcesModule,
     IntegrationModule,

@@ -107,19 +107,6 @@ const ABANDON_REASONS = ['NO_SHOW', 'LEFT_BEFORE_SERVICE', 'CUSTOMER_CANCELLED_O
 const ABANDON_ROLES = ['ADMIN', 'MANAGER', 'SERVICE_ADVISOR', 'FRONT_DESK'];
 const ABANDONABLE_VISIT_STATUSES = ['CREATED', 'ARRIVED', 'CHECKED_IN', 'QUEUED', 'CALLED', 'IN_SERVICE', 'WAITING_PARTS'];
 
-// P2 — transport request from visit context.
-const TRANSPORT_ROLES = ['ADMIN', 'MANAGER', 'SERVICE_ADVISOR', 'TRANSPORT_COORDINATOR'];
-const TRANSPORT_ACTIVE = ['REQUESTED', 'CONFIRMATION_PENDING', 'SCHEDULED', 'DRIVER_ASSIGNED', 'IN_PROGRESS'];
-
-interface TransportRequestRow {
-  id: string;
-  direction: 'PICKUP' | 'DROPOFF';
-  status: string;
-  requestedPickupAt: string | null;
-  scheduledPickupAt: string | null;
-  driver: { id: string; fullName: string } | null;
-}
-
 const ORDER_ACTIONS: Record<string, Array<{ label: string; toStatus: string; style: string }>> = {
   DRAFT: [{ label: 'Approve', toStatus: 'APPROVED', style: 'btn-primary' }],
   APPROVED: [],
@@ -181,13 +168,6 @@ export default function QueueTicketDetailPage() {
   const [abandonReason, setAbandonReason] = useState(ABANDON_REASONS[0]);
   const [abandonNotes, setAbandonNotes] = useState('');
 
-  // Transport request form state (P2)
-  const canTransport = TRANSPORT_ROLES.includes(user?.roleCode ?? '');
-  const [showTransportForm, setShowTransportForm] = useState(false);
-  const [transportDirection, setTransportDirection] = useState<'DROPOFF' | 'PICKUP'>('DROPOFF');
-  const [transportPickupAt, setTransportPickupAt] = useState('');
-  const [transportNotes, setTransportNotes] = useState('');
-
   // --- Queries ---
   const { data: ticket, isLoading, error } = useQuery<TicketDetail>({
     queryKey: ['queue-ticket', ticketId],
@@ -212,13 +192,6 @@ export default function QueueTicketDetailPage() {
   const startInspection = useMutation({
     mutationFn: () => api.post<{ id: string }>('/inspections', { serviceVisitId: ticket!.serviceVisit.id }),
     onSuccess: (created) => router.push(`/inspections/${created.id}`),
-  });
-
-  const transportQuery = useQuery<TransportRequestRow[]>({
-    queryKey: ['transport-by-visit', ticket?.serviceVisit?.id],
-    queryFn: () => api.get(`/transport-requests/by-visit/${ticket!.serviceVisit.id}`),
-    enabled: canTransport && !!ticket?.serviceVisit?.id,
-    refetchInterval: 10000,
   });
 
   const techsQuery = useQuery<TechOption[]>({
@@ -343,22 +316,6 @@ export default function QueueTicketDetailPage() {
     },
   });
 
-  // P2 — create a transport request for this visit.
-  const createTransport = useMutation({
-    mutationFn: () => api.post('/transport-requests', {
-      serviceVisitId: ticket!.serviceVisit.id,
-      direction: transportDirection,
-      requestedPickupAt: transportPickupAt ? new Date(transportPickupAt).toISOString() : undefined,
-      notes: transportNotes || undefined,
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transport-by-visit', ticket?.serviceVisit?.id] });
-      setShowTransportForm(false);
-      setTransportNotes('');
-      setTransportPickupAt('');
-    },
-  });
-
   // --- Render ---
   if (isLoading) {
     return (
@@ -407,8 +364,6 @@ export default function QueueTicketDetailPage() {
     sv.sourceType !== 'HISTORICAL_IMPORT' &&
     ABANDONABLE_VISIT_STATUSES.includes(sv.status) &&
     !['COMPLETED', 'CANCELLED'].includes(ticket.displayStatus);
-  const transportRequests = transportQuery.data ?? [];
-  const hasActiveTransport = transportRequests.some((t) => TRANSPORT_ACTIVE.includes(t.status));
 
   return (
     <div className="page-container">
@@ -850,83 +805,6 @@ export default function QueueTicketDetailPage() {
           )}
         </div>
       </div>
-
-      {/* Transport Section (P2) */}
-      {canTransport && (
-        <div className="card mb-6">
-          <div className="card-header">
-            <h2 className="text-sm font-semibold text-slate-900">Transport</h2>
-          </div>
-          <div className="card-body space-y-3">
-            {transportRequests.length === 0 ? (
-              <p className="text-sm text-slate-500">No transport requests for this visit.</p>
-            ) : (
-              <div className="space-y-2">
-                {transportRequests.map((t) => (
-                  <div key={t.id} className="flex items-center justify-between border border-slate-200 rounded-md px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={t.status} />
-                      <span className="text-xs text-slate-600">{t.direction === 'PICKUP' ? 'Pickup' : 'Drop-off'}</span>
-                      {t.driver?.fullName && <span className="text-xs text-slate-400">&middot; {t.driver.fullName}</span>}
-                    </div>
-                    <span className="text-xs text-slate-400">
-                      {t.scheduledPickupAt
-                        ? new Date(t.scheduledPickupAt).toLocaleString()
-                        : t.requestedPickupAt
-                          ? new Date(t.requestedPickupAt).toLocaleString()
-                          : ''}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {sv.sourceType !== 'APPOINTMENT' ? (
-              <p className="text-xs text-slate-400">
-                Transport can only be requested for appointment visits with a transport-eligible service.
-              </p>
-            ) : hasActiveTransport ? (
-              <p className="text-xs text-slate-400">An active transport request already exists for this visit.</p>
-            ) : !showTransportForm ? (
-              <button onClick={() => setShowTransportForm(true)} className="text-xs text-blue-600 hover:underline font-medium">
-                Request Transport
-              </button>
-            ) : (
-              <div className="card border-blue-200 bg-blue-50">
-                <div className="card-body space-y-3">
-                  <h3 className="text-xs font-semibold text-slate-900">Request transport</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="input-label">Direction *</label>
-                      <select value={transportDirection} onChange={(e) => setTransportDirection(e.target.value as 'DROPOFF' | 'PICKUP')} className="input-field">
-                        <option value="DROPOFF">Drop-off</option>
-                        <option value="PICKUP">Pickup</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="input-label">Requested pickup</label>
-                      <input type="datetime-local" value={transportPickupAt} onChange={(e) => setTransportPickupAt(e.target.value)} className="input-field" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="input-label">Notes</label>
-                    <input type="text" value={transportNotes} onChange={(e) => setTransportNotes(e.target.value)} className="input-field" placeholder="Optional" />
-                  </div>
-                  {createTransport.isError && (
-                    <p className="text-xs text-red-600">{createTransport.error instanceof Error ? createTransport.error.message : 'Failed to create transport request'}</p>
-                  )}
-                  <div className="flex gap-2">
-                    <button onClick={() => createTransport.mutate()} disabled={createTransport.isPending} className="btn-primary text-xs">
-                      {createTransport.isPending ? 'Requesting...' : 'Create Request'}
-                    </button>
-                    <button onClick={() => setShowTransportForm(false)} className="btn-secondary text-xs">Cancel</button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Visit Completion Section */}
       {showCompletionSection && (
