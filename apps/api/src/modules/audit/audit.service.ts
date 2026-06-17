@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 
 export interface LogAuditInput {
-  actorUserId: string;
+  // null = system-initiated event (no human actor). The AuditLog.actorUserId
+  // column is nullable, so system transitions are still fully audited.
+  actorUserId: string | null;
   action: string;
   entityType: string;
   entityId?: string;

@@ -444,20 +444,18 @@ export class ClassificationService {
       });
     });
 
-    // System auto-classification (actor null) is recorded by the VehicleClassification
-    // row (source=MAKE_MODEL_LOOKUP); only write a per-user AuditLog when an actor exists.
-    if (actorUserId) {
-      await this.audit.log({
-        actorUserId,
-        action: AUDIT_ACTIONS.VEHICLE_CLASSIFIED,
-        entityType: 'Vehicle',
-        entityId: vehicleId,
-        beforeJson: { serviceClass: vehicle.serviceClass, weightClass: vehicle.weightClass },
-        afterJson: { serviceClass, weightClass },
-        reasonCode: 'CLASSIFICATION_AUTO_APPLIED',
-        notes: `Auto-applied from make/model (${suggestion.confidence})`,
-      });
-    }
+    // Always audit the auto-apply — system-initiated (actorUserId null) included.
+    // Auto-classification is a critical transition and must be auditable (CLAUDE.md §12).
+    await this.audit.log({
+      actorUserId,
+      action: AUDIT_ACTIONS.VEHICLE_CLASSIFIED,
+      entityType: 'Vehicle',
+      entityId: vehicleId,
+      beforeJson: { serviceClass: vehicle.serviceClass, weightClass: vehicle.weightClass },
+      afterJson: { serviceClass, weightClass },
+      reasonCode: 'CLASSIFICATION_AUTO_APPLIED',
+      notes: `Auto-applied from make/model (${suggestion.confidence})`,
+    });
 
     return { applied: true, serviceClass };
   }
