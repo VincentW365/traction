@@ -25,7 +25,8 @@ interface Props {
 
 const ZOOM_PX: Record<string, number> = { compact: 0.75, standard: 1.2, detailed: 1.9 }; // px per minute (vertical)
 const GUTTER = 60; // hour-label column width
-const COL_MIN_PX = 120; // min width per packed column; the lane scrolls horizontally when a slot has many overlapping items
+const COL_W = 200;       // fixed column/card width — blocks are tidy left-aligned cards, never stretched full-width
+const COL_GAP = 6;       // horizontal gap between adjacent columns
 const MIN_BLOCK_H = 18;  // min block height — always enough for one line
 const TWO_LINE_MIN = 30; // at/above this height a block shows a second line (time + name)
 
@@ -115,11 +116,11 @@ export function AppointmentCalendar({
   ].map((it) => ({ ...it, start: Math.max(openMin, it.start), end: Math.min(closeMin, Math.max(it.end, it.start + 15)) }));
 
   const placed = packColumns(items);
-  // Widest concurrent cluster → guarantees each column a readable min width. When a
-  // slot has more overlapping items than fit, the lane grows and scrolls horizontally
-  // instead of squeezing them into unreadable slivers.
+  // Blocks are fixed-width cards arranged in columns (not stretched across the lane).
+  // The lane is at least wide enough for the busiest slot's columns; if that exceeds
+  // the viewport it scrolls horizontally rather than shrinking the cards.
   const maxCols = placed.reduce((m, p) => Math.max(m, p.cols), 1);
-  const laneMinWidth = GUTTER + maxCols * COL_MIN_PX;
+  const laneMinWidth = GUTTER + maxCols * COL_W + COL_GAP;
 
   const hours: number[] = [];
   for (let h = Math.ceil(openMin / 60); h <= Math.floor(closeMin / 60); h++) hours.push(h);
@@ -184,14 +185,13 @@ export function AppointmentCalendar({
           )}
 
           {/* Items (appointments + holds), column-packed so they never overlap */}
-          {placed.map(({ item, col, cols }) => {
+          {placed.map(({ item, col }) => {
             const top = (item.start - openMin) * px;
             const height = Math.max((item.end - item.start) * px, MIN_BLOCK_H);
             const twoLine = height >= TWO_LINE_MIN; // tall enough for a second line without clipping
-            const frac = col / cols;
-            const wfrac = 1 / cols;
-            const left = `calc(${GUTTER}px + (100% - ${GUTTER}px) * ${frac})`;
-            const width = `calc((100% - ${GUTTER}px) * ${wfrac} - 4px)`;
+            // Fixed-width card, left-aligned in its column — never stretched across the lane.
+            const left = `${GUTTER + col * COL_W}px`;
+            const width = `${COL_W - COL_GAP}px`;
             const pos = { top: `${top}px`, height: `${height}px`, left, width } as const;
             const line1 = 'block text-[10px] font-semibold leading-tight truncate';
             const line2 = 'block text-[11px] leading-tight truncate';

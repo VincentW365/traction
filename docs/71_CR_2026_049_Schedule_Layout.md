@@ -12,7 +12,7 @@ On the Appointments calendar (`components/schedule/appointment-calendar.tsx`):
 2. **Crowded slots** — concurrent items were packed into columns that split **100% of the lane width**, so several items in the same slot each became an unreadable sliver. There was no minimum column width and no horizontal scroll.
 
 ## 3. Change
-- **Minimum column width + horizontal scroll.** The lane's `minWidth` is now `gutter + maxConcurrentColumns × 120px`. When a slot has more overlapping items than fit, the lane grows and scrolls horizontally so **every block stays ≥ ~116px wide and readable**, instead of being squeezed. When slots are sparse the lane still fills 100% width (unchanged look).
+- **Fixed-width, left-aligned cards (not stretched).** Blocks are now uniform fixed-width cards (200px, 6px gap) placed in left-aligned columns, instead of dividing 100% of the lane width. A lone appointment is a tidy card at the left — it no longer stretches across the whole calendar; overlapping items sit in neat adjacent columns of the same width. The lane is sized to the busiest slot's columns and **scrolls horizontally** only when those exceed the viewport, so cards never shrink.
 - **Responsive one/two-line blocks.** Each block shows two lines (time, then name) only when it's tall enough (`height ≥ 30px`); shorter blocks show a single combined line (`time · name`). Nothing is ever clipped, at any zoom, for appointments, holds, or walk-ins.
 - **Walk-in nominal block 20 → 30 min** so walk-ins read as a proper two-line block at standard/detailed zoom (and a clean single line at compact). Full detail remains in the hover tooltip.
 
