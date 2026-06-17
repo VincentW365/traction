@@ -377,6 +377,92 @@ export class ClassificationService {
   }
 
   /**
+   * CR-2026-038 — Auto-apply the make/model suggestion when it is CONFIDENT
+   * (HIGH or MEDIUM). Writes the operational serviceClass (+ weightClass) with no
+   * manual review, so classification happens automatically. LOW/NONE confidence is
+   * left unclassified (serviceClass stays null) → it surfaces in the small
+   * "needs review" list and remains mobile-jack blocked (DMAIC Rule 3 fail-safe).
+   * No-op if the vehicle already has a real class or is a placeholder. Safe to call
+   * from vehicle create / first check-in; actor may be null (system).
+   */
+  async autoClassify(
+    vehicleId: string,
+    actorUserId: string | null = null,
+  ): Promise<{ applied: boolean; serviceClass?: VehicleServiceClass }> {
+    const vehicle = await this.prisma.vehicle.findUnique({
+      where: { id: vehicleId },
+      select: { id: true, vehicleCode: true, make: true, model: true, modelYear: true, serviceClass: true, weightClass: true },
+    });
+    if (!vehicle || isPlaceholderVehicle(vehicle)) return { applied: false };
+    // Never overwrite an already-set real class (only fill nulls / prior UNKNOWN).
+    if (vehicle.serviceClass && vehicle.serviceClass !== VehicleServiceClass.UNKNOWN_REQUIRES_REVIEW) {
+      return { applied: false };
+    }
+
+    const rules = await this.loadRules();
+    const suggestion = suggestVehicleClass(
+      { make: vehicle.make, model: vehicle.model, modelYear: vehicle.modelYear },
+      rules,
+    );
+    const confident =
+      (suggestion.confidence === ClassificationConfidence.HIGH ||
+        suggestion.confidence === ClassificationConfidence.MEDIUM) &&
+      suggestion.suggestedServiceClass != null;
+    if (!confident) return { applied: false }; // leave for the small needs-review list
+
+    const serviceClass = suggestion.suggestedServiceClass as VehicleServiceClass;
+    const weightClass = suggestion.suggestedWeightClass ?? vehicle.weightClass ?? null;
+    const reviewedAt = new Date();
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.vehicle.update({
+        where: { id: vehicleId },
+        data: { serviceClass, ...(weightClass != null && { weightClass }) },
+      });
+      await tx.vehicleClassification.upsert({
+        where: { vehicleId },
+        create: {
+          vehicleId,
+          status: ClassificationStatus.CONFIRMED,
+          suggestedServiceClass: suggestion.suggestedServiceClass,
+          suggestedWeightClass: suggestion.suggestedWeightClass,
+          confidence: suggestion.confidence,
+          source: ClassificationSource.MAKE_MODEL_LOOKUP,
+          confirmedServiceClass: serviceClass,
+          confirmedWeightClass: weightClass,
+          reviewedByUserId: actorUserId,
+          reviewedAt,
+        },
+        update: {
+          status: ClassificationStatus.CONFIRMED,
+          source: ClassificationSource.MAKE_MODEL_LOOKUP,
+          confirmedServiceClass: serviceClass,
+          confirmedWeightClass: weightClass,
+          reviewedByUserId: actorUserId,
+          reviewedAt,
+        },
+      });
+    });
+
+    // System auto-classification (actor null) is recorded by the VehicleClassification
+    // row (source=MAKE_MODEL_LOOKUP); only write a per-user AuditLog when an actor exists.
+    if (actorUserId) {
+      await this.audit.log({
+        actorUserId,
+        action: AUDIT_ACTIONS.VEHICLE_CLASSIFIED,
+        entityType: 'Vehicle',
+        entityId: vehicleId,
+        beforeJson: { serviceClass: vehicle.serviceClass, weightClass: vehicle.weightClass },
+        afterJson: { serviceClass, weightClass },
+        reasonCode: 'CLASSIFICATION_AUTO_APPLIED',
+        notes: `Auto-applied from make/model (${suggestion.confidence})`,
+      });
+    }
+
+    return { applied: true, serviceClass };
+  }
+
+  /**
    * Explicit staff-reviewed bulk accept. Each item carries the class the reviewer
    * chose — there is no blanket auto-acceptance of suggestions. Each item is
    * audited independently; failures are collected, not fatal to the batch.

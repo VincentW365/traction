@@ -21,7 +21,7 @@ function buildService() {
     },
     customer: { findUnique: vi.fn(async () => ({ id: 'cust-1' })) },
   };
-  return { service: new VehiclesService(prisma as any), prisma };
+  return { service: new VehiclesService(prisma as any, { autoClassify: async () => ({ applied: false }) } as any), prisma };
 }
 
 describe('VehiclesService — new/exposed fields plumbing (CR-2026-029)', () => {

@@ -8,10 +8,14 @@ import { CreateVehicleDto } from './dto/create-vehicle.dto';
 import { UpdateVehicleDto } from './dto/update-vehicle.dto';
 import { liveVehicleWhere } from '../../common/helpers/operational-scope';
 import { normalizeCodeQuery } from '../../common/helpers/normalize-code-query';
+import { ClassificationService } from './classification.service';
 
 @Injectable()
 export class VehiclesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly classification: ClassificationService,
+  ) {}
 
   /**
    * Search vehicles by plate number, VIN, or customer name.
@@ -75,7 +79,7 @@ export class VehiclesService {
     const plateNormalized = data.plateNumber.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
     const vehicleCode = `SC${plateNormalized}`;
 
-    return this.prisma.vehicle.create({
+    const created = await this.prisma.vehicle.create({
       data: {
         customerId: data.customerId,
         vehicleCode,
@@ -94,6 +98,13 @@ export class VehiclesService {
       },
       include: { customer: true },
     });
+
+    // CR-2026-038 — auto-classify from make/model (confident matches only; low/none
+    // stay unclassified for the small needs-review list). System actor (no user ctx).
+    const auto = await this.classification.autoClassify(created.id, null);
+    if (auto.applied && auto.serviceClass) created.serviceClass = auto.serviceClass;
+
+    return created;
   }
 
   /**

@@ -110,7 +110,7 @@ export default function VehicleClassificationPage() {
   if (!ALLOWED_ROLES.includes(user?.roleCode ?? '')) {
     return (
       <div className="page-container">
-        <PageHeader title="Vehicle Classification" subtitle="Staff review queue" />
+        <PageHeader title="Unclassified Vehicles" subtitle="Set the class for vehicles the auto-classifier couldn't match" />
         <div className="card p-6 text-center border-amber-200 bg-amber-50">
           <p className="text-sm text-amber-800">
             You don&apos;t have permission to classify vehicles. Ask a manager for the
@@ -163,9 +163,9 @@ export default function VehicleClassificationPage() {
   return (
     <div className="page-container">
       <PageHeader
-        title="Vehicle Classification"
-        subtitle="Confirm or correct imported vehicles' service class. Suggestions are advisory — a vehicle stays mobile-jack blocked until confirmed."
-        breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Vehicle Classification' }]}
+        title="Unclassified Vehicles"
+        subtitle="Vehicles are classified automatically from make/model. This is the short list the auto-classifier couldn't match confidently — set the class here (each stays mobile-jack blocked until set)."
+        breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Unclassified Vehicles' }]}
       />
 
       {/* Filters */}
