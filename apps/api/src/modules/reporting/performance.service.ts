@@ -7,9 +7,16 @@ export interface TechnicianEfficiencyRow {
   employeeCode: string;
   fullName: string;
   jobsCompleted: number;
+  primaryJobs: number;
+  helperJobs: number;
+  avgJobMinutes: number;
   flaggedMinutes: number;
   clockMinutes: number;
   efficiencyPercent: number;
+  // Quality: of the jobs this tech was PRIMARY on, how many came back (rework),
+  // and the resulting first-time-fix rate. null when they had no primary jobs.
+  reworkedJobs: number;
+  firstTimeFixRate: number | null;
 }
 
 export interface AssignmentHistoryRow {
@@ -56,6 +63,7 @@ export class PerformanceService {
             serviceOrder: {
               include: {
                 items: { select: { estimateMinutes: true, actualMinutes: true } },
+                _count: { select: { reworks: true } },
               },
             },
           },
@@ -67,6 +75,9 @@ export class PerformanceService {
       let flaggedMinutes = 0;
       let clockMinutes = 0;
       let jobsCompleted = 0;
+      let primaryJobs = 0;
+      let helperJobs = 0;
+      let reworkedJobs = 0;
 
       for (const assignment of tech.assignments) {
         // Clock time = actual time worked on this assignment
@@ -76,11 +87,16 @@ export class PerformanceService {
           );
         }
 
-        // Flagged time = sum of estimated minutes for order items
-        if (assignment.isPrimary && assignment.serviceOrder?.items) {
-          for (const item of assignment.serviceOrder.items) {
+        if (assignment.isPrimary) {
+          primaryJobs++;
+          // Flagged time = sum of estimated minutes for order items (primary only)
+          for (const item of assignment.serviceOrder?.items ?? []) {
             flaggedMinutes += item.estimateMinutes ?? 0;
           }
+          // Quality: this primary job came back if its order has rework records.
+          if ((assignment.serviceOrder?._count?.reworks ?? 0) > 0) reworkedJobs++;
+        } else {
+          helperJobs++;
         }
 
         if (assignment.status === 'COMPLETED') {
@@ -90,15 +106,23 @@ export class PerformanceService {
 
       const efficiencyPercent =
         clockMinutes > 0 ? Math.round((flaggedMinutes / clockMinutes) * 100) : 0;
+      const avgJobMinutes = jobsCompleted > 0 ? Math.round(clockMinutes / jobsCompleted) : 0;
+      const firstTimeFixRate =
+        primaryJobs > 0 ? Math.round((1 - reworkedJobs / primaryJobs) * 1000) / 10 : null;
 
       return {
         technicianId: tech.id,
         employeeCode: tech.employeeCode,
         fullName: tech.userAccount.fullName,
         jobsCompleted,
+        primaryJobs,
+        helperJobs,
+        avgJobMinutes,
         flaggedMinutes,
         clockMinutes,
         efficiencyPercent,
+        reworkedJobs,
+        firstTimeFixRate,
       };
     });
   }
@@ -124,6 +148,7 @@ export class PerformanceService {
         serviceOrder: {
           include: {
             items: { include: { serviceType: { select: { name: true, family: true } } } },
+            _count: { select: { reworks: true } },
             serviceVisit: {
               select: {
                 customer: { select: { firstName: true, lastName: true } },
@@ -139,6 +164,9 @@ export class PerformanceService {
     const totalJobs = assignments.filter((a) => a.status === 'COMPLETED').length;
     let totalClockMinutes = 0;
     let totalFlaggedMinutes = 0;
+    let primaryJobs = 0;
+    let helperJobs = 0;
+    let reworkedJobs = 0;
 
     for (const a of assignments) {
       if (a.startedAt && a.endedAt) {
@@ -146,10 +174,14 @@ export class PerformanceService {
           (a.endedAt.getTime() - a.startedAt.getTime()) / 60000,
         );
       }
-      if (a.isPrimary && a.serviceOrder?.items) {
-        for (const item of a.serviceOrder.items) {
+      if (a.isPrimary) {
+        primaryJobs++;
+        for (const item of a.serviceOrder?.items ?? []) {
           totalFlaggedMinutes += item.estimateMinutes ?? 0;
         }
+        if ((a.serviceOrder?._count?.reworks ?? 0) > 0) reworkedJobs++;
+      } else {
+        helperJobs++;
       }
     }
 
@@ -157,20 +189,27 @@ export class PerformanceService {
     const efficiencyPercent = totalClockMinutes > 0
       ? Math.round((totalFlaggedMinutes / totalClockMinutes) * 100)
       : 0;
+    const firstTimeFixRate =
+      primaryJobs > 0 ? Math.round((1 - reworkedJobs / primaryJobs) * 1000) / 10 : null;
 
     return {
       technicianId,
       employeeCode: tech?.employeeCode ?? '',
       fullName: tech?.userAccount.fullName ?? '',
       totalJobs,
+      primaryJobs,
+      helperJobs,
       totalClockMinutes,
       totalFlaggedMinutes,
       avgJobMinutes,
       efficiencyPercent,
+      reworkedJobs,
+      firstTimeFixRate,
       assignments: assignments.map((a) => ({
         id: a.id,
         isPrimary: a.isPrimary,
         status: a.status,
+        reworked: (a.serviceOrder?._count?.reworks ?? 0) > 0,
         assignedAt: a.assignedAt.toISOString(),
         startedAt: a.startedAt?.toISOString() ?? null,
         endedAt: a.endedAt?.toISOString() ?? null,
