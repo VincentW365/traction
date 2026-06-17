@@ -8,16 +8,18 @@
  * appointment at the (15-min-snapped) time.
  */
 import { useRef } from 'react';
-import type { ApptBlock, HoldBlock } from './appointments-lane';
+import type { ApptBlock, HoldBlock, WalkInBlock } from './appointments-lane';
 
 interface Props {
   appointments: ApptBlock[];
   holds?: HoldBlock[];
+  walkIns?: WalkInBlock[];
   operatingHours: { open: string; close: string } | null;
   date: string;
   zoom: 'compact' | 'standard' | 'detailed';
   onAppointmentClick?: (id: string) => void;
   onHoldClick?: (id: string) => void;
+  onWalkInClick?: (block: WalkInBlock) => void;
   onEmptySlotClick?: (time: string) => void; // "HH:MM"
 }
 
@@ -31,7 +33,9 @@ const STATUS_STYLE: Record<string, string> = {
 };
 const fmt = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
-type Item = { id: string; kind: 'appt' | 'hold'; start: number; end: number; data: ApptBlock | HoldBlock };
+const WALKIN_BLOCK_MIN = 20; // nominal block length for a walk-in (it has only an arrival time)
+
+type Item = { id: string; kind: 'appt' | 'hold' | 'walkin'; start: number; end: number; data: ApptBlock | HoldBlock | WalkInBlock };
 
 /** Greedy interval partitioning: each item gets a column; concurrent items share a
  *  cluster whose column count fixes their widths so nothing overlaps. */
@@ -65,11 +69,13 @@ function packColumns(items: Item[]) {
 export function AppointmentCalendar({
   appointments,
   holds = [],
+  walkIns = [],
   operatingHours,
   date,
   zoom,
   onAppointmentClick,
   onHoldClick,
+  onWalkInClick,
   onEmptySlotClick,
 }: Props) {
   const areaRef = useRef<HTMLDivElement>(null);
@@ -94,6 +100,15 @@ export function AppointmentCalendar({
       data: a,
     })),
     ...holds.map((h) => ({ id: h.id, kind: 'hold' as const, start: minutesOf(h.scheduledStartAt), end: minutesOf(h.scheduledEndAt), data: h })),
+    ...walkIns
+      .filter((w) => w.checkedInAt)
+      .map((w) => ({
+        id: `walkin-${w.serviceVisitId}`,
+        kind: 'walkin' as const,
+        start: minutesOf(w.checkedInAt as string),
+        end: minutesOf(w.checkedInAt as string) + WALKIN_BLOCK_MIN,
+        data: w,
+      })),
   ].map((it) => ({ ...it, start: Math.max(openMin, it.start), end: Math.min(closeMin, Math.max(it.end, it.start + 15)) }));
 
   const placed = packColumns(items);
@@ -124,6 +139,7 @@ export function AppointmentCalendar({
         <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-slate-200 border border-slate-300" /> Draft</span>
         <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-amber-200 border border-amber-400" /> Rescheduled</span>
         <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm border border-dashed border-slate-400 bg-slate-100" /> Held</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-2 rounded-sm bg-emerald-200 border border-emerald-400" /> Walk-in</span>
         {showNow && <span className="flex items-center gap-1"><span className="w-3 h-px bg-red-500" /> Now</span>}
         <span className="ml-auto text-slate-400">Click an empty time to add</span>
       </div>
@@ -179,6 +195,21 @@ export function AppointmentCalendar({
                 >
                   <span className="block text-[10px] font-semibold leading-tight truncate">HELD {fmt(h.scheduledStartAt)}</span>
                   {h.label && <span className="block text-[10px] leading-tight truncate">{h.label}</span>}
+                </button>
+              );
+            }
+            if (item.kind === 'walkin') {
+              const w = item.data as WalkInBlock;
+              return (
+                <button
+                  key={item.id}
+                  onClick={(e) => { e.stopPropagation(); onWalkInClick?.(w); }}
+                  className="absolute z-10 rounded border border-emerald-400 bg-emerald-100 text-emerald-800 px-1.5 py-0.5 overflow-hidden text-left hover:bg-emerald-200 transition-colors"
+                  style={{ top: `${top}px`, height: `${height}px`, left, width }}
+                  title={`Walk-in${w.checkedInAt ? ` ${fmt(w.checkedInAt)}` : ''} — ${w.customerName}${w.ticketNumber ? ` (${w.ticketNumber})` : ''}`}
+                >
+                  <span className="block text-[10px] font-semibold leading-tight truncate">Walk-in{w.checkedInAt ? ` ${fmt(w.checkedInAt)}` : ''}</span>
+                  <span className="block text-[11px] leading-tight truncate">{w.customerName}</span>
                 </button>
               );
             }

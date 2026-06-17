@@ -24,6 +24,18 @@ export interface HoldBlock {
   label: string | null;
 }
 
+// CR-2026-045 — walk-in visit shown on the appointment calendar at its arrival
+// time (walk-ins have no scheduled slot). Click navigates to its queue ticket.
+export interface WalkInBlock {
+  serviceVisitId: string;
+  ticketId: string | null;
+  ticketNumber: string | null;
+  customerName: string;
+  vehiclePlate: string;
+  checkedInAt: string | null;
+  status: string;
+}
+
 interface Props {
   appointments: ApptBlock[];
   openMinutes: number;

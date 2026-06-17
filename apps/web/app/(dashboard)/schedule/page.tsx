@@ -34,6 +34,10 @@ interface ScheduleDayResponse {
     blockedReason: string | null; fifoPosition: number | null; displayStatus: string;
     requiredResourceTypes: string[];
   }>;
+  walkIns: Array<{
+    serviceVisitId: string; ticketId: string | null; ticketNumber: string | null;
+    customerName: string; vehiclePlate: string; checkedInAt: string | null; status: string;
+  }>;
   readyForPickup: Array<{
     serviceVisitId: string; ticketNumber: string; customerName: string;
     customerPhone: string; customerEmail: string | null; vehiclePlate: string;
@@ -290,11 +294,13 @@ export default function SchedulePage() {
               <AppointmentCalendar
                 appointments={apptBlocks}
                 holds={holdBlocks}
+                walkIns={data.walkIns ?? []}
                 operatingHours={data.operatingHours}
                 date={selectedDate}
                 zoom={zoom}
                 onAppointmentClick={(id) => setOpenApptId(id)}
                 onHoldClick={(id) => setOpenHoldId(id)}
+                onWalkInClick={(w) => { if (w.ticketId) router.push(`/queue/${w.ticketId}`); }}
                 onEmptySlotClick={(time) => setCreateAtTime(time)}
               />
             )}

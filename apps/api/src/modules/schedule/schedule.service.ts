@@ -128,6 +128,25 @@ export class ScheduleService {
       orderBy: { updatedAt: 'desc' },
     });
 
+    // 7b. Walk-in visits checked in today — shown on the Appointments calendar at
+    // their ARRIVAL time (walk-ins have no scheduled slot). Live, non-test-data
+    // only. Placed after completedVisits/readyForPickup so the scope test (which
+    // asserts serviceVisit.findMany[0]) keeps pointing at completedVisits.
+    const walkInVisits = await this.prisma.serviceVisit.findMany({
+      where: {
+        siteId,
+        sourceType: 'WALKIN',
+        checkedInAt: { gte: dayStart, lte: dayEnd },
+        testDataRunId: null,
+      },
+      include: {
+        customer: { select: { firstName: true, lastName: true } },
+        vehicle: { select: { plateNumber: true } },
+        queueTicket: { select: { id: true, ticketNumber: true } },
+      },
+      orderBy: { checkedInAt: 'asc' },
+    });
+
     // 8. Technician assignments for today
     const assignments = await this.prisma.technicianAssignment.findMany({
       where: {
@@ -245,11 +264,24 @@ export class ScheduleService {
       vehiclePlate: sv.vehicle.plateNumber,
     }));
 
+    // Walk-in blocks for the Appointments calendar (placed by arrival time).
+    const walkIns = walkInVisits.map((sv) => ({
+      serviceVisitId: sv.id,
+      ticketId: sv.queueTicket?.id ?? null,
+      ticketNumber: sv.queueTicket?.ticketNumber ?? null,
+      customerName: `${sv.customer.firstName} ${sv.customer.lastName}`,
+      vehiclePlate: sv.vehicle.plateNumber,
+      checkedInAt: sv.checkedInAt ? sv.checkedInAt.toISOString() : null,
+      status: sv.status,
+    }));
+
     // Stats
     const todayAppointments = await this.prisma.appointment.count({
       where: { siteId, scheduledStartAt: { gte: dayStart, lte: dayEnd } },
     });
-    const walkInCount = queueTickets.filter((t) => t.serviceVisit.sourceType === 'WALKIN').length;
+    // Count all walk-ins that checked in today (matches the calendar), not just
+    // those still queued.
+    const walkInCount = walkIns.length;
     const blockedCount = queueTickets.filter((t) => t.displayStatus === 'BLOCKED').length;
 
     return {
@@ -274,6 +306,7 @@ export class ScheduleService {
       })),
       events,
       queueItems,
+      walkIns,
       readyForPickup: pickupItems,
       stats: {
         appointments: todayAppointments,
