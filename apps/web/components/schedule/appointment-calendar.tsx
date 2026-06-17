@@ -25,6 +25,9 @@ interface Props {
 
 const ZOOM_PX: Record<string, number> = { compact: 0.75, standard: 1.2, detailed: 1.9 }; // px per minute (vertical)
 const GUTTER = 60; // hour-label column width
+const COL_MIN_PX = 120; // min width per packed column; the lane scrolls horizontally when a slot has many overlapping items
+const MIN_BLOCK_H = 18;  // min block height — always enough for one line
+const TWO_LINE_MIN = 30; // at/above this height a block shows a second line (time + name)
 
 const STATUS_STYLE: Record<string, string> = {
   CONFIRMED: 'bg-blue-100 border-blue-300 text-blue-800 hover:bg-blue-200',
@@ -33,7 +36,7 @@ const STATUS_STYLE: Record<string, string> = {
 };
 const fmt = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
-const WALKIN_BLOCK_MIN = 20; // nominal block length for a walk-in (it has only an arrival time)
+const WALKIN_BLOCK_MIN = 30; // nominal block length for a walk-in (it has only an arrival time)
 
 type Item = { id: string; kind: 'appt' | 'hold' | 'walkin'; start: number; end: number; data: ApptBlock | HoldBlock | WalkInBlock };
 
@@ -112,6 +115,11 @@ export function AppointmentCalendar({
   ].map((it) => ({ ...it, start: Math.max(openMin, it.start), end: Math.min(closeMin, Math.max(it.end, it.start + 15)) }));
 
   const placed = packColumns(items);
+  // Widest concurrent cluster → guarantees each column a readable min width. When a
+  // slot has more overlapping items than fit, the lane grows and scrolls horizontally
+  // instead of squeezing them into unreadable slivers.
+  const maxCols = placed.reduce((m, p) => Math.max(m, p.cols), 1);
+  const laneMinWidth = GUTTER + maxCols * COL_MIN_PX;
 
   const hours: number[] = [];
   for (let h = Math.ceil(openMin / 60); h <= Math.floor(closeMin / 60); h++) hours.push(h);
@@ -146,7 +154,7 @@ export function AppointmentCalendar({
 
       {/* Calendar body */}
       <div className="flex-1 overflow-auto">
-        <div className="relative" style={{ height: `${Math.max(totalH, 200)}px` }}>
+        <div className="relative" style={{ height: `${Math.max(totalH, 200)}px`, minWidth: `${laneMinWidth}px` }}>
           {/* Hour gridlines + labels */}
           {hours.map((h) => {
             const top = (h * 60 - openMin) * px;
@@ -178,52 +186,78 @@ export function AppointmentCalendar({
           {/* Items (appointments + holds), column-packed so they never overlap */}
           {placed.map(({ item, col, cols }) => {
             const top = (item.start - openMin) * px;
-            const height = Math.max((item.end - item.start) * px, 20);
+            const height = Math.max((item.end - item.start) * px, MIN_BLOCK_H);
+            const twoLine = height >= TWO_LINE_MIN; // tall enough for a second line without clipping
             const frac = col / cols;
             const wfrac = 1 / cols;
             const left = `calc(${GUTTER}px + (100% - ${GUTTER}px) * ${frac})`;
             const width = `calc((100% - ${GUTTER}px) * ${wfrac} - 4px)`;
+            const pos = { top: `${top}px`, height: `${height}px`, left, width } as const;
+            const line1 = 'block text-[10px] font-semibold leading-tight truncate';
+            const line2 = 'block text-[11px] leading-tight truncate';
+
             if (item.kind === 'hold') {
               const h = item.data as HoldBlock;
+              const t = fmt(h.scheduledStartAt);
               return (
                 <button
                   key={item.id}
                   onClick={(e) => { e.stopPropagation(); onHoldClick?.(item.id); }}
                   className="absolute z-10 rounded border border-dashed border-slate-400 bg-slate-100/80 px-1.5 py-0.5 overflow-hidden text-left text-slate-500 hover:bg-slate-200 transition-colors"
-                  style={{ top: `${top}px`, height: `${height}px`, left, width }}
-                  title={`HELD ${fmt(h.scheduledStartAt)} – ${fmt(h.scheduledEndAt)}${h.label ? ` — ${h.label}` : ''}`}
+                  style={pos}
+                  title={`HELD ${t} – ${fmt(h.scheduledEndAt)}${h.label ? ` — ${h.label}` : ''}`}
                 >
-                  <span className="block text-[10px] font-semibold leading-tight truncate">HELD {fmt(h.scheduledStartAt)}</span>
-                  {h.label && <span className="block text-[10px] leading-tight truncate">{h.label}</span>}
+                  {twoLine ? (
+                    <>
+                      <span className={line1}>HELD {t}</span>
+                      {h.label && <span className={line2}>{h.label}</span>}
+                    </>
+                  ) : (
+                    <span className={line1}>HELD {t}{h.label ? ` · ${h.label}` : ''}</span>
+                  )}
                 </button>
               );
             }
             if (item.kind === 'walkin') {
               const w = item.data as WalkInBlock;
+              const t = w.checkedInAt ? fmt(w.checkedInAt) : '';
               return (
                 <button
                   key={item.id}
                   onClick={(e) => { e.stopPropagation(); onWalkInClick?.(w); }}
                   className="absolute z-10 rounded border border-emerald-400 bg-emerald-100 text-emerald-800 px-1.5 py-0.5 overflow-hidden text-left hover:bg-emerald-200 transition-colors"
-                  style={{ top: `${top}px`, height: `${height}px`, left, width }}
-                  title={`Walk-in${w.checkedInAt ? ` ${fmt(w.checkedInAt)}` : ''} — ${w.customerName}${w.ticketNumber ? ` (${w.ticketNumber})` : ''}`}
+                  style={pos}
+                  title={`Walk-in${t ? ` ${t}` : ''} — ${w.customerName}${w.ticketNumber ? ` (${w.ticketNumber})` : ''}`}
                 >
-                  <span className="block text-[10px] font-semibold leading-tight truncate">Walk-in{w.checkedInAt ? ` ${fmt(w.checkedInAt)}` : ''}</span>
-                  <span className="block text-[11px] leading-tight truncate">{w.customerName}</span>
+                  {twoLine ? (
+                    <>
+                      <span className={line1}>Walk-in{t ? ` ${t}` : ''}</span>
+                      <span className={line2}>{w.customerName}</span>
+                    </>
+                  ) : (
+                    <span className={line1}>{t ? `${t} ` : ''}{w.customerName}</span>
+                  )}
                 </button>
               );
             }
             const a = item.data as ApptBlock;
+            const at = fmt(a.scheduledStartAt);
             return (
               <button
                 key={item.id}
                 onClick={(e) => { e.stopPropagation(); onAppointmentClick?.(item.id); }}
                 className={`absolute z-10 rounded border px-1.5 py-0.5 overflow-hidden text-left transition-colors ${STATUS_STYLE[a.status] ?? STATUS_STYLE.DRAFT}`}
-                style={{ top: `${top}px`, height: `${height}px`, left, width }}
-                title={`${fmt(a.scheduledStartAt)}${a.scheduledEndAt ? ` – ${fmt(a.scheduledEndAt)}` : ''} — ${a.customerName} (${a.status})`}
+                style={pos}
+                title={`${at}${a.scheduledEndAt ? ` – ${fmt(a.scheduledEndAt)}` : ''} — ${a.customerName} (${a.status})`}
               >
-                <span className="block text-[10px] font-semibold leading-tight truncate">{fmt(a.scheduledStartAt)}</span>
-                <span className="block text-[11px] leading-tight truncate">{a.customerName}</span>
+                {twoLine ? (
+                  <>
+                    <span className={line1}>{at}</span>
+                    <span className={line2}>{a.customerName}</span>
+                  </>
+                ) : (
+                  <span className={line1}>{at} {a.customerName}</span>
+                )}
               </button>
             );
           })}
