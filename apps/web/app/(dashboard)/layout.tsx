@@ -3,6 +3,7 @@
 import { useAuth } from '../../hooks/use-auth';
 import { Sidebar } from '../../components/sidebar';
 import { DevSandboxBanner } from '../../components/dev-sandbox-banner';
+import { UnclassifiedAlert } from '../../components/unclassified-alert';
 
 export default function DashboardLayout({
   children,
@@ -74,6 +75,9 @@ export default function DashboardLayout({
         {/* Page content */}
         <main className="flex-1 overflow-auto p-6">{children}</main>
       </div>
+
+      {/* Auto-classify exceptions — floating alert + popup; renders only when vehicles need a class */}
+      <UnclassifiedAlert />
     </div>
   );
 }
