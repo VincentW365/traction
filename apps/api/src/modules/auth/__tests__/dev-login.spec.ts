@@ -106,15 +106,17 @@ describe('dev-login behaviour (enabled, non-production)', () => {
     await expect(svc.devLogin('MANAGER')).rejects.toThrow(/not seeded/i);
   });
 
-  it('issues NORMAL tokens (correct role+permissions) and writes a DEV_LOGIN audit', async () => {
+  it('keeps the chosen role but grants FULL permissions for the sandbox session + writes a DEV_LOGIN audit (CR-2026-047)', async () => {
     enable();
     const { svc, prisma, audit } = build();
     prisma.userAccount.findFirst.mockResolvedValueOnce({
       id: 'm1', email: 'devtest.manager@berts.local', fullName: 'DEVTEST Manager', roleCode: 'MANAGER', siteId: null, status: 'ACTIVE',
     });
     const res = await svc.devLogin('MANAGER');
+    // Identity/role stays MANAGER (for audit + display) but the sandbox session can use every feature.
     expect(decode(res.accessToken).role).toBe('MANAGER');
-    expect(decode(res.accessToken).permissions).toEqual(ROLE_PERMISSIONS.MANAGER);
+    expect(decode(res.accessToken).permissions).toEqual(ROLE_PERMISSIONS.ADMIN);
+    expect(decode(res.accessToken).permissions).not.toEqual(ROLE_PERMISSIONS.MANAGER);
     expect(res.refreshToken).toBeTruthy();
     expect(res.user).toMatchObject({ roleCode: 'MANAGER', email: 'devtest.manager@berts.local' });
 
@@ -126,6 +128,33 @@ describe('dev-login behaviour (enabled, non-production)', () => {
     // CR-2026-023 — sandbox session opened + claim present
     expect(res.sandboxRunId).toBe('run-xyz');
     expect(decode(res.accessToken).sandboxRunId).toBe('run-xyz');
+  });
+
+  it('refresh of a sandbox token preserves full access + the sandbox run id (CR-2026-047)', async () => {
+    enable();
+    const { svc, prisma } = build();
+    prisma.userAccount.findFirst.mockResolvedValueOnce({
+      id: 'm1', email: 'devtest.manager@berts.local', fullName: 'DEVTEST Manager', roleCode: 'MANAGER', siteId: null, status: 'ACTIVE',
+    });
+    const res = await svc.devLogin('MANAGER');
+    prisma.userAccount.findUnique = vi.fn(async () => ({ id: 'm1', email: 'x', fullName: 'y', roleCode: 'MANAGER', siteId: null, status: 'ACTIVE' }));
+    const refreshed = await svc.refresh(res.refreshToken);
+    expect(decode(refreshed.accessToken).permissions).toEqual(ROLE_PERMISSIONS.ADMIN);
+    expect(decode(refreshed.accessToken).sandboxRunId).toBe('run-xyz');
+  });
+
+  it('a sandbox token does NOT get full access when dev-login is disabled (defense-in-depth, CR-2026-047)', async () => {
+    enable();
+    const { svc, prisma } = build();
+    prisma.userAccount.findFirst.mockResolvedValueOnce({
+      id: 'm1', email: 'devtest.manager@berts.local', fullName: 'DEVTEST Manager', roleCode: 'MANAGER', siteId: null, status: 'ACTIVE',
+    });
+    const res = await svc.devLogin('MANAGER'); // minted while enabled
+    // Now simulate the gate being off (e.g. production) at refresh time.
+    disable();
+    prisma.userAccount.findUnique = vi.fn(async () => ({ id: 'm1', email: 'x', fullName: 'y', roleCode: 'MANAGER', siteId: null, status: 'ACTIVE' }));
+    const refreshed = await svc.refresh(res.refreshToken);
+    expect(decode(refreshed.accessToken).permissions).toEqual(ROLE_PERMISSIONS.MANAGER);
   });
 
   it('listDevProfiles returns the 7 staff roles (no CUSTOMER) + availability + warning', async () => {

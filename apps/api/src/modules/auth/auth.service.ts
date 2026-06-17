@@ -41,7 +41,13 @@ export class AuthService {
 
   /** Sign an access token. `sandboxRunId` (CR-2026-023) is added ONLY for dev-login sessions. */
   private signAccessToken(user: TokenUser, sandboxRunId?: string): string {
-    const permissions = ROLE_PERMISSIONS[user.roleCode] ?? [];
+    // CR-2026-047 — dev sandbox sessions get the FULL permission set so testers can
+    // exercise every feature. This is temporary + dev-only: `sandboxRunId` is set
+    // only by devLogin() (gated by devLoginEnabled = ALLOW_DEV_LOGIN + non-production),
+    // and we re-check the gate here as defense-in-depth. Real logins (no sandboxRunId)
+    // always receive the role's own permissions — production auth is unchanged.
+    const fullAccess = !!sandboxRunId && this.devLoginEnabled();
+    const permissions = fullAccess ? ROLE_PERMISSIONS.ADMIN : (ROLE_PERMISSIONS[user.roleCode] ?? []);
     const payload: JwtPayload = {
       sub: user.id,
       role: user.roleCode,

@@ -26,6 +26,19 @@ const REFRESH_KEY = 'bsop_refresh';
 const SANDBOX_RUN_KEY = 'bsop_sandbox_run_id';
 const SANDBOX_ROLE_KEY = 'bsop_sandbox_role';
 
+/**
+ * CR-2026-047 — dev sandbox sessions get FULL feature access for testing. The
+ * frontend gates features by roleCode, and no single role is a superset (e.g. the
+ * technician "My Work" page is technician-only), so we present an effective role of
+ * ADMIN for gating during a sandbox session. The actually-selected role is kept in
+ * `sandboxRole` for display (banner/footer). Temporary + dev-only: only dev-login
+ * sets sandboxRunId, and the API independently grants full permissions for the same
+ * session. Real logins are unaffected.
+ */
+function withSandboxAccess(user: User, sandboxRunId: string | null): User {
+  return sandboxRunId ? { ...user, roleCode: 'ADMIN' } : user;
+}
+
 /** Forget any dev-sandbox session markers (normal login + logout). */
 function clearSandbox() {
   if (typeof window === 'undefined') return;
@@ -53,7 +66,7 @@ export function useAuth() {
       const sandboxRunId = sessionStorage.getItem(SANDBOX_RUN_KEY);
       const sandboxRole = sessionStorage.getItem(SANDBOX_ROLE_KEY);
       api.get<User>('/auth/me')
-        .then((user) => setState({ user, loading: false, error: null, sandboxRunId, sandboxRole }))
+        .then((user) => setState({ user: withSandboxAccess(user, sandboxRunId), loading: false, error: null, sandboxRunId, sandboxRole }))
         .catch(() => {
           sessionStorage.removeItem(TOKEN_KEY);
           clearSandbox();
@@ -112,7 +125,7 @@ export function useAuth() {
       } else {
         clearSandbox();
       }
-      setState({ user: res.user, loading: false, error: null, sandboxRunId, sandboxRole });
+      setState({ user: withSandboxAccess(res.user, sandboxRunId), loading: false, error: null, sandboxRunId, sandboxRole });
     } catch (e) {
       setState({
         user: null,

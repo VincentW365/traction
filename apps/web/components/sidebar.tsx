@@ -129,11 +129,14 @@ const NAV_ITEMS: NavItem[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { user } = useAuth();
+  const { user, sandboxRunId, sandboxRole } = useAuth();
   const userRole = user?.roleCode ?? '';
+  // CR-2026-047 — dev sandbox sessions see every feature (the effective role is
+  // already ADMIN, but some nav is role-exclusive of admin, e.g. technician "My Work").
+  const fullAccess = !!sandboxRunId;
 
   const visibleItems = NAV_ITEMS.filter((item) => {
-    if (!item.roles) return true;
+    if (fullAccess || !item.roles) return true;
     return item.roles.includes(userRole);
   });
 
@@ -192,7 +195,10 @@ export function Sidebar() {
       {user && (
         <div className="px-4 py-3 border-t border-slate-800">
           <div className="text-xs font-medium text-slate-300 truncate">{user.fullName}</div>
-          <div className="text-[10px] text-slate-500 capitalize">{user.roleCode.replace(/_/g, ' ').toLowerCase()}</div>
+          <div className="text-[10px] text-slate-500 capitalize">
+            {(sandboxRole ?? user.roleCode).replace(/_/g, ' ').toLowerCase()}
+            {fullAccess && <span className="text-amber-400 normal-case"> · full access</span>}
+          </div>
         </div>
       )}
     </aside>
