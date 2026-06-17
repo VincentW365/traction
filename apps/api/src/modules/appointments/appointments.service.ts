@@ -57,17 +57,15 @@ export class AppointmentsService {
     // 1. Validate: scheduledStartAt must be in the future
     if (isBefore(scheduledStartAt, new Date())) {
       throw new BadRequestException(
-        'Scheduled start time must be in the future',
+        'Scheduled start time must be in the future (a later time today is allowed).',
       );
     }
 
-    // 1b. DMAIC Rule 1: same-day appointment cutoff (site-local time; override audited)
-    await this.enforceSameDayCutoff(
-      scheduledStartAt,
-      data.siteId,
-      !!(data as any).managerOverride,
-      userId,
-    );
+    // 1b. DMAIC Rule 1 (same-day cutoff) RELAXED per CR-2026-041 (owner-approved):
+    // any future slot within business hours is bookable same-day with no manager
+    // override. The enforceSameDayCutoff() method + its tests are retained (unused)
+    // so the rule can be re-enabled by restoring this call.
+    // await this.enforceSameDayCutoff(scheduledStartAt, data.siteId, !!(data as any).managerOverride, userId);
 
     // 2. Validate: within operating hours
     await this.validateOperatingHours(scheduledStartAt, data.siteId);
@@ -235,7 +233,7 @@ export class AppointmentsService {
 
       if (isBefore(newStart, new Date())) {
         throw new BadRequestException(
-          'Scheduled start time must be in the future',
+          'Scheduled start time must be in the future (a later time today is allowed).',
         );
       }
 

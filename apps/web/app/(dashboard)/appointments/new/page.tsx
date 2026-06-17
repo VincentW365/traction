@@ -221,8 +221,15 @@ export default function NewAppointmentPage() {
     },
   });
 
+  // Local "today" (YYYY-MM-DD) for the date picker, and a past-time guard so we
+  // never submit a slot earlier than now. Any later time today is allowed
+  // (CR-2026-041 — same-day booking permitted within business hours).
+  const todayStr = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+  const selectedStartMs = scheduledDate && scheduledTime ? new Date(`${scheduledDate}T${scheduledTime}:00`).getTime() : null;
+  const isPastSelected = selectedStartMs !== null && selectedStartMs <= Date.now();
+
   function handleSubmit() {
-    if (!selectedCustomer || !selectedVehicle || selectedServiceCodes.length === 0 || !scheduledDate) return;
+    if (!selectedCustomer || !selectedVehicle || selectedServiceCodes.length === 0 || !scheduledDate || isPastSelected) return;
     const scheduledStartAt = new Date(`${scheduledDate}T${scheduledTime}:00`).toISOString();
     createMutation.mutate({
       siteId: siteId,
@@ -442,6 +449,7 @@ export default function NewAppointmentPage() {
                 <input
                   type="date"
                   value={scheduledDate}
+                  min={todayStr}
                   onChange={(e) => setScheduledDate(e.target.value)}
                   className="input-field"
                 />
@@ -480,12 +488,16 @@ export default function NewAppointmentPage() {
             </button>
             <button
               onClick={handleSubmit}
-              disabled={createMutation.isPending || !scheduledDate}
+              disabled={createMutation.isPending || !scheduledDate || isPastSelected}
               className="btn-success px-8 py-2.5"
             >
               {createMutation.isPending ? 'Creating...' : 'Create Appointment'}
             </button>
           </div>
+
+          {isPastSelected && (
+            <p className="text-xs text-amber-600">That time has already passed. Pick a later time today or a future date.</p>
+          )}
 
           {createMutation.isError && (
             <div className="card border-red-200 bg-red-50">

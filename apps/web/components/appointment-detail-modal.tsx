@@ -85,6 +85,12 @@ export function AppointmentDetailModal({
 
   const requiresMileage = !!appt?.services.some((s) => s.serviceType.requiresMileage);
 
+  // Local "today" for the reschedule date picker + a past-time guard (CR-2026-041):
+  // any later time today is allowed, but we never submit a slot earlier than now.
+  const todayStr = toDateInput(new Date().toISOString());
+  const rStartMs = rDate && rTime ? new Date(`${rDate}T${rTime}:00`).getTime() : null;
+  const rIsPast = rStartMs !== null && rStartMs <= Date.now();
+
   const checkInMutation = useMutation({
     mutationFn: () =>
       api.post<CheckInResult>(`/appointments/${appointmentId}/check-in`, {
@@ -126,7 +132,10 @@ export function AppointmentDetailModal({
   }
   function openReschedule() {
     if (!appt) return;
-    setRDate(toDateInput(appt.scheduledStartAt));
+    // Don't pre-fill a past date — if the original slot is behind us, start from today
+    // (the user is rescheduling forward). Keep the original time as a starting point.
+    const origDate = toDateInput(appt.scheduledStartAt);
+    setRDate(origDate < todayStr ? todayStr : origDate);
     setRTime(toTimeInput(appt.scheduledStartAt));
     setRNotes('');
     rescheduleMutation.reset();
@@ -275,13 +284,14 @@ export function AppointmentDetailModal({
                 <div className="space-y-3 pt-3 border-t border-slate-100">
                   <p className="text-sm font-semibold text-slate-900">Reschedule</p>
                   <div className="grid grid-cols-2 gap-3">
-                    <div><label className="input-label">Date</label><input type="date" value={rDate} onChange={(e) => setRDate(e.target.value)} className="input-field" /></div>
+                    <div><label className="input-label">Date</label><input type="date" min={todayStr} value={rDate} onChange={(e) => setRDate(e.target.value)} className="input-field" /></div>
                     <div><label className="input-label">Time</label><input type="time" min="08:00" max="17:00" step="900" value={rTime} onChange={(e) => setRTime(e.target.value)} className="input-field" /></div>
                   </div>
                   <div><label className="input-label">Reason (optional)</label><input type="text" value={rNotes} onChange={(e) => setRNotes(e.target.value)} className="input-field" placeholder="Reason for change" /></div>
+                  {rIsPast && <p className="text-xs text-amber-600">That time has already passed. Pick a later time today or a future date.</p>}
                   {rescheduleMutation.isError && <p className="text-xs text-red-600">{rescheduleMutation.error instanceof Error ? rescheduleMutation.error.message : 'Failed to reschedule'}</p>}
                   <div className="flex items-center gap-2">
-                    <button onClick={() => rescheduleMutation.mutate()} disabled={rescheduleMutation.isPending || !rDate || !rTime} className="btn-primary text-xs">{rescheduleMutation.isPending ? 'Saving…' : 'Save'}</button>
+                    <button onClick={() => rescheduleMutation.mutate()} disabled={rescheduleMutation.isPending || !rDate || !rTime || rIsPast} className="btn-primary text-xs">{rescheduleMutation.isPending ? 'Saving…' : 'Save'}</button>
                     <button onClick={() => setMode('view')} disabled={rescheduleMutation.isPending} className="btn-secondary text-xs">Back</button>
                   </div>
                 </div>
