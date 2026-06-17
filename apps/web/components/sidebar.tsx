@@ -70,11 +70,6 @@ const NAV_ITEMS: NavItem[] = [
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>,
   },
   {
-    href: '/reports/historical', label: 'Historical Analytics', section: 'Management',
-    roles: ['ADMIN', 'MANAGER'],
-    icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 3v18h18M7 16l4-4 3 3 5-6" /></svg>,
-  },
-  {
     href: '/reports/service-mix', label: 'Service Mix', section: 'Management',
     roles: ['ADMIN', 'MANAGER'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.488 9A9.004 9.004 0 0015 3.512V9h5.488z" /></svg>,
@@ -83,11 +78,6 @@ const NAV_ITEMS: NavItem[] = [
     href: '/reports/due-for-contact', label: 'Due for Contact', section: 'Management',
     roles: ['ADMIN', 'MANAGER'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>,
-  },
-  {
-    href: '/reports/rework', label: 'Rework / FTF', section: 'Management',
-    roles: ['ADMIN', 'MANAGER'],
-    icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>,
   },
   {
     href: '/admin/settings', label: 'Settings', section: 'Management',
