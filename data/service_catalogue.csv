@@ -6,8 +6,6 @@ BRK-01,Brake Inspection,Brakes,30,No,No,BRAKE,General Bay,No,No,BRAKE,May lead t
 BRK-02,Brake Pad Replacement,Brakes,90,Recommended,No,BRAKE,General Bay,Yes,Yes,BRAKE,Critical parts must be reserved before slot protection.
 TIR-02,Wheel Alignment,Tires,60,Recommended,No,ALIGNMENT,Alignment Bay,No,No,ALIGNMENT,Requires alignment-capable bay.
 TIR-03,Tire Install & Balance,Tires,60,Recommended,No,TIRE,Tire Bay,Yes,No,TIRE_INSTALL,Tires should be staged before arrival.
-AC-01,A/C Diagnostic,A/C,60,Recommended,No,AC,General Bay,No,No,AC,Often diagnostic-only first visit.
-AC-02,A/C Repair,A/C,180,Yes,No,AC,General Bay,Yes,Yes,AC,Requires specialist technician and parts readiness.
 ENG-01,Engine Diagnostic,Diagnostics,90,Recommended,No,DIAG,Diagnostic Bay,No,No,DIAGNOSTIC,May expand into multi-day repair.
 ENG-02,Major Tune-Up,Engine,180,Yes,No,ENGINE,General Bay,Yes,Yes,ENGINE_SERVICE,Schedule with experienced technician.
 ELE-01,Electrical Diagnostic,Electrical,90,Recommended,No,ELECTRICAL,Diagnostic Bay,No,No,ELECTRICAL,Specialist assignment required.

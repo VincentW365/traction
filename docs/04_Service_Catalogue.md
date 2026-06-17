@@ -34,8 +34,6 @@ The CSV source lives in `data/service_catalogue.csv`.
 | BRK-02 | Brake Pad Replacement | Brakes | 90 | No | BRAKE | General Bay | Yes | Yes |
 | TIR-02 | Wheel Alignment | Tires | 60 | No | ALIGNMENT | Alignment Bay | No | No |
 | TIR-03 | Tire Install & Balance | Tires | 60 | No | TIRE | Tire Bay | Yes | No |
-| AC-01 | A/C Diagnostic | A/C | 60 | No | AC | General Bay | No | No |
-| AC-02 | A/C Repair | A/C | 180 | No | AC | General Bay | Yes | Yes |
 | ENG-01 | Engine Diagnostic | Diagnostics | 90 | No | DIAG | Diagnostic Bay | No | No |
 | ENG-02 | Major Tune-Up | Engine | 180 | No | ENGINE | General Bay | Yes | Yes |
 | ELE-01 | Electrical Diagnostic | Electrical | 90 | No | ELECTRICAL | Diagnostic Bay | No | No |
@@ -77,9 +75,9 @@ Rules:
 
 ### Complex Repair
 Examples:
-- A/C repair
 - suspension replacement
 - transmission diagnostic
+- major engine repair
 
 Rules:
 - specialist skill required
