@@ -18,7 +18,7 @@ interface ProfilesResponse {
   profiles: DevProfile[];
 }
 
-const GROUP_ORDER = ['Administration', 'Front Office', 'Workshop', 'Parts / Transport'];
+const GROUP_ORDER = ['Administration', 'Front Office', 'Workshop'];
 
 export default function DevLoginPage() {
   const { user, loading, error, devLogin } = useAuth();

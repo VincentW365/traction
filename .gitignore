@@ -63,3 +63,6 @@ demo-output/
 
 # Build caches
 *.tsbuildinfo
+
+# Local DB backups (may contain PII) — never commit
+backups/

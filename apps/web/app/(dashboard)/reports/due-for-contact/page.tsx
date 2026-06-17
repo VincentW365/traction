@@ -12,7 +12,7 @@ import { EmptyState } from '../../../../components/ui/empty-state';
 import { ExportMenu } from '../../../../components/ui/export-menu';
 import type { ExportDocument } from '../../../../lib/export';
 
-const ALLOWED_ROLES = ['ADMIN', 'MANAGER'];
+const ALLOWED_ROLES = ['ADMIN'];
 
 // Shape returned by GET /maintenance/due-vehicles (MaintenanceRecommendation + vehicle.customer).
 interface DueRow {

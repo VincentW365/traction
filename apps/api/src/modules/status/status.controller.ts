@@ -224,7 +224,7 @@ export class ServiceVisitCompletionController {
           'Cannot release vehicle: payment is not cleared. A manager exception is required.',
         );
       }
-      if (!['MANAGER', 'ADMIN'].includes(user.role)) {
+      if (!['ADMIN'].includes(user.role)) {
         throw new BadRequestException(
           'Only a manager or admin can authorize a payment-release exception.',
         );

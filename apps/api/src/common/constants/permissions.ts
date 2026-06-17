@@ -138,45 +138,31 @@ const TECHNICIAN_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.INSPECTION_EDIT,
 ];
 
-const PARTS_STAFF_PERMISSIONS: PermissionKey[] = [
-  PERMISSIONS.QUEUE_VIEW,
-  PERMISSIONS.PARTS_MANAGE,
-];
-
-const TRANSPORT_COORDINATOR_PERMISSIONS: PermissionKey[] = [
-  PERMISSIONS.QUEUE_VIEW,
-  PERMISSIONS.TRANSPORT_MANAGE,
-];
-
-const MANAGER_PERMISSIONS: PermissionKey[] = [
-  ...SERVICE_ADVISOR_PERMISSIONS,
-  PERMISSIONS.CUSTOMER_DIRECTORY, // CR-2026-021 — browse-all customer directory (ADMIN also via all-permissions)
-  PERMISSIONS.QUEUE_OVERRIDE,
-  PERMISSIONS.QUEUE_RECOMPUTE,
-  PERMISSIONS.CONFIG_VIEW,
-  PERMISSIONS.CONFIG_EDIT,
-  PERMISSIONS.AUDIT_VIEW,
-  PERMISSIONS.REPORT_VIEW,
-  // Manager Control Center
-  PERMISSIONS.STAFF_VIEW,
-  PERMISSIONS.TECHNICIAN_MANAGE,
-  PERMISSIONS.AVAILABILITY_MANAGE,
-  PERMISSIONS.SERVICE_TYPE_MANAGE,
-  PERMISSIONS.RESOURCE_MANAGE,
-  // Complaints: managers acknowledge/resolve/edit (CR-2026-032)
-  PERMISSIONS.COMPLAINT_MANAGE,
-  PERMISSIONS.COMPLAINT_RESOLVE,
-  // Inspections: managers (senior gate) sign off (CR-2026-034)
-  PERMISSIONS.INSPECTION_SIGNOFF,
-];
-
+/**
+ * CR-2026-048 — consolidated role model. Four roles only:
+ *  - ADMIN          → full system access; shown in the UI as "Manager".
+ *  - SERVICE_ADVISOR→ front office (absorbs the former Front Desk); shown as "Service Advisor".
+ *  - TECHNICIAN     → workshop.
+ *  - CUSTOMER       → non-staff (status pages only; not assignable to staff).
+ * Removed: MANAGER (folded into ADMIN), FRONT_DESK (folded into SERVICE_ADVISOR),
+ * PARTS_STAFF, TRANSPORT_COORDINATOR. Parts/transport remain SYSTEM functions —
+ * SERVICE_ADVISOR keeps PARTS_MANAGE + TRANSPORT_MANAGE; ADMIN has everything.
+ */
 export const ROLE_PERMISSIONS: Record<string, PermissionKey[]> = {
   CUSTOMER: [],
-  FRONT_DESK: FRONT_DESK_PERMISSIONS,
   SERVICE_ADVISOR: SERVICE_ADVISOR_PERMISSIONS,
   TECHNICIAN: TECHNICIAN_PERMISSIONS,
-  PARTS_STAFF: PARTS_STAFF_PERMISSIONS,
-  TRANSPORT_COORDINATOR: TRANSPORT_COORDINATOR_PERMISSIONS,
-  MANAGER: MANAGER_PERMISSIONS,
   ADMIN: Object.values(PERMISSIONS),
+};
+
+/** Staff-assignable role codes (CUSTOMER is excluded — it is not a staff role). */
+export const STAFF_ROLE_CODES = ['ADMIN', 'SERVICE_ADVISOR', 'TECHNICIAN'] as const;
+export type StaffRoleCode = (typeof STAFF_ROLE_CODES)[number];
+
+/** Display labels for role codes (single source of truth for the UI/API). */
+export const ROLE_LABELS: Record<string, string> = {
+  ADMIN: 'Manager',
+  SERVICE_ADVISOR: 'Service Advisor',
+  TECHNICIAN: 'Technician',
+  CUSTOMER: 'Customer',
 };

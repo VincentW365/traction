@@ -102,9 +102,9 @@ const OVERRIDE_REASONS = ['CUSTOMER_REQUEST', 'MANAGER_ESCALATION', 'VIP', 'URGE
 const DISPATCHABLE_STATUSES = ['WAITING', 'ISSUED', 'PENDING_RANK', 'BLOCKED'];
 
 // CR-2026-018 (P3) — no-show / abandon. Mirrors the backend QUEUE_ABANDON grant
-// (FRONT_DESK + SERVICE_ADVISOR + MANAGER + ADMIN) and the abandonable-status set.
+// (SERVICE_ADVISOR + ADMIN) and the abandonable-status set.
 const ABANDON_REASONS = ['NO_SHOW', 'LEFT_BEFORE_SERVICE', 'CUSTOMER_CANCELLED_ONSITE', 'UNREACHABLE', 'OTHER'];
-const ABANDON_ROLES = ['ADMIN', 'MANAGER', 'SERVICE_ADVISOR', 'FRONT_DESK'];
+const ABANDON_ROLES = ['ADMIN', 'SERVICE_ADVISOR'];
 const ABANDONABLE_VISIT_STATUSES = ['CREATED', 'ARRIVED', 'CHECKED_IN', 'QUEUED', 'CALLED', 'IN_SERVICE', 'WAITING_PARTS'];
 
 const ORDER_ACTIONS: Record<string, Array<{ label: string; toStatus: string; style: string }>> = {
@@ -132,7 +132,7 @@ export default function QueueTicketDetailPage() {
   const router = useRouter();
   const { user } = useAuth();
   // CR-2026-034 (C-4) — who can start a visual inspection (API enforces).
-  const canInspect = ['ADMIN', 'MANAGER', 'SERVICE_ADVISOR', 'TECHNICIAN'].includes(user?.roleCode ?? '');
+  const canInspect = ['ADMIN', 'SERVICE_ADVISOR', 'TECHNICIAN'].includes(user?.roleCode ?? '');
 
   // Override form state
   const [showOverrideForm, setShowOverrideForm] = useState(false);
@@ -354,7 +354,7 @@ export default function QueueTicketDetailPage() {
   const PAYMENT_CLEARED = ['PAID', 'ON_ACCOUNT', 'WAIVED'];
   const unpaidOrders = orders.filter((o) => !PAYMENT_CLEARED.includes(o.paymentStatus));
   const paymentBlocked = unpaidOrders.length > 0;
-  const isManager = ['ADMIN', 'MANAGER'].includes(user?.roleCode ?? '');
+  const isManager = ['ADMIN'].includes(user?.roleCode ?? '');
   const releaseDisabled =
     completeVisit.isPending ||
     (!!mileageOut && sv.mileageIn != null && parseInt(mileageOut, 10) < sv.mileageIn) ||

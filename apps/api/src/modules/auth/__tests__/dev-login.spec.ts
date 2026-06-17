@@ -30,15 +30,15 @@ describe('normal login is unchanged after the refactor', () => {
   it('verifies the password and issues normal tokens with role permissions', async () => {
     const { svc, prisma } = build();
     prisma.userAccount.findFirst.mockResolvedValueOnce({
-      id: 'u1', email: 'a@b', fullName: 'A', roleCode: 'MANAGER', siteId: null,
+      id: 'u1', email: 'a@b', fullName: 'A', roleCode: 'SERVICE_ADVISOR', siteId: null,
       passwordHash: bcrypt.hashSync('pw', 4), status: 'ACTIVE',
     });
     const res = await svc.login('a@b', 'pw');
     expect(res.accessToken).toBeTruthy();
     expect(res.refreshToken).toBeTruthy();
-    expect(decode(res.accessToken).role).toBe('MANAGER');
-    expect(decode(res.accessToken).permissions).toEqual(ROLE_PERMISSIONS.MANAGER);
-    expect(res.user).toMatchObject({ id: 'u1', roleCode: 'MANAGER' });
+    expect(decode(res.accessToken).role).toBe('SERVICE_ADVISOR');
+    expect(decode(res.accessToken).permissions).toEqual(ROLE_PERMISSIONS.SERVICE_ADVISOR);
+    expect(res.user).toMatchObject({ id: 'u1', roleCode: 'SERVICE_ADVISOR' });
     // CR-2026-023 — normal login is NOT a sandbox session.
     expect(decode(res.accessToken).sandboxRunId).toBeUndefined();
     expect('sandboxRunId' in res).toBe(false);
@@ -48,7 +48,7 @@ describe('normal login is unchanged after the refactor', () => {
   it('rejects a bad password', async () => {
     const { svc, prisma } = build();
     prisma.userAccount.findFirst.mockResolvedValueOnce({
-      id: 'u1', email: 'a@b', fullName: 'A', roleCode: 'MANAGER', siteId: null,
+      id: 'u1', email: 'a@b', fullName: 'A', roleCode: 'SERVICE_ADVISOR', siteId: null,
       passwordHash: bcrypt.hashSync('pw', 4), status: 'ACTIVE',
     });
     await expect(svc.login('a@b', 'wrong')).rejects.toThrow(/Invalid credentials/);
@@ -92,36 +92,39 @@ describe('dev-login behaviour (enabled, non-production)', () => {
     expect(decode(res.accessToken).sandboxRunId).toBe('run-xyz');
   });
 
-  it('refuses unsupported / CUSTOMER roles', async () => {
+  it('refuses unsupported / CUSTOMER / removed roles', async () => {
     enable();
     const { svc } = build();
     await expect(svc.devLogin('CUSTOMER')).rejects.toThrow(/Unsupported/i);
     await expect(svc.devLogin('NONSENSE')).rejects.toThrow(/Unsupported/i);
+    // CR-2026-048 — these roles no longer exist.
+    await expect(svc.devLogin('MANAGER')).rejects.toThrow(/Unsupported/i);
+    await expect(svc.devLogin('PARTS_STAFF')).rejects.toThrow(/Unsupported/i);
   });
 
   it('gives a clear refusal when the mapped DEVTEST user is not seeded yet', async () => {
     enable();
     const { svc, prisma } = build();
     prisma.userAccount.findFirst.mockResolvedValueOnce(null);
-    await expect(svc.devLogin('MANAGER')).rejects.toThrow(/not seeded/i);
+    await expect(svc.devLogin('SERVICE_ADVISOR')).rejects.toThrow(/not seeded/i);
   });
 
   it('keeps the chosen role but grants FULL permissions for the sandbox session + writes a DEV_LOGIN audit (CR-2026-047)', async () => {
     enable();
     const { svc, prisma, audit } = build();
     prisma.userAccount.findFirst.mockResolvedValueOnce({
-      id: 'm1', email: 'devtest.manager@berts.local', fullName: 'DEVTEST Manager', roleCode: 'MANAGER', siteId: null, status: 'ACTIVE',
+      id: 'sa1', email: 'devtest.advisor@berts.local', fullName: 'DEVTEST Service Advisor', roleCode: 'SERVICE_ADVISOR', siteId: null, status: 'ACTIVE',
     });
-    const res = await svc.devLogin('MANAGER');
-    // Identity/role stays MANAGER (for audit + display) but the sandbox session can use every feature.
-    expect(decode(res.accessToken).role).toBe('MANAGER');
+    const res = await svc.devLogin('SERVICE_ADVISOR');
+    // Identity/role stays SERVICE_ADVISOR (for audit + display) but the sandbox session can use every feature.
+    expect(decode(res.accessToken).role).toBe('SERVICE_ADVISOR');
     expect(decode(res.accessToken).permissions).toEqual(ROLE_PERMISSIONS.ADMIN);
-    expect(decode(res.accessToken).permissions).not.toEqual(ROLE_PERMISSIONS.MANAGER);
+    expect(decode(res.accessToken).permissions).not.toEqual(ROLE_PERMISSIONS.SERVICE_ADVISOR);
     expect(res.refreshToken).toBeTruthy();
-    expect(res.user).toMatchObject({ roleCode: 'MANAGER', email: 'devtest.manager@berts.local' });
+    expect(res.user).toMatchObject({ roleCode: 'SERVICE_ADVISOR', email: 'devtest.advisor@berts.local' });
 
     expect(audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'DEV_LOGIN', entityType: 'UserAccount', entityId: 'm1' }),
+      expect.objectContaining({ action: 'DEV_LOGIN', entityType: 'UserAccount', entityId: 'sa1' }),
     );
     // no token/secret leaked into the audit payload
     expect(JSON.stringify(audit.log.mock.calls[0][0])).not.toContain(res.accessToken);
@@ -134,10 +137,10 @@ describe('dev-login behaviour (enabled, non-production)', () => {
     enable();
     const { svc, prisma } = build();
     prisma.userAccount.findFirst.mockResolvedValueOnce({
-      id: 'm1', email: 'devtest.manager@berts.local', fullName: 'DEVTEST Manager', roleCode: 'MANAGER', siteId: null, status: 'ACTIVE',
+      id: 'sa1', email: 'devtest.advisor@berts.local', fullName: 'DEVTEST Service Advisor', roleCode: 'SERVICE_ADVISOR', siteId: null, status: 'ACTIVE',
     });
-    const res = await svc.devLogin('MANAGER');
-    prisma.userAccount.findUnique = vi.fn(async () => ({ id: 'm1', email: 'x', fullName: 'y', roleCode: 'MANAGER', siteId: null, status: 'ACTIVE' }));
+    const res = await svc.devLogin('SERVICE_ADVISOR');
+    prisma.userAccount.findUnique = vi.fn(async () => ({ id: 'sa1', email: 'x', fullName: 'y', roleCode: 'SERVICE_ADVISOR', siteId: null, status: 'ACTIVE' }));
     const refreshed = await svc.refresh(res.refreshToken);
     expect(decode(refreshed.accessToken).permissions).toEqual(ROLE_PERMISSIONS.ADMIN);
     expect(decode(refreshed.accessToken).sandboxRunId).toBe('run-xyz');
@@ -147,25 +150,28 @@ describe('dev-login behaviour (enabled, non-production)', () => {
     enable();
     const { svc, prisma } = build();
     prisma.userAccount.findFirst.mockResolvedValueOnce({
-      id: 'm1', email: 'devtest.manager@berts.local', fullName: 'DEVTEST Manager', roleCode: 'MANAGER', siteId: null, status: 'ACTIVE',
+      id: 'sa1', email: 'devtest.advisor@berts.local', fullName: 'DEVTEST Service Advisor', roleCode: 'SERVICE_ADVISOR', siteId: null, status: 'ACTIVE',
     });
-    const res = await svc.devLogin('MANAGER'); // minted while enabled
+    const res = await svc.devLogin('SERVICE_ADVISOR'); // minted while enabled
     // Now simulate the gate being off (e.g. production) at refresh time.
     disable();
-    prisma.userAccount.findUnique = vi.fn(async () => ({ id: 'm1', email: 'x', fullName: 'y', roleCode: 'MANAGER', siteId: null, status: 'ACTIVE' }));
+    prisma.userAccount.findUnique = vi.fn(async () => ({ id: 'sa1', email: 'x', fullName: 'y', roleCode: 'SERVICE_ADVISOR', siteId: null, status: 'ACTIVE' }));
     const refreshed = await svc.refresh(res.refreshToken);
-    expect(decode(refreshed.accessToken).permissions).toEqual(ROLE_PERMISSIONS.MANAGER);
+    expect(decode(refreshed.accessToken).permissions).toEqual(ROLE_PERMISSIONS.SERVICE_ADVISOR);
   });
 
-  it('listDevProfiles returns the 7 staff roles (no CUSTOMER) + availability + warning', async () => {
+  it('listDevProfiles returns the 3 staff roles (no CUSTOMER/removed roles) + availability + warning (CR-2026-048)', async () => {
     enable();
     const { svc, prisma } = build();
     prisma.userAccount.findFirst.mockResolvedValue(null); // nothing seeded -> all unavailable
     const r = await svc.listDevProfiles();
     expect(r.enabled).toBe(true);
     expect(r.warning).toMatch(/Disabled in Production/i);
-    expect(r.profiles).toHaveLength(7);
-    expect(r.profiles.map((p: any) => p.role)).not.toContain('CUSTOMER');
+    expect(r.profiles).toHaveLength(3);
+    expect(r.profiles.map((p: any) => p.role)).toEqual(['ADMIN', 'SERVICE_ADVISOR', 'TECHNICIAN']);
+    for (const gone of ['CUSTOMER', 'MANAGER', 'FRONT_DESK', 'PARTS_STAFF', 'TRANSPORT_COORDINATOR']) {
+      expect(r.profiles.map((p: any) => p.role)).not.toContain(gone);
+    }
     expect(r.profiles.every((p: any) => p.available === false)).toBe(true);
   });
 });

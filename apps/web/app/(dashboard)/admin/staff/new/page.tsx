@@ -6,21 +6,18 @@ import { useRouter } from 'next/navigation';
 import { api } from '../../../../../lib/api-client';
 import { PageHeader } from '../../../../../components/ui/page-header';
 
+// CR-2026-048 — consolidated roles. ADMIN is the full-access role, shown as "Manager".
 const ROLES = [
-  { code: 'FRONT_DESK', label: 'Front Desk' },
   { code: 'SERVICE_ADVISOR', label: 'Service Advisor' },
   { code: 'TECHNICIAN', label: 'Technician' },
-  { code: 'PARTS_STAFF', label: 'Parts Staff' },
-  { code: 'TRANSPORT_COORDINATOR', label: 'Transport Coordinator' },
-  { code: 'MANAGER', label: 'Manager' },
-  { code: 'ADMIN', label: 'Admin' },
+  { code: 'ADMIN', label: 'Manager' },
 ];
 
 export default function CreateStaffPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
-  const [roleCode, setRoleCode] = useState('FRONT_DESK');
+  const [roleCode, setRoleCode] = useState('SERVICE_ADVISOR');
   const [temporaryPassword, setTemporaryPassword] = useState('');
   const [employeeCode, setEmployeeCode] = useState('');
 

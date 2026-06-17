@@ -29,7 +29,7 @@ import { CustomerDirectoryDto } from './dto/customer-directory.dto';
 import { ServiceHistoryQueryDto } from './dto/service-history-query.dto';
 
 /** Roles that may browse the full directory + see admin-only Import Metadata. */
-const DIRECTORY_ROLES = ['ADMIN', 'MANAGER'];
+const DIRECTORY_ROLES = ['ADMIN'];
 
 @ApiTags('Customers')
 @ApiBearerAuth()

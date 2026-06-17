@@ -10,15 +10,8 @@ import {
   MinLength,
 } from 'class-validator';
 
-const VALID_ROLES = [
-  'ADMIN',
-  'MANAGER',
-  'SERVICE_ADVISOR',
-  'FRONT_DESK',
-  'TECHNICIAN',
-  'PARTS_STAFF',
-  'TRANSPORT_COORDINATOR',
-];
+// CR-2026-048 — consolidated staff roles (ADMIN="Manager", SERVICE_ADVISOR, TECHNICIAN).
+const VALID_ROLES = ['ADMIN', 'SERVICE_ADVISOR', 'TECHNICIAN'];
 
 export class CreateStaffDto {
   @ApiProperty({ description: 'Full name of the staff member' })

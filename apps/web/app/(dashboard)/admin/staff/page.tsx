@@ -25,14 +25,11 @@ interface StaffMember {
   } | null;
 }
 
+// CR-2026-048 — consolidated roles. ADMIN is shown as "Manager".
 const ROLE_LABELS: Record<string, string> = {
-  ADMIN: 'Admin',
-  MANAGER: 'Manager',
+  ADMIN: 'Manager',
   SERVICE_ADVISOR: 'Service Advisor',
-  FRONT_DESK: 'Front Desk',
   TECHNICIAN: 'Technician',
-  PARTS_STAFF: 'Parts Staff',
-  TRANSPORT_COORDINATOR: 'Transport',
 };
 
 export default function StaffDirectoryPage() {

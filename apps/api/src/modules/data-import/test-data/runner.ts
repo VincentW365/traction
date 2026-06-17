@@ -45,7 +45,7 @@ export async function loadInfra(
 
   const advisor =
     (await db.userAccount.findFirst({
-      where: { status: 'ACTIVE', roleCode: { in: ['ADMIN', 'MANAGER', 'SERVICE_ADVISOR', 'ADVISOR'] } },
+      where: { status: 'ACTIVE', roleCode: { in: ['ADMIN', 'SERVICE_ADVISOR'] } },
       orderBy: { createdAt: 'asc' },
     })) ?? (await db.userAccount.findFirst({ where: { status: 'ACTIVE' }, orderBy: { createdAt: 'asc' } }));
   if (!advisor) throw new Error('No active UserAccount found — needed for createdBy/actor references.');

@@ -48,7 +48,7 @@ export default function ComplaintDetailPage() {
   const id = params.id as string;
   const qc = useQueryClient();
   const { user } = useAuth();
-  const isManager = ['ADMIN', 'MANAGER'].includes(user?.roleCode ?? '');
+  const isManager = ['ADMIN'].includes(user?.roleCode ?? '');
 
   const [resolutionNotes, setResolutionNotes] = useState('');
 

@@ -35,14 +35,14 @@ const user = (role: string) => ({ sub: 'u1', role, siteId: 's1', permissions: []
 describe('P4(c) vehicle-release payment gate', () => {
   it('blocks release when an order is unpaid and no override is given', async () => {
     const h = build(['UNPAID']);
-    await expect(h.controller.recordCompletion('sv1', {}, user('MANAGER'))).rejects.toBeInstanceOf(BadRequestException);
+    await expect(h.controller.recordCompletion('sv1', {}, user('ADMIN'))).rejects.toBeInstanceOf(BadRequestException);
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('blocks an override attempted by a non-manager', async () => {
     const h = build(['PENDING']);
     await expect(
-      h.controller.recordCompletion('sv1', { paymentReleaseOverride: true, paymentReleaseOverrideReason: 'ok' }, user('FRONT_DESK')),
+      h.controller.recordCompletion('sv1', { paymentReleaseOverride: true, paymentReleaseOverrideReason: 'ok' }, user('SERVICE_ADVISOR')),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(h.prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -50,7 +50,7 @@ describe('P4(c) vehicle-release payment gate', () => {
   it('requires a reason for a manager override', async () => {
     const h = build(['UNPAID']);
     await expect(
-      h.controller.recordCompletion('sv1', { paymentReleaseOverride: true }, user('MANAGER')),
+      h.controller.recordCompletion('sv1', { paymentReleaseOverride: true }, user('ADMIN')),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -59,7 +59,7 @@ describe('P4(c) vehicle-release payment gate', () => {
     const res = await h.controller.recordCompletion(
       'sv1',
       { paymentReleaseOverride: true, paymentReleaseOverrideReason: 'Account customer, invoice mailed' },
-      user('MANAGER'),
+      user('ADMIN'),
     );
     expect(h.audit.log).toHaveBeenCalledWith(
       expect.objectContaining({

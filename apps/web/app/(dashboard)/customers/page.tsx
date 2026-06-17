@@ -30,7 +30,7 @@ interface DirectoryResponse {
   offset: number;
 }
 
-const DIRECTORY_ROLES = ['ADMIN', 'MANAGER'];
+const DIRECTORY_ROLES = ['ADMIN'];
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 const PAGE_SIZE = 50;
 

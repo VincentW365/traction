@@ -46,7 +46,7 @@ function isOverdue(c: ComplaintRow): boolean {
 export default function ComplaintsPage() {
   const siteId = useSiteId();
   const { user } = useAuth();
-  const canCreate = ['ADMIN', 'MANAGER', 'FRONT_DESK', 'SERVICE_ADVISOR'].includes(user?.roleCode ?? '');
+  const canCreate = ['ADMIN', 'SERVICE_ADVISOR'].includes(user?.roleCode ?? '');
   const [status, setStatus] = useState('');
   const [severity, setSeverity] = useState('');
   const [type, setType] = useState('');

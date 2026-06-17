@@ -18,7 +18,7 @@ import {
   type ClassificationConfidence,
 } from '../lib/vehicle-classes';
 
-const ALLOWED_ROLES = ['ADMIN', 'MANAGER', 'FRONT_DESK', 'SERVICE_ADVISOR'];
+const ALLOWED_ROLES = ['ADMIN', 'SERVICE_ADVISOR'];
 
 interface QueueItem {
   vehicleId: string;

@@ -2,7 +2,7 @@
  * Seed DEVTEST users for the dev-login role switcher (CR-2026-022, D-b).
  *
  *   (default)   DRY-RUN — report which DEVTEST users exist / would be created. NO writes.
- *   --commit    [GATED] Upsert the 6 non-admin DEVTEST users (idempotent).
+ *   --commit    [GATED] Upsert the non-admin DEVTEST users (idempotent).
  *               Requires ALLOW_DEV_LOGIN=true AND NODE_ENV!=production.
  *
  * ADMIN is NEVER created here — it reuses the existing admin account.

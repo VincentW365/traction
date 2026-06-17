@@ -72,10 +72,10 @@ function printSummary(title: string, rows: PendingClassRow[]): void {
 async function resolveActor(): Promise<string> {
   const u =
     (await prisma.userAccount.findFirst({
-      where: { status: 'ACTIVE', roleCode: { in: ['ADMIN', 'MANAGER'] } },
+      where: { status: 'ACTIVE', roleCode: { in: ['ADMIN'] } },
       orderBy: { createdAt: 'asc' },
     })) ?? (await prisma.userAccount.findFirst({ where: { status: 'ACTIVE' }, orderBy: { createdAt: 'asc' } }));
-  if (!u) throw new Error('No active ADMIN/MANAGER UserAccount found for the audit actor.');
+  if (!u) throw new Error('No active ADMIN UserAccount found for the audit actor.');
   return u.id;
 }
 

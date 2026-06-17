@@ -11,7 +11,7 @@ import { EmptyState } from '../../../../components/ui/empty-state';
 import { ExportMenu } from '../../../../components/ui/export-menu';
 import type { ExportDocument } from '../../../../lib/export';
 
-const ALLOWED_ROLES = ['ADMIN', 'MANAGER'];
+const ALLOWED_ROLES = ['ADMIN'];
 const CATEGORIES = ['SERVICE', 'ENGINE & OTHER', 'FULL SERVICE', 'TRANSMISSIONS', 'FUEL FILTERS', 'RADIATOR', 'ENGINE MOUNTS', 'SUSPENSION', 'BRAKES', 'STEERING', 'DRIVETRAIN', 'LIGHTING & BODY', 'CAR CARE'];
 
 interface Job { name: string; category: string; volume: number; basePrice: number | null; estValue: number | null }

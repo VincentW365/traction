@@ -79,9 +79,9 @@ export default function InspectionDetailPage() {
   const qc = useQueryClient();
   const { user } = useAuth();
   const role = user?.roleCode ?? '';
-  const canEdit = ['ADMIN', 'MANAGER', 'SERVICE_ADVISOR', 'TECHNICIAN'].includes(role);
-  const canSignoff = ['ADMIN', 'MANAGER'].includes(role);
-  const canDecision = ['ADMIN', 'MANAGER', 'SERVICE_ADVISOR', 'FRONT_DESK'].includes(role);
+  const canEdit = ['ADMIN', 'SERVICE_ADVISOR', 'TECHNICIAN'].includes(role);
+  const canSignoff = ['ADMIN'].includes(role);
+  const canDecision = ['ADMIN', 'SERVICE_ADVISOR'].includes(role);
 
   const { data, isLoading, error } = useQuery<Inspection>({
     queryKey: ['inspection', id],
