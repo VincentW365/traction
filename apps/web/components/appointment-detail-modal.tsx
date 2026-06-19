@@ -41,7 +41,7 @@ const RESCHEDULE_STATUSES = ['DRAFT', 'CONFIRMED', 'RESCHEDULED'];
 const isCancellable = (s: string) => !['CANCELLED', 'COMPLETED'].includes(s);
 const WEIGHT_CLASSES = ['LIGHT', 'STANDARD', 'HEAVY'];
 const OIL_BRANDS = ['Amsoil', 'Liqui Moly', 'Valvoline', 'Castrol', 'Mobil 1', 'Other'];
-const OIL_GRADES = ['0W-20', '5W-20', '5W-30', '10W-30', '10W-40', '15W-40', '0W-40'];
+const OIL_GRADES = ['0W-20', '5W-20', '5W-30', '10W-30', '10W-40', '15W-40', '0W-40', 'Other'];
 
 const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -71,7 +71,9 @@ export function AppointmentDetailModal({
   // check-in intake
   const [mileageIn, setMileageIn] = useState('');
   const [oilBrand, setOilBrand] = useState('');
+  const [oilBrandOther, setOilBrandOther] = useState('');
   const [oilGrade, setOilGrade] = useState('');
+  const [oilGradeOther, setOilGradeOther] = useState('');
   const [weightClass, setWeightClass] = useState('STANDARD');
   const [color, setColor] = useState('');
   const [optSms, setOptSms] = useState(false);
@@ -95,8 +97,8 @@ export function AppointmentDetailModal({
     mutationFn: () =>
       api.post<CheckInResult>(`/appointments/${appointmentId}/check-in`, {
         mileageIn: mileageIn ? parseInt(mileageIn, 10) : undefined,
-        oilBrand: oilBrand || undefined,
-        oilGrade: oilGrade || undefined,
+        oilBrand: (oilBrand === 'Other' ? (oilBrandOther.trim() || 'Other') : oilBrand) || undefined,
+        oilGrade: (oilGrade === 'Other' ? (oilGradeOther.trim() || 'Other') : oilGrade) || undefined,
         vehicleWeightClass: weightClass || undefined,
         color: color || undefined,
         notificationOptInSms: optSms,
@@ -122,7 +124,7 @@ export function AppointmentDetailModal({
   function openCheckin() {
     if (!appt) return;
     setMileageIn('');
-    setOilBrand(''); setOilGrade('');
+    setOilBrand(''); setOilBrandOther(''); setOilGrade(''); setOilGradeOther('');
     setWeightClass(appt.vehicle?.weightClass ?? 'STANDARD');
     setColor(appt.vehicle?.color ?? '');
     setOptSms(appt.customer.notificationOptInSms);
@@ -253,6 +255,9 @@ export function AppointmentDetailModal({
                         <option value="">— Select —</option>
                         {OIL_BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
                       </select>
+                      {oilBrand === 'Other' && (
+                        <input type="text" value={oilBrandOther} onChange={(e) => setOilBrandOther(e.target.value)} className="input-field mt-2" placeholder="Type oil brand (optional)" />
+                      )}
                     </div>
                     <div>
                       <label className="input-label">Oil Grade</label>
@@ -260,6 +265,9 @@ export function AppointmentDetailModal({
                         <option value="">— Select —</option>
                         {OIL_GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
                       </select>
+                      {oilGrade === 'Other' && (
+                        <input type="text" value={oilGradeOther} onChange={(e) => setOilGradeOther(e.target.value)} className="input-field mt-2" placeholder="Type oil grade (optional)" />
+                      )}
                     </div>
                     <div className="col-span-2">
                       <label className="input-label">Vehicle Color</label>

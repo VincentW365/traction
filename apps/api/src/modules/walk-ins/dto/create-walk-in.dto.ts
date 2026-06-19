@@ -73,14 +73,16 @@ export class CreateWalkInDto {
   @Min(0)
   mileageIn?: number;
 
-  @ApiPropertyOptional({ description: 'Oil brand requested (Amsoil, Liqui Moly, etc.)' })
+  @ApiPropertyOptional({ description: 'Oil brand requested (preset, or free text when "Other")' })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   oilBrand?: string;
 
-  @ApiPropertyOptional({ description: 'Oil grade requested (5W-30, 0W-20, etc.)' })
+  @ApiPropertyOptional({ description: 'Oil grade requested (preset, or free text when "Other")' })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   oilGrade?: string;
 
   @ApiPropertyOptional({ description: 'Vehicle weight class (LIGHT, STANDARD, HEAVY)' })

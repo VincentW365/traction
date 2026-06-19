@@ -69,7 +69,9 @@ export default function CheckInPage() {
   // v4.1 intake fields
   const [mileageIn, setMileageIn] = useState('');
   const [oilBrand, setOilBrand] = useState('');
+  const [oilBrandOther, setOilBrandOther] = useState('');
   const [oilGrade, setOilGrade] = useState('');
+  const [oilGradeOther, setOilGradeOther] = useState('');
   const [vehicleWeightClass, setVehicleWeightClass] = useState('STANDARD');
   const [vehicleColor, setVehicleColor] = useState('');
   // P4(b) notification consent capture (default opt-out unless explicitly set)
@@ -135,8 +137,8 @@ export default function CheckInPage() {
     mutationFn: (appointmentId: string) =>
       api.post<CheckInResponse>(`/appointments/${appointmentId}/check-in`, {
         mileageIn: mileageIn ? parseInt(mileageIn, 10) : undefined,
-        oilBrand: oilBrand || undefined,
-        oilGrade: oilGrade || undefined,
+        oilBrand: (oilBrand === 'Other' ? (oilBrandOther.trim() || 'Other') : oilBrand) || undefined,
+        oilGrade: (oilGrade === 'Other' ? (oilGradeOther.trim() || 'Other') : oilGrade) || undefined,
         vehicleWeightClass: vehicleWeightClass || undefined,
         color: vehicleColor || undefined,
         notificationOptInSms: notifyOptInSms,
@@ -202,7 +204,9 @@ export default function CheckInPage() {
     setSelectedServiceCodes([]);
     setMileageIn('');
     setOilBrand('');
+    setOilBrandOther('');
     setOilGrade('');
+    setOilGradeOther('');
     setVehicleWeightClass('STANDARD');
     setVehicleColor('');
   }
@@ -215,8 +219,8 @@ export default function CheckInPage() {
       vehicleId: selectedVehicle.id,
       serviceTypes: selectedServiceCodes.map((code) => ({ serviceTypeCode: code })),
       mileageIn: mileageIn ? parseInt(mileageIn, 10) : undefined,
-      oilBrand: oilBrand || undefined,
-      oilGrade: oilGrade || undefined,
+      oilBrand: (oilBrand === 'Other' ? (oilBrandOther.trim() || 'Other') : oilBrand) || undefined,
+      oilGrade: (oilGrade === 'Other' ? (oilGradeOther.trim() || 'Other') : oilGrade) || undefined,
       vehicleWeightClass: vehicleWeightClass || undefined,
       color: vehicleColor || undefined,
     });
@@ -437,6 +441,10 @@ export default function CheckInPage() {
                     <option value="Mobil 1">Mobil 1</option>
                     <option value="Other">Other</option>
                   </select>
+                  {oilBrand === 'Other' && (
+                    <input type="text" value={oilBrandOther} onChange={(e) => setOilBrandOther(e.target.value)}
+                      placeholder="Type oil brand (optional)" className="input-field mt-2" />
+                  )}
                 </div>
                 <div>
                   <label className="input-label">Oil Grade</label>
@@ -450,7 +458,12 @@ export default function CheckInPage() {
                     <option value="10W-40">10W-40</option>
                     <option value="15W-40">15W-40</option>
                     <option value="0W-40">0W-40</option>
+                    <option value="Other">Other</option>
                   </select>
+                  {oilGrade === 'Other' && (
+                    <input type="text" value={oilGradeOther} onChange={(e) => setOilGradeOther(e.target.value)}
+                      placeholder="Type oil grade (optional)" className="input-field mt-2" />
+                  )}
                 </div>
                 <div className="col-span-2">
                   <label className="input-label">Vehicle Color</label>
