@@ -259,6 +259,19 @@ export async function executeCleanup(
 
       // 1) polymorphic NotificationLog (by entityId)
       await delByEntityId('NotificationLog');
+      // 1b) CR-2026-053 — VehicleInspection (CR-2026-034) carries no test-run tag or
+      // manifest, but can hang off this run's visits and FK-block their deletion.
+      // Remove inspections on any manifested visit first; their items / wheel
+      // measurements / recommendations / signatures cascade (onDelete: Cascade).
+      const inspVisitIds = byType['ServiceVisit'] ?? [];
+      if (inspVisitIds.length) {
+        const inspIds = (
+          await tx.vehicleInspection.findMany({ where: { serviceVisitId: { in: inspVisitIds } }, select: { id: true } })
+        ).map((r: { id: string }) => r.id);
+        counts['VehicleInspection'] = inspIds.length
+          ? (await tx.vehicleInspection.deleteMany({ where: { id: { in: inspIds } } })).count
+          : 0;
+      }
       // 2) FK tables, child → parent (by manifested id)
       for (const type of FK_DELETE_ORDER) await delById(type);
       // 3) polymorphic StatusHistory + AuditLog (by entityId) — after the entities they reference

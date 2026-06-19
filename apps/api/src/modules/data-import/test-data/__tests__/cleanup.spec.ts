@@ -209,6 +209,11 @@ function execTx(order: string[]): any {
       deleteMany: vi.fn(async () => { order.push('AuditLog'); return { count: 1 }; }),
       create: vi.fn(async () => ({ id: 'cleanup-audit' })),
     },
+    // CR-2026-053 — inspections cleared off the run's visits before parents.
+    vehicleInspection: {
+      findMany: vi.fn(async () => []),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+    },
   };
   for (const type of FK_DELETE_ORDER) {
     tx[MODEL_BY_TYPE[type]] = { deleteMany: vi.fn(async () => { order.push(type); return { count: 1 }; }) };

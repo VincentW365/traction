@@ -11,6 +11,11 @@
 - **Disabled dev-login** — set `ALLOW_DEV_LOGIN="false"` in `.env` (gitignored, local config). With dev-login off, no new sandbox sessions can be created and `POST /auth/dev-login` returns 403 — exactly how production behaves. The app now uses the **normal login form only** with role-scoped permissions (no full-access override).
 - **Cleaned up the 9 existing ACTIVE DEV_LOGIN_SESSION runs** via the canonical, safety-gated sandbox cleanup engine (`cleanup-dev-sessions.ts --commit`): removed their tagged data (7 rows total) and marked the runs CLEANED_UP. Only DEV_LOGIN_SESSION runs were touched; the BATCH seeded-demo run and all real/imported data are untouched. A `pg_dump` backup was taken first.
 
+### BATCH demo data removed
+- Cleaned the seeded demo run (`test-walkthrough-2026-06-15`, BATCH) via `test-data cleanup --run <id> --commit` (safety PASS; pg_dump taken first) — **392 rows** removed (25 demo customers/vehicles/visits + orders/tickets/etc.).
+- **Engine fix** (`data-import/test-data/cleanup.ts`): the cleanup engine predated visual inspections (CR-2026-034), which carry no test-run tag/manifest and FK-blocked visit deletion. `executeCleanup` now removes any `VehicleInspection` hanging off the run's manifested visits before deleting the visits/vehicles/customers (its items/wheels/recommendations/signatures cascade). Covered by the existing cleanup spec (mock updated).
+- Result: **0 ACTIVE test runs, 0 sandbox-tagged rows, 0 VWTEST customers** — the DB now holds only real/imported data plus the three login accounts.
+
 ### Real test logins (role-scoped, like live)
 Created three password logins via `create-test-logins.ts` (idempotent — re-run to reset passwords). A `Technician` record is also created for the technician user so workshop flows work.
 
