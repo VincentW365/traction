@@ -112,6 +112,7 @@ export default function NewAppointmentPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerResult | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [selectedServiceCodes, setSelectedServiceCodes] = useState<string[]>([]);
+  const [serviceSearch, setServiceSearch] = useState('');
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('09:00');
   const [notes, setNotes] = useState('');
@@ -244,6 +245,16 @@ export default function NewAppointmentPage() {
   const totalDuration = serviceTypesQuery.data
     ?.filter((st) => selectedServiceCodes.includes(st.code))
     .reduce((sum, st) => sum + st.baseDurationMinutes, 0) ?? 0;
+
+  // Searchable services list — match name, family, or code (selections persist
+  // even when filtered out of view).
+  const serviceQuery = serviceSearch.trim().toLowerCase();
+  const filteredServices = (serviceTypesQuery.data ?? []).filter((st) =>
+    !serviceQuery ||
+    st.name.toLowerCase().includes(serviceQuery) ||
+    (st.family ?? '').toLowerCase().includes(serviceQuery) ||
+    st.code.toLowerCase().includes(serviceQuery),
+  );
 
   // --- Success Screen ---
   if (step === 'success') {
@@ -384,9 +395,17 @@ export default function NewAppointmentPage() {
             </div>
           </div>
           <div className="card-body space-y-4">
+            <input
+              type="text"
+              value={serviceSearch}
+              onChange={(e) => setServiceSearch(e.target.value)}
+              placeholder="Search services by name, family, or code…"
+              className="input-field"
+              autoFocus
+            />
             {serviceTypesQuery.data && (
               <div className="space-y-2 max-h-96 overflow-y-auto">
-                {serviceTypesQuery.data.map((st) => {
+                {filteredServices.map((st) => {
                   const isSelected = selectedServiceCodes.includes(st.code);
                   return (
                     <label
@@ -414,6 +433,9 @@ export default function NewAppointmentPage() {
                     </label>
                   );
                 })}
+                {filteredServices.length === 0 && (
+                  <p className="text-sm text-slate-500 text-center py-4">No services match &ldquo;{serviceSearch}&rdquo;.</p>
+                )}
               </div>
             )}
 
