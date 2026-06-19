@@ -66,6 +66,7 @@ export default function CheckInPage() {
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   const [showWalkInForm, setShowWalkInForm] = useState(false);
   const [selectedServiceCodes, setSelectedServiceCodes] = useState<string[]>([]);
+  const [serviceSearch, setServiceSearch] = useState('');
   // v4.1 intake fields
   const [mileageIn, setMileageIn] = useState('');
   const [oilBrand, setOilBrand] = useState('');
@@ -126,11 +127,19 @@ export default function CheckInPage() {
   });
 
   // Service types for walk-in
+  const serviceQuery = serviceSearch.trim().toLowerCase();
   const serviceTypesQuery = useQuery({
     queryKey: ['service-types'],
     queryFn: () => api.get<ServiceType[]>('/service-types'),
     enabled: showWalkInForm,
   });
+  // Searchable walk-in services — match name, family, or code (selections persist).
+  const filteredServices = (serviceTypesQuery.data ?? []).filter((st) =>
+    !serviceQuery ||
+    st.name.toLowerCase().includes(serviceQuery) ||
+    (st.family ?? '').toLowerCase().includes(serviceQuery) ||
+    st.code.toLowerCase().includes(serviceQuery),
+  );
 
   // Check-in mutation
   const checkInMutation = useMutation({
@@ -202,6 +211,7 @@ export default function CheckInPage() {
     setDebouncedTerm('');
     setShowWalkInForm(false);
     setSelectedServiceCodes([]);
+    setServiceSearch('');
     setMileageIn('');
     setOilBrand('');
     setOilBrandOther('');
@@ -504,28 +514,40 @@ export default function CheckInPage() {
             <div className="card">
               <div className="px-4 py-3 border-b flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-slate-700">Walk-In Service Selection</h3>
-                <button onClick={() => { setShowWalkInForm(false); setSelectedServiceCodes([]); }}
+                <button onClick={() => { setShowWalkInForm(false); setSelectedServiceCodes([]); setServiceSearch(''); }}
                   className="text-xs text-slate-500 hover:text-slate-700 underline">Cancel</button>
               </div>
               <div className="p-4">
                 {serviceTypesQuery.isLoading && <p className="text-sm text-slate-500">Loading services...</p>}
                 {serviceTypesQuery.data && (
-                  <div className="space-y-2 mb-4 max-h-80 overflow-y-auto">
-                    {serviceTypesQuery.data.map((st) => (
-                      <label key={st.code}
-                        className={`flex items-center gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
-                          selectedServiceCodes.includes(st.code) ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}>
-                        <input type="checkbox" checked={selectedServiceCodes.includes(st.code)}
-                          onChange={() => setSelectedServiceCodes((prev) =>
-                            prev.includes(st.code) ? prev.filter((c) => c !== st.code) : [...prev, st.code])}
-                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-slate-900">{st.name}</p>
-                          <p className="text-xs text-slate-500">~{st.baseDurationMinutes} min &middot; {st.family}</p>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
+                  <>
+                    <input
+                      type="text"
+                      value={serviceSearch}
+                      onChange={(e) => setServiceSearch(e.target.value)}
+                      placeholder="Search services by name, family, or code…"
+                      className="input-field mb-3"
+                    />
+                    <div className="space-y-2 mb-4 max-h-80 overflow-y-auto">
+                      {filteredServices.map((st) => (
+                        <label key={st.code}
+                          className={`flex items-center gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors ${
+                            selectedServiceCodes.includes(st.code) ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                          <input type="checkbox" checked={selectedServiceCodes.includes(st.code)}
+                            onChange={() => setSelectedServiceCodes((prev) =>
+                              prev.includes(st.code) ? prev.filter((c) => c !== st.code) : [...prev, st.code])}
+                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                          <div className="flex-1">
+                            <p className="text-sm font-medium text-slate-900">{st.name}</p>
+                            <p className="text-xs text-slate-500">~{st.baseDurationMinutes} min &middot; {st.family}</p>
+                          </div>
+                        </label>
+                      ))}
+                      {filteredServices.length === 0 && (
+                        <p className="text-sm text-slate-500 text-center py-4">No services match &ldquo;{serviceSearch}&rdquo;.</p>
+                      )}
+                    </div>
+                  </>
                 )}
                 <button onClick={handleWalkInSubmit}
                   disabled={selectedServiceCodes.length === 0 || walkInMutation.isPending}
