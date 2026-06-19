@@ -37,7 +37,6 @@ interface CustomerDetail {
   phones: string[];
   phonesFlagged: boolean;
   email: string | null;
-  loyaltyNumber: string | null;
   hasLoyalty: boolean;
   notificationOptInSms: boolean;
   notificationOptInEmail: boolean;
@@ -104,7 +103,7 @@ export default function CustomerDetailPage() {
   const [vOdometer, setVOdometer] = useState('');
 
   const [editingLoyalty, setEditingLoyalty] = useState(false);
-  const [loyaltyInput, setLoyaltyInput] = useState('');
+  const [loyaltyMemberInput, setLoyaltyMemberInput] = useState(false);
   const [historyOffset, setHistoryOffset] = useState(0);
 
   const { data: customer, isLoading, error } = useQuery<CustomerDetail>({
@@ -152,10 +151,10 @@ export default function CustomerDetailPage() {
     },
   });
 
-  // Edit loyalty number (empty string removes membership). Modification of a
-  // non-sandbox customer is blocked server-side while in Dev Sandbox Mode.
+  // Edit loyalty membership (yes/no). Modification of a non-sandbox customer is
+  // blocked server-side while in Dev Sandbox Mode.
   const updateLoyaltyMutation = useMutation({
-    mutationFn: () => api.patch(`/customers/${customerId}`, { loyaltyNumber: loyaltyInput.trim() }),
+    mutationFn: () => api.patch(`/customers/${customerId}`, { loyaltyMember: loyaltyMemberInput }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customer', customerId] });
       setEditingLoyalty(false);
@@ -248,7 +247,7 @@ export default function CustomerDetailPage() {
             <h2 className="text-sm font-semibold text-slate-900">Loyalty Status</h2>
             {!editingLoyalty && (
               <button
-                onClick={() => { setLoyaltyInput(customer.loyaltyNumber ?? ''); setEditingLoyalty(true); }}
+                onClick={() => { setLoyaltyMemberInput(customer.hasLoyalty); setEditingLoyalty(true); }}
                 className="text-xs text-blue-600 hover:underline font-medium"
               >
                 Edit
@@ -259,14 +258,15 @@ export default function CustomerDetailPage() {
             {editingLoyalty ? (
               <div className="space-y-3">
                 <div>
-                  <label className="input-label">Loyalty Number</label>
-                  <input
-                    type="text"
-                    value={loyaltyInput}
-                    onChange={(e) => setLoyaltyInput(e.target.value)}
+                  <label className="input-label">Loyalty Member</label>
+                  <select
+                    value={loyaltyMemberInput ? 'yes' : 'no'}
+                    onChange={(e) => setLoyaltyMemberInput(e.target.value === 'yes')}
                     className="input-field"
-                    placeholder="Leave blank to remove membership"
-                  />
+                  >
+                    <option value="no">No</option>
+                    <option value="yes">Yes</option>
+                  </select>
                 </div>
                 {updateLoyaltyMutation.isError && (
                   <p className="text-xs text-red-600">{updateLoyaltyMutation.error instanceof Error ? updateLoyaltyMutation.error.message : 'Failed to update loyalty'}</p>
@@ -285,9 +285,6 @@ export default function CustomerDetailPage() {
                     ? <span className="badge bg-amber-50 text-amber-700">★ Member</span>
                     : <span className="badge bg-slate-100 text-slate-500">Not a loyalty member</span>}
                 </div>
-                {customer.loyaltyNumber && (
-                  <div className="mt-3"><div className="input-label">Loyalty Number</div><p className="font-mono text-sm text-slate-900">{customer.loyaltyNumber}</p></div>
-                )}
               </>
             )}
           </div>

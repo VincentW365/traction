@@ -620,7 +620,8 @@ model Customer {
   lastName               String   @map("last_name")
   phone                  String
   email                  String?
-  loyaltyNumber          String?  @map("loyalty_number")
+  loyaltyNumber          String?  @map("loyalty_number") // CR-2026-050: deprecated, retained; loyalty is now a yes/no flag
+  loyaltyMember          Boolean  @default(false) @map("loyalty_member")
   notificationOptInSms   Boolean  @default(true) @map("notification_opt_in_sms")
   notificationOptInEmail Boolean  @default(true) @map("notification_opt_in_email")
   notes                  String?

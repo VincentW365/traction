@@ -103,7 +103,7 @@ export class CustomersService {
       )`);
     }
     if (dto.letter) conds.push(Prisma.sql`c.last_name ILIKE ${dto.letter + '%'}`);
-    if (dto.hasLoyalty === 'true') conds.push(Prisma.sql`c.loyalty_number IS NOT NULL AND c.loyalty_number <> ''`);
+    if (dto.hasLoyalty === 'true') conds.push(Prisma.sql`c.loyalty_member = true`);
     if (dto.hasVehicle === 'true') conds.push(Prisma.sql`EXISTS (SELECT 1 FROM vehicles v WHERE v.customer_id = c.id)`);
     if (dto.missingContact === 'true') {
       conds.push(Prisma.sql`COALESCE(c.email,'') = '' AND length(regexp_replace(COALESCE(c.phone,''), '[^0-9]', '', 'g')) < 7`);
@@ -113,7 +113,7 @@ export class CustomersService {
 
     const rows = await this.prisma.$queryRaw<DirectoryRawRow[]>(Prisma.sql`
       SELECT c.id, c.customer_number, c.first_name, c.last_name,
-        (c.loyalty_number IS NOT NULL AND c.loyalty_number <> '') AS has_loyalty,
+        c.loyalty_member AS has_loyalty,
         (SELECT count(*)::int FROM vehicles v WHERE v.customer_id = c.id) AS vehicle_count,
         (SELECT max(COALESCE(sv.checked_in_at, sv.arrival_at, sv.created_at))
            FROM service_visits sv WHERE sv.customer_id = c.id) AS last_visit_at,
@@ -156,8 +156,8 @@ export class CustomersService {
           lastName: data.lastName,
           phone: data.phone,
           email: data.email,
-          // Optional loyalty number; trimmed, empty → null (presence = loyalty member).
-          loyaltyNumber: data.loyaltyNumber?.trim() ? data.loyaltyNumber.trim() : null,
+          // CR-2026-050 — loyalty is a yes/no flag (no number).
+          loyaltyMember: data.loyaltyMember ?? false,
           notificationOptInSms: data.notificationOptInSms ?? true,
           notificationOptInEmail: data.notificationOptInEmail ?? true,
           notes: data.notes,
@@ -271,8 +271,8 @@ export class CustomersService {
         ...(data.lastName !== undefined && { lastName: data.lastName }),
         ...(data.phone !== undefined && { phone: data.phone }),
         ...(data.email !== undefined && { email: data.email }),
-        // Loyalty: trimmed value, or null when explicitly cleared (empty string).
-        ...(data.loyaltyNumber !== undefined && { loyaltyNumber: data.loyaltyNumber.trim() ? data.loyaltyNumber.trim() : null }),
+        // CR-2026-050 — loyalty is a yes/no flag.
+        ...(data.loyaltyMember !== undefined && { loyaltyMember: data.loyaltyMember }),
         ...(data.notificationOptInSms !== undefined && { notificationOptInSms: data.notificationOptInSms }),
         ...(data.notificationOptInEmail !== undefined && { notificationOptInEmail: data.notificationOptInEmail }),
         ...(data.notes !== undefined && { notes: data.notes }),

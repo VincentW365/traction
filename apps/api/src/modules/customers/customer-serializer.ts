@@ -14,7 +14,7 @@ export interface CustomerCore {
   lastName: string;
   phone: string | null;
   email: string | null;
-  loyaltyNumber: string | null;
+  loyaltyMember: boolean;
   notes: string | null;
   notificationOptInSms: boolean;
   notificationOptInEmail: boolean;
@@ -45,7 +45,7 @@ export function toCustomerListItem(
     customerNumber: c.customerNumber,
     firstName: c.firstName,
     lastName: c.lastName,
-    hasLoyalty: hasText(c.loyaltyNumber),
+    hasLoyalty: c.loyaltyMember,
     vehicleCount: extra.vehicleCount,
     lastVisitAt: extra.lastVisitAt ?? null,
     missingContact: fp.values.length === 0 && !hasText(c.email),
@@ -61,7 +61,6 @@ export interface CustomerDetail {
   phones: string[];
   phonesFlagged: boolean;
   email: string | null;
-  loyaltyNumber: string | null;
   hasLoyalty: boolean;
   notificationOptInSms: boolean;
   notificationOptInEmail: boolean;
@@ -126,8 +125,7 @@ export function toCustomerDetail(
     phones: fp.values,
     phonesFlagged: fp.flagged,
     email: c.email ?? null,
-    loyaltyNumber: c.loyaltyNumber ?? null,
-    hasLoyalty: hasText(c.loyaltyNumber),
+    hasLoyalty: c.loyaltyMember,
     notificationOptInSms: c.notificationOptInSms,
     notificationOptInEmail: c.notificationOptInEmail,
     staffNotes: parsed.staffNotes,

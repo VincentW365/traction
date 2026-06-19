@@ -66,7 +66,7 @@ export default function CustomersPage() {
   const [newLastName, setNewLastName] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newEmail, setNewEmail] = useState('');
-  const [newLoyalty, setNewLoyalty] = useState('');
+  const [newLoyaltyMember, setNewLoyaltyMember] = useState(false);
   const [newNotes, setNewNotes] = useState('');
 
   // Shared search + directory state
@@ -91,7 +91,7 @@ export default function CustomersPage() {
     mutationFn: () =>
       api.post<{ id: string }>('/customers', {
         firstName: newFirstName, lastName: newLastName, phone: newPhone,
-        email: newEmail || undefined, loyaltyNumber: newLoyalty.trim() || undefined,
+        email: newEmail || undefined, loyaltyMember: newLoyaltyMember,
         notes: newNotes || undefined,
       }),
     onSuccess: (data) => {
@@ -189,7 +189,7 @@ export default function CustomersPage() {
               <div><label className="input-label">Last Name *</label><input type="text" value={newLastName} onChange={(e) => setNewLastName(e.target.value)} className="input-field" placeholder="e.g., Smith" /></div>
               <div><label className="input-label">Phone *</label><input type="tel" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} className="input-field" placeholder="e.g., 876-555-0123" /></div>
               <div><label className="input-label">Email</label><input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} className="input-field" placeholder="Optional" /></div>
-              <div><label className="input-label">Loyalty Number</label><input type="text" value={newLoyalty} onChange={(e) => setNewLoyalty(e.target.value)} className="input-field" placeholder="Optional — leave blank if not a member" /></div>
+              <div><label className="input-label">Loyalty Member</label><select value={newLoyaltyMember ? 'yes' : 'no'} onChange={(e) => setNewLoyaltyMember(e.target.value === 'yes')} className="input-field"><option value="no">No</option><option value="yes">Yes</option></select></div>
             </div>
             <div><label className="input-label">Notes</label><input type="text" value={newNotes} onChange={(e) => setNewNotes(e.target.value)} className="input-field" placeholder="Optional" /></div>
             {createMutation.isError && (

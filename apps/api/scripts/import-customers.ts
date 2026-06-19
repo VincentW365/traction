@@ -101,10 +101,10 @@ async function commit() {
       const note = `import:${batchId}; raw="${cu.rawName}"`;
       const rec = await prisma.customer.upsert({
         where: { customerNumber: cu.customerNumber },
-        update: { firstName: cu.firstName, lastName: cu.lastName, phone: cu.phone, email: cu.email ?? undefined, loyaltyNumber: cu.loyaltyNumber ?? undefined },
+        update: { firstName: cu.firstName, lastName: cu.lastName, phone: cu.phone, email: cu.email ?? undefined, loyaltyNumber: cu.loyaltyNumber ?? undefined, loyaltyMember: !!cu.loyaltyNumber?.trim() },
         create: {
           customerNumber: cu.customerNumber, firstName: cu.firstName, lastName: cu.lastName,
-          phone: cu.phone, email: cu.email ?? undefined, loyaltyNumber: cu.loyaltyNumber ?? undefined,
+          phone: cu.phone, email: cu.email ?? undefined, loyaltyNumber: cu.loyaltyNumber ?? undefined, loyaltyMember: !!cu.loyaltyNumber?.trim(),
           notificationOptInSms: false, notificationOptInEmail: false, // no proven consent
           notes: note,
         },

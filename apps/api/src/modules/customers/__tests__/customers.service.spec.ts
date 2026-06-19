@@ -3,7 +3,7 @@ import { CustomersService } from '../customers.service';
 
 const customerRow = {
   id: 'c1', customerNumber: 'CUST-000123', firstName: 'Jane', lastName: 'Doe',
-  phone: '8763341234', email: 'jane@example.test', loyaltyNumber: 'LOY-1', notes: 'import:abc; raw="DOE, JANE"',
+  phone: '8763341234', email: 'jane@example.test', loyaltyNumber: 'LOY-1', loyaltyMember: true, notes: 'import:abc; raw="DOE, JANE"',
   notificationOptInSms: true, notificationOptInEmail: false, createdAt: new Date('2026-01-01'),
 };
 
@@ -117,18 +117,18 @@ describe('CustomersService.create — number generator', () => {
     expect(tx.customer.create.mock.calls[0][0].data.customerNumber).toBe('CUST-000016');
   });
 
-  it('persists an optional loyaltyNumber (trimmed); blank/absent → null', async () => {
+  it('persists the loyaltyMember flag; defaults to false when absent (CR-2026-050)', async () => {
     const a = buildCreate();
-    await a.svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234', loyaltyNumber: '  LOY-9  ' } as any);
-    expect(a.tx.customer.create.mock.calls[0][0].data.loyaltyNumber).toBe('LOY-9');
+    await a.svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234', loyaltyMember: true } as any);
+    expect(a.tx.customer.create.mock.calls[0][0].data.loyaltyMember).toBe(true);
 
     const b = buildCreate();
-    await b.svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234', loyaltyNumber: '   ' } as any);
-    expect(b.tx.customer.create.mock.calls[0][0].data.loyaltyNumber).toBeNull();
+    await b.svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234', loyaltyMember: false } as any);
+    expect(b.tx.customer.create.mock.calls[0][0].data.loyaltyMember).toBe(false);
 
     const c = buildCreate();
     await c.svc.create({ firstName: 'A', lastName: 'B', phone: '8765551234' } as any);
-    expect(c.tx.customer.create.mock.calls[0][0].data.loyaltyNumber).toBeNull();
+    expect(c.tx.customer.create.mock.calls[0][0].data.loyaltyMember).toBe(false);
   });
 });
 
@@ -143,21 +143,21 @@ describe('CustomersService.update — loyalty', () => {
     return { svc: new CustomersService(prisma), prisma };
   }
 
-  it('sets a trimmed loyaltyNumber', async () => {
+  it('sets loyaltyMember = true', async () => {
     const { svc, prisma } = build();
-    await svc.update('c1', { loyaltyNumber: '  LOY-7 ' } as any);
-    expect(prisma.customer.update.mock.calls[0][0].data.loyaltyNumber).toBe('LOY-7');
+    await svc.update('c1', { loyaltyMember: true } as any);
+    expect(prisma.customer.update.mock.calls[0][0].data.loyaltyMember).toBe(true);
   });
 
-  it('clears loyalty when given an empty string', async () => {
+  it('sets loyaltyMember = false', async () => {
     const { svc, prisma } = build();
-    await svc.update('c1', { loyaltyNumber: '' } as any);
-    expect(prisma.customer.update.mock.calls[0][0].data.loyaltyNumber).toBeNull();
+    await svc.update('c1', { loyaltyMember: false } as any);
+    expect(prisma.customer.update.mock.calls[0][0].data.loyaltyMember).toBe(false);
   });
 
   it('leaves loyalty untouched when not provided', async () => {
     const { svc, prisma } = build();
     await svc.update('c1', { firstName: 'X' } as any);
-    expect('loyaltyNumber' in prisma.customer.update.mock.calls[0][0].data).toBe(false);
+    expect('loyaltyMember' in prisma.customer.update.mock.calls[0][0].data).toBe(false);
   });
 });

@@ -15,7 +15,7 @@ const base: CustomerCore = {
   lastName: 'Doe',
   phone: '8763341234',
   email: 'jane@example.test',
-  loyaltyNumber: 'LOY-44821',
+  loyaltyMember: true,
   notes: 'import:10b5c669-06b7-4d14-937a-5aab95c2c013; raw="DOE, JANE"',
   notificationOptInSms: true,
   notificationOptInEmail: false,
@@ -37,7 +37,7 @@ describe('toCustomerListItem — privacy-safe list shape', () => {
     });
   });
   it('flags missingContact when no usable phone and no email', () => {
-    const item = toCustomerListItem({ ...base, phone: '876', email: null, loyaltyNumber: null }, { vehicleCount: 0, lastVisitAt: null });
+    const item = toCustomerListItem({ ...base, phone: '876', email: null, loyaltyMember: false }, { vehicleCount: 0, lastVisitAt: null });
     expect(item.hasLoyalty).toBe(false);
     expect(item.missingContact).toBe(true);
   });
@@ -49,7 +49,6 @@ describe('toCustomerDetail — formatted phones, staff notes, gated import meta'
     expect(withMeta.phones).toEqual(['876-334-1234']);
     expect(withMeta.phonesFlagged).toBe(false);
     expect(withMeta.staffNotes).toBeNull(); // import note is not a staff note
-    expect(withMeta.loyaltyNumber).toBe('LOY-44821');
     expect(withMeta.hasLoyalty).toBe(true);
     expect(withMeta.importMeta).toEqual({ batchId: '10b5c669-06b7-4d14-937a-5aab95c2c013', rawName: 'DOE, JANE' });
   });
