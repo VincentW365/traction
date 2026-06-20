@@ -7,21 +7,8 @@ Tick each box; jot anything off in the **Issue Log** at the bottom and hand it b
 - **Role switcher:** open **http://localhost:3000/dev-login** and click a role to instantly sign in as it (no password). Use this to test each role.
 - **Demo data:** the queue/schedule/dispatch are pre‑loaded with sandbox data (label `test-walkthrough-2026-06-15`). It's tagged so it can be wiped cleanly afterward — ask me to "clean up the demo data" when you're done.
 
----
 
-## 1. Roles — access & permissions
-Sign in as each role via `/dev-login` and confirm the sidebar + screens match what that role should see (and that restricted screens are hidden/blocked).
-
-- [ ] **Front Desk** — search customers, register walk‑ins, check‑in, see the queue.
-- [ ] **Service Advisor** — appointments, service orders, customer/vehicle detail, inspections.
-- [ ] **Technician** — simple technician queue/work screen; large status buttons; minimal admin.
-- [ ] **Manager** — everything operational + reports + dashboards.
-- [ ] **Parts** — parts readiness/requests context.
-- [ ] **Transport Coordinator** — transport requests + dispatch board.
-- [ ] **Admin** — full admin area (staff, settings, integrations, audit logs).
-- [ ] Each role is **blocked** from screens it shouldn't reach (try a URL directly, e.g. a Front Desk account opening `/admin/staff`).
-
-## 2. Golden path (end‑to‑end) — do this once
+## 1. Golden path (end‑to‑end) — do this once
 Run a single job from arrival to pickup. This exercises the core wiring.
 
 - [ ] **Customer:** Customers → create a new customer (name + phone). Saves, opens detail.
@@ -57,12 +44,6 @@ Run a single job from arrival to pickup. This exercises the core wiring.
 - [ ] **Reports:** Rework/First‑Time‑Fix, Due‑for‑Contact, Service Mix, Historical, Classification — each loads and the numbers look sane.
 - [ ] **Admin:** staff (add/deactivate), availability, performance, assignments, service catalogue, resources/bays, integrations, settings, **Audit Logs**.
 
-## 5. Business rules (DMAIC) — spot checks
-- [ ] **Same‑day cutoff:** booking past the cutoff is blocked (manager can override, audited).
-- [ ] **Mileage:** you can now enter mileage **regardless of the service selected** (recently changed); still required for service‑category jobs.
-- [ ] **Mobile‑jack / vehicle class:** only eligible vehicle classes get the mobile‑jack/light bay; others blocked.
-- [ ] **Pause/resume + rework** recorded where applicable.
-- [ ] **Ticket # is immutable; queue rank is dynamic** (rank changes as the queue updates, ticket number doesn't).
 
 ## 6. Cross‑cutting
 - [ ] **Exports:** on Reports + Customers/Complaints/Inspections lists, the **Export** menu → CSV opens cleanly in Excel; PDF prints a branded, properly‑laid‑out page.
