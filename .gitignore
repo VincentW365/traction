@@ -66,3 +66,6 @@ demo-output/
 
 # Local DB backups (may contain PII) — never commit
 backups/
+
+# Local customer-data exports / reports (PII) — never commit
+/ExportedCustomers*.csv
