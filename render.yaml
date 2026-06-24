@@ -1,0 +1,49 @@
+# Render Blueprint — BSOP. Creates everything from this repo:
+#   bsop-db   PostgreSQL (free)
+#   bsop-api  NestJS API (free)   — migrations run on start; seed once via Shell
+#   bsop-web  Next.js web (free)
+# Redis is NOT required (BullMQ is not wired). After the first deploy you set a few
+# cross-service URLs and trigger ONE web redeploy — see DEPLOY_RENDER.md.
+
+databases:
+  - name: bsop-db
+    plan: free
+    databaseName: bsop
+    user: bsop
+
+services:
+  - type: web
+    name: bsop-api
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm exec turbo build --filter=@bsop/api
+    startCommand: pnpm exec prisma migrate deploy && pnpm --filter @bsop/api start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bsop-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true            # Render generates a strong secret
+      - key: NODE_ENV
+        value: production
+      - key: ALLOW_DEV_LOGIN
+        value: "false"                 # dev-login stays off in the cloud
+      - key: API_CORS_ORIGIN
+        sync: false                    # set to the bsop-web URL after first deploy
+
+  - type: web
+    name: bsop-web
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec turbo build --filter=@bsop/web
+    startCommand: pnpm --filter @bsop/web start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_URL
+        sync: false                    # https://<bsop-api url>/api/v1  (set after first deploy, then redeploy web)
+      - key: NEXT_PUBLIC_WS_URL
+        sync: false                    # https://<bsop-api url>

@@ -39,13 +39,12 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api/docs', app, document);
 
-  await app.listen(env.API_PORT);
-  console.warn(
-    `BSOP API running on http://localhost:${env.API_PORT}/api/v1`,
-  );
-  console.warn(
-    `Swagger docs at http://localhost:${env.API_PORT}/api/docs`,
-  );
+  // Cloud hosts (Render, Railway, etc.) assign the port via $PORT; fall back to
+  // API_PORT locally. Bind 0.0.0.0 so the platform can route to it.
+  const port = Number(process.env.PORT) || env.API_PORT;
+  await app.listen(port, '0.0.0.0');
+  console.warn(`BSOP API running on port ${port} (base path /api/v1)`);
+  console.warn(`Swagger docs at /api/docs`);
 }
 
 bootstrap();
