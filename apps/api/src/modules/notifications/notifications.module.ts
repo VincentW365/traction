@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import twilio from 'twilio';
 import { validateEnv } from '@bsop/config';
 import { NotificationsService } from './notifications.service';
+import { NotificationsCronService } from './notifications-cron.service';
 import { NotificationsController } from './notifications.controller';
 import { StubNotificationProvider } from './providers/stub.provider';
 import { TwilioNotificationProvider, TwilioMessageClient } from './providers/twilio.provider';
@@ -38,6 +39,7 @@ function notificationProviderFactory(): NotificationProvider {
   controllers: [NotificationsController],
   providers: [
     NotificationsService,
+    NotificationsCronService,
     { provide: NOTIFICATION_PROVIDER, useFactory: notificationProviderFactory },
   ],
   exports: [NotificationsService],

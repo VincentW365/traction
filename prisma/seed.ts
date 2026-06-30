@@ -292,6 +292,8 @@ async function main() {
     { ruleKey: 'display_board_token', valueJson: 'bert-display-7f3a9c2e4b81d6', notes: 'Unguessable token gating the public waiting-room display board URL (/display/:token). No login is required on the screen; rotate this value if the URL leaks.' },
     { ruleKey: 'notification_provider_sms', valueJson: 'stub', notes: 'SMS provider: stub | twilio' },
     { ruleKey: 'notification_provider_email', valueJson: 'stub', notes: 'Email provider: stub | sendgrid | smtp' },
+    { ruleKey: 'appointment_reminder_enabled', valueJson: true, notes: 'CR-2026-056: whether the automatic appointment reminder (sent ~24h before) is active' },
+    { ruleKey: 'appointment_reminder_hours', valueJson: 24, notes: 'CR-2026-056: how many hours before scheduledStartAt the reminder fires (hourly cron sweep)' },
     { ruleKey: 'overflow_mechanic_required', valueJson: true, notes: 'Whether overflow slots require a mechanic assignment' },
     { ruleKey: 'light_slot_mechanic_required', valueJson: false, notes: 'Whether light task slots require a mechanic assignment' },
     { ruleKey: 'reminder_eligible_service_types', valueJson: ['OIL-01'], notes: 'Service type codes eligible for automated maintenance reminders' },

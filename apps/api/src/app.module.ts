@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+// Aliased: a local ./modules/schedule (resource schedule) already owns the name
+// `ScheduleModule`. This is the NestJS task-scheduler that powers the appointment
+// reminder cron (CR-2026-056).
+import { ScheduleModule as NestScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { SandboxModule } from './common/sandbox/sandbox.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -34,6 +38,7 @@ import { AvailabilityModule } from './modules/availability/availability.module';
 @Module({
   imports: [
     EventEmitterModule.forRoot(),
+    NestScheduleModule.forRoot(),
     PrismaModule,
     SandboxModule,
     AuthModule,

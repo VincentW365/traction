@@ -530,6 +530,118 @@ export class NotificationsService {
     return { sent, skipped };
   }
 
+  // ---------------------------------------------------------------------------
+  // CR-2026-056 — 24-hour appointment reminder sweep
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Send a one-time reminder for every upcoming appointment that has entered the
+   * reminder window (default 24h before `scheduledStartAt`). Run on a schedule
+   * (hourly cron) — the dedup makes it safe to run repeatedly and at any cadence.
+   *
+   * - Window: appointments with `scheduledStartAt` in (now, now + reminderHours].
+   *   Sending as soon as an appointment enters the window means the reminder goes
+   *   out ~`reminderHours` before the appointment, give or take the cron interval.
+   * - Statuses: only still-upcoming, non-terminal appointments (DRAFT, CONFIRMED,
+   *   RESCHEDULED) — never CHECKED_IN / IN_PROGRESS / COMPLETED / MISSED / CANCELLED.
+   * - Idempotent: one reminder per appointment, deduped on NotificationLog
+   *   templateKey `appointment_reminder_24h`.
+   * - Respects customer opt-in (notificationOptInSms / notificationOptInEmail).
+   * - Sends immediately (no `scheduledAt`) — the sweep itself IS the schedule.
+   *
+   * Gated by business rules `appointment_reminder_enabled` (default true) and
+   * `appointment_reminder_hours` (default 24). Read-only over scheduling/queue.
+   *
+   * @param now injectable clock for testability (defaults to current time)
+   */
+  async sweepAppointmentReminders(
+    now: Date = new Date(),
+  ): Promise<{ sent: number; skipped: number }> {
+    const enabledRule = await this.prisma.businessRuleConfig.findFirst({
+      where: { ruleKey: 'appointment_reminder_enabled', effectiveTo: null },
+    });
+    if (enabledRule && enabledRule.valueJson === false) {
+      return { sent: 0, skipped: 0 };
+    }
+
+    const hoursRule = await this.prisma.businessRuleConfig.findFirst({
+      where: { ruleKey: 'appointment_reminder_hours', effectiveTo: null },
+    });
+    const reminderHours = (hoursRule?.valueJson as number) ?? 24;
+    const windowEnd = new Date(now.getTime() + reminderHours * 60 * 60 * 1000);
+
+    const appointments = await this.prisma.appointment.findMany({
+      where: {
+        status: { in: ['DRAFT', 'CONFIRMED', 'RESCHEDULED'] },
+        scheduledStartAt: { gt: now, lte: windowEnd },
+      },
+      include: {
+        customer: true,
+        services: { include: { serviceType: true } },
+        site: true,
+      },
+    });
+
+    let sent = 0;
+    let skipped = 0;
+
+    for (const appt of appointments) {
+      // Idempotency: already reminded for this appointment?
+      const already = await this.prisma.notificationLog.count({
+        where: {
+          entityType: 'Appointment',
+          entityId: appt.id,
+          templateKey: 'appointment_reminder_24h',
+        },
+      });
+      if (already > 0) {
+        skipped++;
+        continue;
+      }
+
+      const customer = appt.customer;
+      const smsOk = customer.notificationOptInSms && !!customer.phone;
+      const emailOk = !!customer.email && customer.notificationOptInEmail;
+      if (!smsOk && !emailOk) {
+        skipped++;
+        continue;
+      }
+
+      const templateData = {
+        scheduledStartAt: appt.scheduledStartAt,
+        services: appt.services.map((s) => s.serviceType.name),
+        siteName: appt.site.name,
+      };
+
+      if (smsOk) {
+        await this.queue({
+          entityType: 'Appointment',
+          entityId: appt.id,
+          channel: 'SMS',
+          templateKey: 'appointment_reminder_24h',
+          recipient: customer.phone,
+          templateData,
+        });
+      }
+      if (emailOk) {
+        await this.queue({
+          entityType: 'Appointment',
+          entityId: appt.id,
+          channel: 'EMAIL',
+          templateKey: 'appointment_reminder_24h',
+          recipient: customer.email as string,
+          templateData,
+        });
+      }
+      sent++;
+    }
+
+    this.logger.log(
+      `Appointment reminders: ${sent} sent, ${skipped} skipped (window ${reminderHours}h)`,
+    );
+    return { sent, skipped };
+  }
+
   /** Year-month-day and hour of a timestamp in a given IANA timezone. */
   private zonedParts(date: Date, tz: string): { date: string; hour: number } {
     const parts = new Intl.DateTimeFormat('en-CA', {

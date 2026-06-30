@@ -37,6 +37,13 @@ export class NotificationsController {
     return this.notificationsService.sendMiddayCompletionFollowUp(body.siteId);
   }
 
+  @Post('appointment-reminders')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'CR-2026-056: manually run the 24h appointment-reminder sweep (idempotent; normally hourly cron)' })
+  async appointmentReminders() {
+    return this.notificationsService.sweepAppointmentReminders();
+  }
+
   @Get('log')
   @RequirePermission(PERMISSIONS.QUEUE_VIEW)
   @ApiOperation({ summary: 'Get notification log for an entity' })
