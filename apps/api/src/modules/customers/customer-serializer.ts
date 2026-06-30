@@ -60,6 +60,7 @@ export interface CustomerDetail {
   lastName: string;
   phones: string[];
   phonesFlagged: boolean;
+  phoneRaw: string | null;
   email: string | null;
   hasLoyalty: boolean;
   notificationOptInSms: boolean;
@@ -124,6 +125,7 @@ export function toCustomerDetail(
     lastName: c.lastName,
     phones: fp.values,
     phonesFlagged: fp.flagged,
+    phoneRaw: c.phone ?? null,
     email: c.email ?? null,
     hasLoyalty: c.loyaltyMember,
     notificationOptInSms: c.notificationOptInSms,

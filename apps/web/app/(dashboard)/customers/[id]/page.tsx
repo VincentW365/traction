@@ -36,6 +36,7 @@ interface CustomerDetail {
   lastName: string;
   phones: string[];
   phonesFlagged: boolean;
+  phoneRaw: string | null;
   email: string | null;
   hasLoyalty: boolean;
   notificationOptInSms: boolean;
@@ -106,6 +107,20 @@ export default function CustomerDetailPage() {
   const [loyaltyMemberInput, setLoyaltyMemberInput] = useState(false);
   const [historyOffset, setHistoryOffset] = useState(0);
 
+  // Inline edit state for the identity, contact, and consent cards. Each card
+  // edits a 1:1 subset of Customer fields via the shared PATCH /customers/:id.
+  const [editingIdentity, setEditingIdentity] = useState(false);
+  const [firstNameInput, setFirstNameInput] = useState('');
+  const [lastNameInput, setLastNameInput] = useState('');
+
+  const [editingContact, setEditingContact] = useState(false);
+  const [phoneInput, setPhoneInput] = useState('');
+  const [emailInput, setEmailInput] = useState('');
+
+  const [editingConsent, setEditingConsent] = useState(false);
+  const [smsOptInInput, setSmsOptInInput] = useState(true);
+  const [emailOptInInput, setEmailOptInInput] = useState(true);
+
   const { data: customer, isLoading, error } = useQuery<CustomerDetail>({
     queryKey: ['customer', customerId],
     queryFn: () => api.get(`/customers/${customerId}`),
@@ -161,6 +176,46 @@ export default function CustomerDetailPage() {
     },
   });
 
+  // Generic detail editor — patches whichever fields a card submits, then closes
+  // that card's edit mode. Server-side guards (RBAC + sandbox) still apply.
+  const updateIdentityMutation = useMutation({
+    mutationFn: () =>
+      api.patch(`/customers/${customerId}`, {
+        firstName: firstNameInput.trim(),
+        lastName: lastNameInput.trim(),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['customer', customerId] });
+      setEditingIdentity(false);
+    },
+  });
+
+  const updateContactMutation = useMutation({
+    mutationFn: () =>
+      api.patch(`/customers/${customerId}`, {
+        phone: phoneInput.trim(),
+        // Send null-clearing as empty string omitted: only patch email when set,
+        // else explicitly clear it.
+        email: emailInput.trim() || null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['customer', customerId] });
+      setEditingContact(false);
+    },
+  });
+
+  const updateConsentMutation = useMutation({
+    mutationFn: () =>
+      api.patch(`/customers/${customerId}`, {
+        notificationOptInSms: smsOptInInput,
+        notificationOptInEmail: emailOptInInput,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['customer', customerId] });
+      setEditingConsent(false);
+    },
+  });
+
   if (isLoading) {
     return <div className="page-container"><LoadingState message="Loading customer..." /></div>;
   }
@@ -200,14 +255,42 @@ export default function CustomerDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         {/* Customer Identity */}
         <div className="card">
-          <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Customer Identity</h2></div>
-          <div className="card-body flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-semibold">{initials || '?'}</div>
-            <div>
-              <p className="text-base font-semibold text-slate-900">{fullName}</p>
-              <p className="text-xs text-slate-500">Customer since {fmtDate(customer.createdAt)}</p>
-            </div>
+          <div className="card-header flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900">Customer Identity</h2>
+            {!editingIdentity && (
+              <button
+                onClick={() => { setFirstNameInput(customer.firstName); setLastNameInput(customer.lastName); setEditingIdentity(true); }}
+                className="text-xs text-blue-600 hover:underline font-medium"
+              >
+                Edit
+              </button>
+            )}
           </div>
+          {editingIdentity ? (
+            <div className="card-body space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="input-label">First Name</label><input type="text" value={firstNameInput} onChange={(e) => setFirstNameInput(e.target.value)} className="input-field" /></div>
+                <div><label className="input-label">Last Name</label><input type="text" value={lastNameInput} onChange={(e) => setLastNameInput(e.target.value)} className="input-field" /></div>
+              </div>
+              {updateIdentityMutation.isError && (
+                <p className="text-xs text-red-600">{updateIdentityMutation.error instanceof Error ? updateIdentityMutation.error.message : 'Failed to update name'}</p>
+              )}
+              <div className="flex items-center gap-2">
+                <button onClick={() => updateIdentityMutation.mutate()} disabled={!firstNameInput.trim() || !lastNameInput.trim() || updateIdentityMutation.isPending} className="btn-primary text-xs">
+                  {updateIdentityMutation.isPending ? 'Saving...' : 'Save'}
+                </button>
+                <button onClick={() => setEditingIdentity(false)} disabled={updateIdentityMutation.isPending} className="btn-secondary text-xs">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div className="card-body flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-semibold">{initials || '?'}</div>
+              <div>
+                <p className="text-base font-semibold text-slate-900">{fullName}</p>
+                <p className="text-xs text-slate-500">Customer since {fmtDate(customer.createdAt)}</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Bert's Account Details */}
@@ -221,24 +304,57 @@ export default function CustomerDetailPage() {
 
         {/* Contact Details — phone only here, after opening the record */}
         <div className="card">
-          <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Contact Details</h2></div>
-          <div className="card-body grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
-            <div>
-              <div className="input-label">Phone{customer.phones.length > 1 ? 's' : ''}</div>
-              {customer.phones.length === 0 ? (
-                <p className="text-sm text-slate-500">No phone on file</p>
-              ) : (
-                <ul className="space-y-0.5">
-                  {customer.phones.map((p, i) => <li key={i} className="text-sm font-medium text-slate-900">{p}</li>)}
-                </ul>
-              )}
-              {customer.phonesFlagged && <p className="text-xs text-amber-600 mt-1">⚠ Multiple/unverified — confirm with customer</p>}
-            </div>
-            <div>
-              <div className="input-label">Email</div>
-              <p className="text-sm font-medium text-slate-900 break-all">{customer.email ?? 'Not provided'}</p>
-            </div>
+          <div className="card-header flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900">Contact Details</h2>
+            {!editingContact && (
+              <button
+                onClick={() => { setPhoneInput(customer.phoneRaw ?? ''); setEmailInput(customer.email ?? ''); setEditingContact(true); }}
+                className="text-xs text-blue-600 hover:underline font-medium"
+              >
+                Edit
+              </button>
+            )}
           </div>
+          {editingContact ? (
+            <div className="card-body space-y-3">
+              <div>
+                <label className="input-label">Phone</label>
+                <input type="tel" value={phoneInput} onChange={(e) => setPhoneInput(e.target.value)} className="input-field" placeholder="e.g., 876-555-0100" />
+                <p className="text-xs text-slate-400 mt-1">Multiple numbers can be entered together; the display splits them automatically.</p>
+              </div>
+              <div>
+                <label className="input-label">Email</label>
+                <input type="email" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} className="input-field" placeholder="Optional" />
+              </div>
+              {updateContactMutation.isError && (
+                <p className="text-xs text-red-600">{updateContactMutation.error instanceof Error ? updateContactMutation.error.message : 'Failed to update contact'}</p>
+              )}
+              <div className="flex items-center gap-2">
+                <button onClick={() => updateContactMutation.mutate()} disabled={!phoneInput.trim() || updateContactMutation.isPending} className="btn-primary text-xs">
+                  {updateContactMutation.isPending ? 'Saving...' : 'Save'}
+                </button>
+                <button onClick={() => setEditingContact(false)} disabled={updateContactMutation.isPending} className="btn-secondary text-xs">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div className="card-body grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+              <div>
+                <div className="input-label">Phone{customer.phones.length > 1 ? 's' : ''}</div>
+                {customer.phones.length === 0 ? (
+                  <p className="text-sm text-slate-500">No phone on file</p>
+                ) : (
+                  <ul className="space-y-0.5">
+                    {customer.phones.map((p, i) => <li key={i} className="text-sm font-medium text-slate-900">{p}</li>)}
+                  </ul>
+                )}
+                {customer.phonesFlagged && <p className="text-xs text-amber-600 mt-1">⚠ Multiple/unverified — confirm with customer</p>}
+              </div>
+              <div>
+                <div className="input-label">Email</div>
+                <p className="text-sm font-medium text-slate-900 break-all">{customer.email ?? 'Not provided'}</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Loyalty Status */}
@@ -292,11 +408,51 @@ export default function CustomerDetailPage() {
 
         {/* Notification Consent */}
         <div className="card">
-          <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Preferences &amp; Consent</h2></div>
-          <div className="card-body grid grid-cols-2 gap-x-6 gap-y-3">
-            <div><div className="input-label">SMS Notifications</div><ConsentBadge on={customer.notificationOptInSms} /></div>
-            <div><div className="input-label">Email Notifications</div><ConsentBadge on={customer.notificationOptInEmail} /></div>
+          <div className="card-header flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900">Preferences &amp; Consent</h2>
+            {!editingConsent && (
+              <button
+                onClick={() => { setSmsOptInInput(customer.notificationOptInSms); setEmailOptInInput(customer.notificationOptInEmail); setEditingConsent(true); }}
+                className="text-xs text-blue-600 hover:underline font-medium"
+              >
+                Edit
+              </button>
+            )}
           </div>
+          {editingConsent ? (
+            <div className="card-body space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="input-label">SMS Notifications</label>
+                  <select value={smsOptInInput ? 'yes' : 'no'} onChange={(e) => setSmsOptInInput(e.target.value === 'yes')} className="input-field">
+                    <option value="yes">Opted in</option>
+                    <option value="no">Opted out</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="input-label">Email Notifications</label>
+                  <select value={emailOptInInput ? 'yes' : 'no'} onChange={(e) => setEmailOptInInput(e.target.value === 'yes')} className="input-field">
+                    <option value="yes">Opted in</option>
+                    <option value="no">Opted out</option>
+                  </select>
+                </div>
+              </div>
+              {updateConsentMutation.isError && (
+                <p className="text-xs text-red-600">{updateConsentMutation.error instanceof Error ? updateConsentMutation.error.message : 'Failed to update preferences'}</p>
+              )}
+              <div className="flex items-center gap-2">
+                <button onClick={() => updateConsentMutation.mutate()} disabled={updateConsentMutation.isPending} className="btn-primary text-xs">
+                  {updateConsentMutation.isPending ? 'Saving...' : 'Save'}
+                </button>
+                <button onClick={() => setEditingConsent(false)} disabled={updateConsentMutation.isPending} className="btn-secondary text-xs">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div className="card-body grid grid-cols-2 gap-x-6 gap-y-3">
+              <div><div className="input-label">SMS Notifications</div><ConsentBadge on={customer.notificationOptInSms} /></div>
+              <div><div className="input-label">Email Notifications</div><ConsentBadge on={customer.notificationOptInEmail} /></div>
+            </div>
+          )}
         </div>
 
         {/* Notes — staff notes only (import metadata never shown here) */}
