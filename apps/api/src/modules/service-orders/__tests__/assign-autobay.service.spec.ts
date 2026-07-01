@@ -131,7 +131,8 @@ describe('ServiceOrder assign — bay auto-assign (CR-2026-062)', () => {
     expect(findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ siteId: 'site-1', status: 'ACTIVE' }) }),
     );
-    expect(findMany.mock.calls[0][0].where).not.toHaveProperty('bayType');
+    const firstCallWhere = (findMany.mock.calls as any[])[0][0].where;
+    expect(firstCallWhere).not.toHaveProperty('bayType');
     expect(h.prisma.technicianAssignment.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ bayId: 'bay-x' }) }),
     );
