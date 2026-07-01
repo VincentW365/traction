@@ -58,14 +58,43 @@ export function formatPhones(raw: string | null | undefined): FormattedPhones {
 export interface ParsedNotes {
   staffNotes: string | null; // true customer-facing/staff-entered note
   importMeta: { batchId: string; rawName: string } | null;
+  importLine: string | null; // the exact stored import tag line, for verbatim preservation on edit
 }
 
-// `import:<batchId>; raw="<NAME>"` written by scripts/import-customers.ts
+// `import:<batchId>; raw="<NAME>"` written by scripts/import-customers.ts. It occupies
+// the FIRST line of notes; any staff-entered note follows on subsequent lines. The
+// import rollback matches `notes contains "import:<batchId>"` (a substring), so keeping
+// the tag on its own line preserves rollback while allowing editable staff notes below.
 const IMPORT_NOTE_RE = /^import:([^;]+);\s*raw="([\s\S]*)"\s*$/;
 
 export function parseCustomerNotes(notes: string | null | undefined): ParsedNotes {
-  if (!notes) return { staffNotes: null, importMeta: null };
-  const m = notes.match(IMPORT_NOTE_RE);
-  if (m) return { staffNotes: null, importMeta: { batchId: m[1].trim(), rawName: m[2] } };
-  return { staffNotes: notes, importMeta: null };
+  if (!notes) return { staffNotes: null, importMeta: null, importLine: null };
+  const nl = notes.indexOf('\n');
+  const firstLine = nl === -1 ? notes : notes.slice(0, nl);
+  const rest = nl === -1 ? '' : notes.slice(nl + 1);
+  const m = firstLine.match(IMPORT_NOTE_RE);
+  if (m) {
+    const staff = rest.trim();
+    return {
+      staffNotes: staff.length ? staff : null,
+      importMeta: { batchId: m[1].trim(), rawName: m[2] },
+      importLine: firstLine,
+    };
+  }
+  return { staffNotes: notes, importMeta: null, importLine: null };
+}
+
+/**
+ * Compose the value to STORE in Customer.notes when staff edit the note. Any existing
+ * import tag is preserved verbatim on the first line (never deleted — the rollback keys
+ * on it); the new staff text follows. Returns null when there is neither.
+ */
+export function composeCustomerNotes(
+  existingNotes: string | null | undefined,
+  staffText: string | null | undefined,
+): string | null {
+  const { importLine } = parseCustomerNotes(existingNotes);
+  const staff = (staffText ?? '').trim();
+  if (importLine) return staff.length ? `${importLine}\n${staff}` : importLine;
+  return staff.length ? staff : null;
 }

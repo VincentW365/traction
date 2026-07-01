@@ -15,6 +15,7 @@ import {
   type CustomerDetail,
   type DirectoryRawRow,
 } from './customer-serializer';
+import { composeCustomerNotes } from './customer-format';
 
 const RECENT_VISITS = 10;
 
@@ -275,7 +276,9 @@ export class CustomersService {
         ...(data.loyaltyMember !== undefined && { loyaltyMember: data.loyaltyMember }),
         ...(data.notificationOptInSms !== undefined && { notificationOptInSms: data.notificationOptInSms }),
         ...(data.notificationOptInEmail !== undefined && { notificationOptInEmail: data.notificationOptInEmail }),
-        ...(data.notes !== undefined && { notes: data.notes }),
+        // CR-2026-060 — editable staff notes; preserve any import tag verbatim so the
+        // import rollback (which matches the tag as a substring) still works.
+        ...(data.notes !== undefined && { notes: composeCustomerNotes(existing.notes, data.notes) }),
       },
     });
   }

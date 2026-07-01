@@ -121,6 +121,9 @@ export default function CustomerDetailPage() {
   const [smsOptInInput, setSmsOptInInput] = useState(true);
   const [emailOptInInput, setEmailOptInInput] = useState(true);
 
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notesInput, setNotesInput] = useState('');
+
   const { data: customer, isLoading, error } = useQuery<CustomerDetail>({
     queryKey: ['customer', customerId],
     queryFn: () => api.get(`/customers/${customerId}`),
@@ -213,6 +216,14 @@ export default function CustomerDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customer', customerId] });
       setEditingConsent(false);
+    },
+  });
+
+  const updateNotesMutation = useMutation({
+    mutationFn: () => api.patch(`/customers/${customerId}`, { notes: notesInput }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['customer', customerId] });
+      setEditingNotes(false);
     },
   });
 
@@ -455,11 +466,40 @@ export default function CustomerDetailPage() {
           )}
         </div>
 
-        {/* Notes — staff notes only (import metadata never shown here) */}
+        {/* Notes — staff notes only (import metadata is preserved server-side, never shown/edited here) */}
         <div className="card">
-          <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Notes</h2></div>
+          <div className="card-header flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900">Notes</h2>
+            {!editingNotes && (
+              <button
+                onClick={() => { setNotesInput(customer.staffNotes ?? ''); setEditingNotes(true); }}
+                className="text-xs text-blue-600 hover:underline font-medium"
+              >
+                Edit
+              </button>
+            )}
+          </div>
           <div className="card-body">
-            {customer.staffNotes ? (
+            {editingNotes ? (
+              <div className="space-y-3">
+                <textarea
+                  value={notesInput}
+                  onChange={(e) => setNotesInput(e.target.value)}
+                  rows={4}
+                  className="input-field"
+                  placeholder="Staff notes about this customer (visible to staff only)"
+                />
+                {updateNotesMutation.isError && (
+                  <p className="text-xs text-red-600">{updateNotesMutation.error instanceof Error ? updateNotesMutation.error.message : 'Failed to update notes'}</p>
+                )}
+                <div className="flex items-center gap-2">
+                  <button onClick={() => updateNotesMutation.mutate()} disabled={updateNotesMutation.isPending} className="btn-primary text-xs">
+                    {updateNotesMutation.isPending ? 'Saving...' : 'Save'}
+                  </button>
+                  <button onClick={() => setEditingNotes(false)} disabled={updateNotesMutation.isPending} className="btn-secondary text-xs">Cancel</button>
+                </div>
+              </div>
+            ) : customer.staffNotes ? (
               <p className="text-sm text-slate-700 whitespace-pre-wrap">{customer.staffNotes}</p>
             ) : (
               <p className="text-sm text-slate-400">No notes.</p>
