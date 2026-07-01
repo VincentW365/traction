@@ -133,6 +133,8 @@ export default function QueueTicketDetailPage() {
   const { user } = useAuth();
   // CR-2026-034 (C-4) — who can start a visual inspection (API enforces).
   const canInspect = ['ADMIN', 'SERVICE_ADVISOR', 'TECHNICIAN'].includes(user?.roleCode ?? '');
+  // CR-2026-057 — who can create/approve/assign service orders (API enforces).
+  const canManageOrders = ['ADMIN', 'SERVICE_ADVISOR'].includes(user?.roleCode ?? '');
 
   // Override form state
   const [showOverrideForm, setShowOverrideForm] = useState(false);
@@ -145,6 +147,12 @@ export default function QueueTicketDetailPage() {
   const [assigningOrderId, setAssigningOrderId] = useState<string | null>(null);
   const [assignTechId, setAssignTechId] = useState('');
   const [assignBayId, setAssignBayId] = useState('');
+
+  // CR-2026-057 — create service order. Appointments prefill from requested
+  // services (one click); walk-ins (no appointment services) pick from the
+  // catalogue via this fallback form.
+  const [showServicePicker, setShowServicePicker] = useState(false);
+  const [pickedServiceCodes, setPickedServiceCodes] = useState<string[]>([]);
 
   // Pause / rework form state (CR-2026-011) — keyed by order id
   const [pauseFormOrderId, setPauseFormOrderId] = useState<string | null>(null);
@@ -241,6 +249,27 @@ export default function QueueTicketDetailPage() {
   const approveOrder = useMutation({
     mutationFn: (orderId: string) => api.post(`/service-orders/${orderId}/approve`, {}),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['service-orders'] }),
+  });
+
+  // CR-2026-057 — service catalogue for the walk-in fallback picker.
+  const serviceTypesQuery = useQuery<Array<{ id: string; code: string; name: string }>>({
+    queryKey: ['service-types'],
+    queryFn: () => api.get('/service-types'),
+    enabled: showServicePicker,
+  });
+
+  // CR-2026-057 — create a service order for this visit from a set of service codes.
+  const createOrder = useMutation({
+    mutationFn: (serviceTypeCodes: string[]) =>
+      api.post('/service-orders', {
+        serviceVisitId: ticket!.serviceVisit.id,
+        items: serviceTypeCodes.map((code) => ({ serviceTypeCode: code })),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-orders'] });
+      setShowServicePicker(false);
+      setPickedServiceCodes([]);
+    },
   });
 
   // CR-2026-011 — dedicated pause/resume/rework endpoints (recording-only; NOT /status)
@@ -574,16 +603,85 @@ export default function QueueTicketDetailPage() {
 
       {/* Service Orders Section */}
       <div className="card mb-6">
-        <div className="card-header">
+        <div className="card-header flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-900">
             Service Orders
             {orders.length > 0 && <span className="ml-2 badge bg-slate-100 text-slate-600">{orders.length}</span>}
           </h2>
+          {canManageOrders && !showServicePicker && (() => {
+            const apptCodes = (ticket.serviceVisit.appointment?.services ?? []).map((s) => s.serviceType.code);
+            return (
+              <button
+                onClick={() => {
+                  if (apptCodes.length > 0) {
+                    // One-click: prefill from the appointment's requested services.
+                    createOrder.mutate(apptCodes);
+                  } else {
+                    // Walk-in / no requested services — open the catalogue picker.
+                    setPickedServiceCodes([]);
+                    setShowServicePicker(true);
+                  }
+                }}
+                disabled={createOrder.isPending}
+                className="btn-primary text-xs py-1 px-2"
+              >
+                {createOrder.isPending
+                  ? 'Creating...'
+                  : apptCodes.length > 0
+                    ? `+ Create Service Order (${apptCodes.length})`
+                    : '+ Create Service Order'}
+              </button>
+            );
+          })()}
         </div>
         <div className="card-body">
-          {orders.length === 0 ? (
+          {createOrder.isError && (
+            <p className="text-xs text-red-600 mb-3">{createOrder.error instanceof Error ? createOrder.error.message : 'Failed to create service order'}</p>
+          )}
+
+          {/* Walk-in / no-appointment fallback: pick services from the catalogue */}
+          {showServicePicker && (
+            <div className="mb-4 pb-4 border-b border-slate-100 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-slate-900">Select services for this order</h3>
+                <button onClick={() => { setShowServicePicker(false); setPickedServiceCodes([]); }} className="text-xs text-slate-500 hover:text-slate-700">Cancel</button>
+              </div>
+              {serviceTypesQuery.isLoading ? (
+                <p className="text-xs text-slate-500">Loading services…</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto">
+                  {(serviceTypesQuery.data ?? []).map((st) => {
+                    const checked = pickedServiceCodes.includes(st.code);
+                    return (
+                      <label key={st.id} className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) =>
+                            setPickedServiceCodes((prev) =>
+                              e.target.checked ? [...prev, st.code] : prev.filter((c) => c !== st.code),
+                            )
+                          }
+                        />
+                        <span>{st.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              <button
+                onClick={() => createOrder.mutate(pickedServiceCodes)}
+                disabled={pickedServiceCodes.length === 0 || createOrder.isPending}
+                className="btn-primary text-xs py-1 px-3"
+              >
+                {createOrder.isPending ? 'Creating...' : `Create Order${pickedServiceCodes.length ? ` (${pickedServiceCodes.length})` : ''}`}
+              </button>
+            </div>
+          )}
+
+          {orders.length === 0 && !showServicePicker ? (
             <p className="text-sm text-slate-500">No service orders created yet.</p>
-          ) : (
+          ) : orders.length === 0 ? null : (
             <div className="space-y-4">
               {orders.map((order) => (
                 <div key={order.id} className="border border-slate-200 rounded-lg p-4">
