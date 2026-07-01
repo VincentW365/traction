@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsUUID, IsNotEmpty } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsUUID, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class AssignTechnicianDto {
   @ApiProperty({ description: 'Technician ID to assign' })
@@ -7,8 +7,10 @@ export class AssignTechnicianDto {
   @IsNotEmpty()
   technicianId!: string;
 
-  @ApiProperty({ description: 'Work bay ID for the assignment' })
+  // CR-2026-062 — optional: when omitted the service auto-assigns the first
+  // compatible + free bay for the order. Provide one to pick a specific bay.
+  @ApiPropertyOptional({ description: 'Work bay ID; omit to auto-assign a compatible free bay' })
+  @IsOptional()
   @IsUUID()
-  @IsNotEmpty()
-  bayId!: string;
+  bayId?: string;
 }

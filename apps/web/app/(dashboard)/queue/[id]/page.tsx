@@ -11,6 +11,7 @@ import { StatusBadge } from '../../../../components/status-badge';
 import { useSiteId } from '../../../../hooks/use-site';
 import { useAuth } from '../../../../hooks/use-auth';
 import { PAUSE_REASONS, REWORK_REASONS } from '../../../../lib/service-order-actions';
+import { SearchableSelect } from '../../../../components/ui/searchable-select';
 
 /* ---------- Types ---------- */
 
@@ -849,16 +850,34 @@ export default function QueueTicketDetailPage() {
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="input-label">Technician *</label>
-                          <select value={assignTechId} onChange={(e) => setAssignTechId(e.target.value)} className="input-field text-xs">
-                            <option value="">Select...</option>
-                            {(techsQuery.data ?? []).map((t) => (
-                              <option key={t.id} value={t.id}>{t.employeeCode} — {t.userAccount.fullName}</option>
-                            ))}
-                          </select>
+                          <SearchableSelect
+                            value={assignTechId}
+                            onChange={setAssignTechId}
+                            placeholder="Search technician…"
+                            emptyText="No technicians"
+                            options={(techsQuery.data ?? []).map((t) => ({
+                              value: t.id,
+                              label: `${t.employeeCode} — ${t.userAccount.fullName}`,
+                            }))}
+                          />
                         </div>
                         <div>
                           <label className="input-label">Bay (optional)</label>
-                          <input type="text" value={assignBayId} onChange={(e) => setAssignBayId(e.target.value)} className="input-field text-xs" placeholder="Bay UUID or leave blank" />
+                          <SearchableSelect
+                            value={assignBayId}
+                            onChange={setAssignBayId}
+                            placeholder="Auto-assign a free bay…"
+                            emptyText="No compatible bays"
+                            options={[
+                              { value: '', label: 'Auto — first free compatible bay' },
+                              ...(recommendationsQuery.data?.compatibleBays ?? []).map((b) => ({
+                                value: b.id,
+                                label: b.code,
+                                sublabel: b.bayType,
+                              })),
+                            ]}
+                          />
+                          <p className="text-[10px] text-slate-400 mt-1">Leave blank to auto-assign a free compatible bay.</p>
                         </div>
                       </div>
                       {assignOrder.isError && <p className="text-xs text-red-600">{assignOrder.error instanceof Error ? assignOrder.error.message : 'Failed'}</p>}

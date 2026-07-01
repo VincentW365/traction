@@ -16,7 +16,7 @@ import {
   ResumeServiceOrderDto,
   ReworkServiceOrderDto,
 } from './dto/pause-rework.dto';
-import { ServiceOrderStatus } from '@prisma/client';
+import { ServiceOrderStatus, WorkBay } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
 // Valid status transitions for ServiceOrder
@@ -272,30 +272,39 @@ export class ServiceOrdersService {
       );
     }
 
-    // 3. Load and validate the bay
-    const bay = await this.prisma.workBay.findUnique({
-      where: { id: dto.bayId },
-    });
+    // 3. Resolve the bay: use the one provided, else auto-assign the first
+    //    compatible + free bay (CR-2026-062).
+    let bay: WorkBay;
+    if (dto.bayId) {
+      const found = await this.prisma.workBay.findUnique({ where: { id: dto.bayId } });
 
-    if (!bay) {
-      throw new NotFoundException(`Work bay ${dto.bayId} not found`);
-    }
+      if (!found) {
+        throw new NotFoundException(`Work bay ${dto.bayId} not found`);
+      }
 
-    if (bay.status !== 'ACTIVE') {
-      throw new BadRequestException(
-        `Work bay ${dto.bayId} is not active`,
-      );
-    }
+      if (found.status !== 'ACTIVE') {
+        throw new BadRequestException(`Work bay ${dto.bayId} is not active`);
+      }
 
-    // Validate bay type matches required bay types
-    const requiredBayTypes = order.items
-      .map((item) => item.serviceType.requiredBayType)
-      .filter((bt): bt is string => bt != null);
+      // Validate bay type matches required bay types
+      const requiredBayTypes = order.items
+        .map((item) => item.serviceType.requiredBayType)
+        .filter((bt): bt is string => bt != null);
 
-    if (requiredBayTypes.length > 0 && !requiredBayTypes.includes(bay.bayType)) {
-      throw new BadRequestException(
-        `Bay type '${bay.bayType}' does not match required bay type(s): ${[...new Set(requiredBayTypes)].join(', ')}`,
-      );
+      if (requiredBayTypes.length > 0 && !requiredBayTypes.includes(found.bayType)) {
+        throw new BadRequestException(
+          `Bay type '${found.bayType}' does not match required bay type(s): ${[...new Set(requiredBayTypes)].join(', ')}`,
+        );
+      }
+      bay = found;
+    } else {
+      const picked = await this.pickCompatibleFreeBay(order);
+      if (!picked) {
+        throw new BadRequestException(
+          'No compatible free bay is available — free one up or assign a bay manually.',
+        );
+      }
+      bay = picked;
     }
 
     // 4. Check for double-booking: technician not in an active assignment
@@ -320,7 +329,7 @@ export class ServiceOrdersService {
           data: {
             serviceOrderId: id,
             technicianId: dto.technicianId,
-            bayId: dto.bayId,
+            bayId: bay.id,
             isPrimary: true,
             status: 'ASSIGNED',
           },
@@ -358,10 +367,49 @@ export class ServiceOrdersService {
     await this.triggerQueueRecompute(order.serviceVisit.siteId);
 
     this.logger.log(
-      `ServiceOrder ${id} assigned to technician ${dto.technicianId} in bay ${dto.bayId}`,
+      `ServiceOrder ${id} assigned to technician ${dto.technicianId} in bay ${bay.id}${dto.bayId ? '' : ' (auto-assigned)'}`,
     );
 
     return updated;
+  }
+
+  /**
+   * CR-2026-062 — pick the first ACTIVE bay that (a) matches the order's required
+   * bay type(s) — or any active bay if the order has no bay-type requirement — and
+   * (b) has no active technician assignment. Returns null when none is free.
+   */
+  private async pickCompatibleFreeBay(order: {
+    items: Array<{ serviceType: { requiredBayType: string | null } }>;
+    serviceVisit: { siteId: string };
+  }) {
+    const requiredBayTypes = [
+      ...new Set(
+        order.items
+          .map((item) => item.serviceType.requiredBayType)
+          .filter((bt): bt is string => bt != null),
+      ),
+    ];
+
+    const candidates = await this.prisma.workBay.findMany({
+      where: {
+        siteId: order.serviceVisit.siteId,
+        status: 'ACTIVE',
+        ...(requiredBayTypes.length > 0 ? { bayType: { in: requiredBayTypes } } : {}),
+      },
+      orderBy: { code: 'asc' },
+    });
+
+    for (const candidate of candidates) {
+      const active = await this.prisma.technicianAssignment.findFirst({
+        where: {
+          bayId: candidate.id,
+          status: { in: ['ASSIGNED', 'IN_PROGRESS'] },
+          endedAt: null,
+        },
+      });
+      if (!active) return candidate;
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------------------
