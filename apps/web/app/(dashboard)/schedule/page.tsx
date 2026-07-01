@@ -131,8 +131,11 @@ export default function SchedulePage() {
     enabled: activeView === 'appointments' && !!siteId,
     refetchInterval: activeView === 'appointments' ? 10000 : false,
   });
+  // CR-2026-058 — keep checked-in (and in-progress/completed) appointments on the
+  // schedule so it always reflects what is actually happening. Only truly-off-the-
+  // board statuses (CANCELLED / MISSED) are hidden; the calendar styles the rest.
   const apptBlocks = (apptListQuery.data ?? [])
-    .filter((a) => ['DRAFT', 'CONFIRMED', 'RESCHEDULED'].includes(a.status))
+    .filter((a) => !['CANCELLED', 'MISSED'].includes(a.status))
     .map((a) => ({
       id: a.id,
       scheduledStartAt: a.scheduledStartAt,

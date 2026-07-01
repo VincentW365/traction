@@ -34,6 +34,17 @@ const STATUS_STYLE: Record<string, string> = {
   CONFIRMED: 'bg-blue-100 border-blue-300 text-blue-800 hover:bg-blue-200',
   DRAFT: 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-slate-200',
   RESCHEDULED: 'bg-amber-100 border-amber-300 text-amber-800 hover:bg-amber-200',
+  // CR-2026-058 — checked-in / in-progress / completed appointments STAY on the
+  // board (greyed / marked) so it always reflects what is actually happening.
+  CHECKED_IN: 'bg-slate-100 border-emerald-400 text-slate-500 hover:bg-slate-200',
+  IN_PROGRESS: 'bg-amber-50 border-amber-400 text-amber-800 hover:bg-amber-100',
+  COMPLETED: 'bg-slate-50 border-slate-200 text-slate-400 hover:bg-slate-100',
+};
+// Small leading glyph so a checked-in/active block reads at a glance, not just by color.
+const STATUS_MARK: Record<string, string> = {
+  CHECKED_IN: '✓',
+  IN_PROGRESS: '●',
+  COMPLETED: '✓',
 };
 const fmt = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
@@ -242,21 +253,23 @@ export function AppointmentCalendar({
             }
             const a = item.data as ApptBlock;
             const at = fmt(a.scheduledStartAt);
+            const mark = STATUS_MARK[a.status] ? `${STATUS_MARK[a.status]} ` : '';
+            const statusLabel = a.status.replace(/_/g, ' ').toLowerCase();
             return (
               <button
                 key={item.id}
                 onClick={(e) => { e.stopPropagation(); onAppointmentClick?.(item.id); }}
                 className={`absolute z-10 rounded border px-1.5 py-0.5 overflow-hidden text-left transition-colors ${STATUS_STYLE[a.status] ?? STATUS_STYLE.DRAFT}`}
                 style={pos}
-                title={`${at}${a.scheduledEndAt ? ` – ${fmt(a.scheduledEndAt)}` : ''} — ${a.customerName} (${a.status})`}
+                title={`${at}${a.scheduledEndAt ? ` – ${fmt(a.scheduledEndAt)}` : ''} — ${a.customerName} (${statusLabel})`}
               >
                 {twoLine ? (
                   <>
-                    <span className={line1}>{at}</span>
+                    <span className={line1}>{mark}{at}</span>
                     <span className={line2}>{a.customerName}</span>
                   </>
                 ) : (
-                  <span className={line1}>{at} {a.customerName}</span>
+                  <span className={line1}>{mark}{at} {a.customerName}</span>
                 )}
               </button>
             );
