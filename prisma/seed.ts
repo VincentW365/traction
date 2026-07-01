@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { seedInspectionTemplate } from './inspection-template-data';
 
 const prisma = new PrismaClient();
 
@@ -358,6 +359,11 @@ async function main() {
     await prisma.vehicleWeightSuggestion.create({ data: ws });
   }
   console.warn(`Vehicle weight/serviceClass suggestions: ${weightSuggestions.length} seeded`);
+
+  // CR-2026-059 — active Visual Inspection template (without it, starting an
+  // inspection fails with "No active inspection template is configured").
+  const tpl = await seedInspectionTemplate(prisma);
+  console.warn(`Inspection template v${tpl.version}: ${tpl.itemCount} items across ${tpl.categories} categories (active=${tpl.isActive})`);
 
   console.warn('Seed complete.');
 }
