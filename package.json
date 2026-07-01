@@ -10,6 +10,7 @@
     "test": "turbo test",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
+    "deploy": "pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm run db:migrate && pnpm run build && pnpm run db:seed",
     "db:reset": "prisma migrate reset",
     "db:studio": "prisma studio",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\""

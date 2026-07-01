@@ -4,6 +4,12 @@ Bert's Service Operations Platform (BSOP). This package is the full application
 source for a production deployment. It **excludes secrets, the database, and all
 customer data** — see *What's in this package* at the bottom.
 
+> **Deploying after a `git pull`?** With the production env set, run **`pnpm run deploy`**
+> from the repo root (idempotent: install → prisma generate → migrate → build → seed),
+> then restart the API + web processes. Automated/AI deploy agents: see **`AGENTS.md`**.
+> Note: `pnpm run db:seed` must run after pulling — it's how technician skills, the active
+> inspection template, and new config keys land on an existing database.
+
 ---
 
 ## 1. Architecture
