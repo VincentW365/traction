@@ -15,6 +15,7 @@ export class ResourcesService {
     const resources = await this.prisma.workResource.findMany({
       where: { siteId, isActive: true },
       include: {
+        operationalStatus: true, // CR-2026-065 — up/down state for the dispatch board
         occupancy: {
           include: {
             serviceVisit: {
@@ -60,6 +61,8 @@ export class ResourcesService {
           hasAlignment: r.hasAlignment,
           hasDiagnostics: r.hasDiagnostics,
           requiresMechanic: r.requiresMechanic,
+          isOperational: r.operationalStatus?.isOperational ?? true,
+          operationalReason: r.operationalStatus?.reason ?? null,
           status: isOccupied ? 'OCCUPIED' : nextReservation ? 'RESERVED' : 'AVAILABLE',
           currentJob: isOccupied && occ.serviceVisit
             ? {

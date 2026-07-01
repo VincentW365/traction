@@ -3,6 +3,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api-client';
 import { useSiteId } from '../../../hooks/use-site';
+import { useAuth } from '../../../hooks/use-auth';
+import { useState } from 'react';
 import { PickupNotificationPanel } from '../../../components/pickup-notification-panel';
 import { PageHeader } from '../../../components/ui/page-header';
 import { EmptyState } from '../../../components/ui/empty-state';
@@ -25,6 +27,8 @@ interface ResourceItem {
   hasAlignment: boolean;
   hasDiagnostics: boolean;
   requiresMechanic: boolean;
+  isOperational: boolean;
+  operationalReason: string | null;
   status: string;
   currentJob: {
     serviceVisitId: string;
@@ -106,6 +110,19 @@ export default function DispatchBoardPage() {
 
   const callNextMutation = useMutation({
     mutationFn: () => api.post('/queue/call-next', { siteId: siteId }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dispatch-board'] }),
+  });
+
+  const { user } = useAuth();
+  // CR-2026-065 — Manager + Service Advisor can mark a resource down/up from dispatch.
+  const canToggleOperational = ['ADMIN', 'SERVICE_ADVISOR'].includes(user?.roleCode ?? '');
+
+  const setOperationalMutation = useMutation({
+    mutationFn: (vars: { resourceId: string; isOperational: boolean; reason?: string }) =>
+      api.post(`/resources/${vars.resourceId}/operational-status`, {
+        isOperational: vars.isOperational,
+        reason: vars.reason,
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dispatch-board'] }),
   });
 
@@ -217,6 +234,11 @@ export default function DispatchBoardPage() {
                 key={r.resourceId}
                 resource={r}
                 onRelease={() => releaseMutation.mutate(r.resourceId)}
+                canToggleOperational={canToggleOperational}
+                busy={setOperationalMutation.isPending}
+                onSetOperational={(isOperational, reason) =>
+                  setOperationalMutation.mutate({ resourceId: r.resourceId, isOperational, reason })
+                }
               />
             ))}
           </div>
@@ -228,7 +250,21 @@ export default function DispatchBoardPage() {
 
 /* ---------- Resource Card ---------- */
 
-function ResourceCard({ resource: r, onRelease }: { resource: ResourceItem; onRelease: () => void }) {
+function ResourceCard({
+  resource: r,
+  onRelease,
+  canToggleOperational,
+  busy,
+  onSetOperational,
+}: {
+  resource: ResourceItem;
+  onRelease: () => void;
+  canToggleOperational: boolean;
+  busy: boolean;
+  onSetOperational: (isOperational: boolean, reason?: string) => void;
+}) {
+  const [showDownForm, setShowDownForm] = useState(false);
+  const [downReason, setDownReason] = useState('');
   const dot = statusDot(r.status);
   const capabilities: string[] = [];
   if (r.liftType) capabilities.push(r.liftType);
@@ -248,6 +284,14 @@ function ResourceCard({ resource: r, onRelease }: { resource: ResourceItem; onRe
           </span>
         </div>
         <p className="text-xs text-slate-400 mb-2">{r.name}</p>
+
+        {/* CR-2026-065 — down-for-maintenance banner */}
+        {!r.isOperational && (
+          <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5">
+            <p className="text-[11px] font-semibold text-red-700">● Down for maintenance</p>
+            {r.operationalReason && <p className="text-[10px] text-red-600 mt-0.5">{r.operationalReason}</p>}
+          </div>
+        )}
 
         {/* Capabilities */}
         {capabilities.length > 0 && (
@@ -300,9 +344,51 @@ function ResourceCard({ resource: r, onRelease }: { resource: ResourceItem; onRe
         )}
 
         {/* Available */}
-        {r.status === 'AVAILABLE' && (
+        {r.isOperational && r.status === 'AVAILABLE' && (
           <div className="border-t border-slate-100 pt-3 mt-2">
             <p className="text-xs text-emerald-600 font-medium text-center">Ready for assignment</p>
+          </div>
+        )}
+
+        {/* CR-2026-065 — up/down toggle (Manager + Service Advisor) */}
+        {canToggleOperational && (
+          <div className="border-t border-slate-100 pt-2 mt-2">
+            {!r.isOperational ? (
+              <button
+                onClick={() => onSetOperational(true)}
+                disabled={busy}
+                className="btn-secondary text-xs px-3 py-1 w-full"
+              >
+                {busy ? 'Saving…' : 'Back up'}
+              </button>
+            ) : showDownForm ? (
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={downReason}
+                  onChange={(e) => setDownReason(e.target.value)}
+                  placeholder="Reason (e.g. broken lift)"
+                  className="input-field text-xs"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { onSetOperational(false, downReason.trim() || undefined); setShowDownForm(false); setDownReason(''); }}
+                    disabled={busy}
+                    className="btn-danger text-xs px-3 py-1 flex-1"
+                  >
+                    {busy ? 'Saving…' : 'Confirm down'}
+                  </button>
+                  <button onClick={() => { setShowDownForm(false); setDownReason(''); }} className="btn-secondary text-xs px-3 py-1">Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowDownForm(true)}
+                className="text-[11px] text-slate-400 hover:text-red-600 font-medium"
+              >
+                Mark down for maintenance
+              </button>
+            )}
           </div>
         )}
       </div>

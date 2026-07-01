@@ -13,6 +13,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ResourcesService } from './resources.service';
 import { AssignResourceDto } from './dto/assign-resource.dto';
+import { SetOperationalStatusDto } from './dto/set-operational-status.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -110,11 +111,11 @@ export class ResourcesController {
   }
 
   @Post(':id/operational-status')
-  @RequirePermission(PERMISSIONS.CONFIG_EDIT)
-  @ApiOperation({ summary: 'Set resource operational status (e.g., power wash machine up/down)' })
+  @RequirePermission(PERMISSIONS.RESOURCE_OPERATIONAL_TOGGLE)
+  @ApiOperation({ summary: 'Set resource operational status (e.g., mark a bay/jack up/down)' })
   async setOperationalStatus(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { isOperational: boolean; reason?: string },
+    @Body() body: SetOperationalStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {
     const result = await this.prisma.resourceOperationalStatus.upsert({

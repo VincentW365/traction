@@ -72,6 +72,9 @@ export const PERMISSIONS = {
 
   // Resource/Bay Management
   RESOURCE_MANAGE: 'resource:manage',
+  // CR-2026-065 — narrow operational up/down toggle (dispatch floor action), separate
+  // from full RESOURCE_MANAGE/CONFIG_EDIT so Service Advisors can mark a bay down.
+  RESOURCE_OPERATIONAL_TOGGLE: 'resource:operational_toggle',
 
   // Complaints (CR-2026-032)
   COMPLAINT_CREATE: 'complaint:create',
@@ -124,6 +127,8 @@ const SERVICE_ADVISOR_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.PRIOR_SERVICE_ENTRY,
   PERMISSIONS.PARTS_MANAGE,
   PERMISSIONS.TRANSPORT_MANAGE,
+  // CR-2026-065 — advisors run dispatch and can mark a resource down/up.
+  PERMISSIONS.RESOURCE_OPERATIONAL_TOGGLE,
   // Inspections: advisors perform/fill inspections (CR-2026-034)
   PERMISSIONS.INSPECTION_CREATE,
   PERMISSIONS.INSPECTION_EDIT,
