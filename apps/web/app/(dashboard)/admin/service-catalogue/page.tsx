@@ -17,6 +17,7 @@ interface ServiceType {
   appointmentOnly: boolean;
   requiredSkillCode: string | null;
   requiredBayType: string | null;
+  partsPrepositionRequired?: boolean;
   isActive?: boolean;
 }
 
@@ -83,6 +84,7 @@ export default function ServiceCataloguePage() {
                 <th>Quick</th>
                 <th>Skill</th>
                 <th>Bay</th>
+                <th>Parts</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -106,6 +108,7 @@ export default function ServiceCataloguePage() {
                   <td>{st.quickService ? <span className="badge bg-emerald-50 text-emerald-700 text-[10px]">Yes</span> : '--'}</td>
                   <td className="text-xs text-slate-500">{st.requiredSkillCode ?? '--'}</td>
                   <td className="text-xs text-slate-500">{st.requiredBayType ?? '--'}</td>
+                  <td>{st.partsPrepositionRequired ? <span className="badge bg-amber-50 text-amber-700 text-[10px]">Parts</span> : '--'}</td>
                   <td>
                     {editingCode === st.code ? (
                       <div className="flex items-center gap-1">

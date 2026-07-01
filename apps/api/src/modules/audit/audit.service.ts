@@ -48,6 +48,8 @@ export const AUDIT_ACTIONS = {
   INSPECTION_CUSTOMER_SIGNED: 'INSPECTION_CUSTOMER_SIGNED', // CR-2026-034 C-3
   INSPECTION_RECOMMENDATION_DECISION: 'INSPECTION_RECOMMENDATION_DECISION', // CR-2026-034 C-3
   INSPECTION_REC_TO_WORK_ORDER: 'INSPECTION_REC_TO_WORK_ORDER', // CR-2026-034 C-5
+  PARTS_ACK_APPLIED: 'PARTS_ACK_APPLIED', // CR-2026-062/063 — staff acknowledged parts prepositioned (external app)
+  PARTS_ACK_CLEARED: 'PARTS_ACK_CLEARED', // CR-2026-063 — acknowledgement withdrawn
 } as const;
 
 @Injectable()
@@ -104,5 +106,21 @@ export class AuditService {
     ]);
 
     return { items, total };
+  }
+
+  /**
+   * Latest audit row for an entity among one or more actions (with actor), or null.
+   * Used as a no-schema "has this happened / current state?" lookup (CR-2026-063).
+   */
+  async findLatest(entityType: string, entityId: string, action: string | string[]) {
+    return this.prisma.auditLog.findFirst({
+      where: {
+        entityType,
+        entityId,
+        action: Array.isArray(action) ? { in: action } : action,
+      },
+      orderBy: { createdAt: 'desc' },
+      include: { actor: { select: { fullName: true, roleCode: true } } },
+    });
   }
 }

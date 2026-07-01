@@ -192,6 +192,20 @@ export default function QueueTicketDetailPage() {
     refetchInterval: 10000,
   });
 
+  // CR-2026-063 — parts-prepositioned acknowledgement (audit-backed; shown only when
+  // the visit's services actually involve parts, i.e. partsReadiness !== NOT_REQUIRED).
+  const partsRelevant = !!ticket && ticket.serviceVisit.partsReadiness !== 'NOT_REQUIRED';
+  const partsAckQuery = useQuery<{ acknowledged: boolean; at: string | null; by: string | null }>({
+    queryKey: ['parts-ack', ticket?.serviceVisit?.id],
+    queryFn: () => api.get(`/service-visits/${ticket!.serviceVisit.id}/parts-ack`),
+    enabled: partsRelevant,
+  });
+  const acknowledgeParts = useMutation({
+    mutationFn: (acknowledged: boolean) =>
+      api.post(`/service-visits/${ticket!.serviceVisit.id}/acknowledge-parts`, { acknowledged }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['parts-ack', ticket?.serviceVisit?.id] }),
+  });
+
   // CR-2026-034 (C-4) — visual inspections for this visit.
   const inspectionsQuery = useQuery<{ items: Array<{ id: string; inspectionNumber: string; status: string }> }>({
     queryKey: ['inspections-by-visit', ticket?.serviceVisit?.id],
@@ -583,6 +597,21 @@ export default function QueueTicketDetailPage() {
             <div>
               <div className="input-label">Parts Readiness</div>
               <p className="text-sm font-medium text-slate-900">{sv.partsReadiness.replace(/_/g, ' ')}</p>
+              {sv.partsReadiness !== 'NOT_REQUIRED' && (
+                partsAckQuery.data?.acknowledged ? (
+                  <div className="mt-1">
+                    <div className="flex items-center gap-2">
+                      <span className="badge bg-emerald-50 text-emerald-700 text-[10px]">✓ Parts prepositioned</span>
+                      <button onClick={() => acknowledgeParts.mutate(false)} disabled={acknowledgeParts.isPending} className="text-[10px] text-slate-400 hover:text-slate-600">clear</button>
+                    </div>
+                    {partsAckQuery.data.by && <p className="text-[10px] text-slate-400 mt-0.5">by {partsAckQuery.data.by}</p>}
+                  </div>
+                ) : (
+                  <button onClick={() => acknowledgeParts.mutate(true)} disabled={acknowledgeParts.isPending} className="mt-1 text-[11px] text-blue-600 hover:underline font-medium">
+                    {acknowledgeParts.isPending ? 'Saving…' : 'Acknowledge parts prepositioned'}
+                  </button>
+                )
+              )}
             </div>
             {sv.mileageIn != null && (
               <div>

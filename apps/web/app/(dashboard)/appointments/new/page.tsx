@@ -36,6 +36,7 @@ interface ServiceType {
   name: string;
   family: string;
   baseDurationMinutes: number;
+  partsPrepositionRequired?: boolean;
 }
 
 type Step = 'customer' | 'vehicle' | 'services' | 'time' | 'success';
@@ -246,6 +247,11 @@ export default function NewAppointmentPage() {
     ?.filter((st) => selectedServiceCodes.includes(st.code))
     .reduce((sum, st) => sum + st.baseDurationMinutes, 0) ?? 0;
 
+  // CR-2026-063 — parts awareness: which selected services may need parts prepositioned.
+  const partsServices = (serviceTypesQuery.data ?? []).filter(
+    (st) => selectedServiceCodes.includes(st.code) && st.partsPrepositionRequired,
+  );
+
   // Searchable services list — match name, family, or code (selections persist
   // even when filtered out of view).
   const serviceQuery = serviceSearch.trim().toLowerCase();
@@ -439,6 +445,14 @@ export default function NewAppointmentPage() {
               </div>
             )}
 
+            {partsServices.length > 0 && (
+              <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+                <p className="text-sm font-medium text-amber-800">⚠ May require parts</p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  {partsServices.map((s) => s.name).join(', ')} may need parts — arrange preposition in the parts system before service.
+                </p>
+              </div>
+            )}
             {selectedServiceCodes.length > 0 && (
               <div className="flex items-center justify-between border-t border-slate-100 pt-4">
                 <p className="text-sm text-slate-600">

@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Param, Body, NotFoundException, BadRequestException, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, NotFoundException, BadRequestException, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -271,5 +271,54 @@ export class ServiceVisitCompletionController {
     });
 
     return { message: 'Visit completion recorded', serviceVisitId: updated.id };
+  }
+
+  // ---------------------------------------------------------------------------
+  // CR-2026-063 — parts awareness acknowledgement.
+  // Actual parts ordering happens in a separate app; Traction only records that
+  // staff acknowledged the parts are arranged/prepositioned. Stored as an audit
+  // event (no schema change), readable as a current-state flag.
+  // ---------------------------------------------------------------------------
+
+  @Post(':id/acknowledge-parts')
+  @RequirePermission(PERMISSIONS.QUEUE_VIEW)
+  @ApiOperation({ summary: 'Acknowledge (or clear) that parts are prepositioned for this visit' })
+  async acknowledgeParts(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { acknowledged?: boolean; note?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const visit = await this.prisma.serviceVisit.findUnique({ where: { id }, select: { id: true } });
+    if (!visit) throw new NotFoundException(`ServiceVisit ${id} not found`);
+
+    const clearing = body.acknowledged === false;
+    await this.audit.log({
+      actorUserId: user.sub,
+      action: clearing ? AUDIT_ACTIONS.PARTS_ACK_CLEARED : AUDIT_ACTIONS.PARTS_ACK_APPLIED,
+      entityType: 'ServiceVisit',
+      entityId: id,
+      notes: body.note,
+    });
+    return this.readPartsAck(id);
+  }
+
+  @Get(':id/parts-ack')
+  @RequirePermission(PERMISSIONS.QUEUE_VIEW)
+  @ApiOperation({ summary: 'Current parts-prepositioned acknowledgement state for a visit' })
+  async getPartsAck(@Param('id', ParseUUIDPipe) id: string) {
+    return this.readPartsAck(id);
+  }
+
+  private async readPartsAck(id: string) {
+    const latest = await this.audit.findLatest('ServiceVisit', id, [
+      AUDIT_ACTIONS.PARTS_ACK_APPLIED,
+      AUDIT_ACTIONS.PARTS_ACK_CLEARED,
+    ]);
+    const acknowledged = latest?.action === AUDIT_ACTIONS.PARTS_ACK_APPLIED;
+    return {
+      acknowledged,
+      at: acknowledged ? latest?.createdAt ?? null : null,
+      by: acknowledged ? latest?.actor?.fullName ?? null : null,
+    };
   }
 }

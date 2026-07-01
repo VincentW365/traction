@@ -45,6 +45,7 @@ interface ServiceType {
   name: string;
   family: string;
   baseDurationMinutes: number;
+  partsPrepositionRequired?: boolean;
 }
 
 interface CheckInResponse {
@@ -549,6 +550,19 @@ export default function CheckInPage() {
                     </div>
                   </>
                 )}
+                {(() => {
+                  const parts = (serviceTypesQuery.data ?? []).filter(
+                    (st) => selectedServiceCodes.includes(st.code) && st.partsPrepositionRequired,
+                  );
+                  return parts.length > 0 ? (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+                      <p className="text-sm font-medium text-amber-800">⚠ May require parts</p>
+                      <p className="text-xs text-amber-700 mt-0.5">
+                        {parts.map((s) => s.name).join(', ')} may need parts — arrange preposition in the parts system.
+                      </p>
+                    </div>
+                  ) : null;
+                })()}
                 <button onClick={handleWalkInSubmit}
                   disabled={selectedServiceCodes.length === 0 || walkInMutation.isPending}
                   className="w-full btn-primary px-6 py-3 text-sm font-bold disabled:opacity-50">
