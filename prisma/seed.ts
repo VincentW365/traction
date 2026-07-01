@@ -176,33 +176,21 @@ async function main() {
   console.warn(`Business rules: ${rules.length} seeded`);
 
   // --- Technicians ---
-  // CR-2026-061 — every technician keeps the GENERAL+LUBE baseline, PLUS a demo-baseline
-  // specialized-skill spread so every service's requiredSkillCode (ELECTRICAL/BRAKE/
-  // SUSPENSION/TIRE/ALIGNMENT/DIAG/ENGINE/TRANSMISSION) is held by >=2 technicians —
-  // otherwise specialized services can't be assigned to anyone. Real per-technician skill
-  // matrices remain a pending data-collection item; this is representative demo data.
-  const specializedSpread: string[][] = [
-    ['BRAKE', 'DIAG'],             // T01
-    ['SUSPENSION', 'ALIGNMENT'],   // T02
-    ['ELECTRICAL', 'DIAG'],        // T03
-    ['TIRE', 'ALIGNMENT'],         // T04
-    ['ENGINE', 'TRANSMISSION'],    // T05
-    ['BRAKE', 'TIRE'],             // T06
-    ['SUSPENSION', 'ELECTRICAL'],  // T07
-    ['ENGINE', 'DIAG'],            // T08
-    ['TRANSMISSION', 'SUSPENSION'],// T09
-    ['BRAKE', 'ALIGNMENT'],        // T10
-    ['TIRE', 'ELECTRICAL'],        // T11
-    ['ENGINE', 'SUSPENSION'],      // T12
+  // CR-2026-067 — every technician can do everything: seed the FULL skill set on each
+  // technician so no service is ever unassignable for lack of a skill. Managers can
+  // still tune per-technician skills in Staff management (add/remove). This supersedes
+  // the CR-2026-061 demo spread. Skill codes mirror every service's requiredSkillCode.
+  const ALL_SKILL_CODES = [
+    'GENERAL', 'LUBE', 'ELECTRICAL', 'BRAKE', 'SUSPENSION',
+    'TIRE', 'ALIGNMENT', 'DIAG', 'ENGINE', 'TRANSMISSION',
   ];
-  const techSpecs = technicianRoster.map((t, i) => ({
+  const techSpecs = technicianRoster.map((t) => ({
     email: t.email,
     employeeCode: t.employeeCode,
-    skills: [
-      { code: 'GENERAL', level: 2 },
-      { code: 'LUBE', level: 2 },
-      ...(specializedSpread[i] ?? []).map((code) => ({ code, level: 3 })),
-    ],
+    skills: ALL_SKILL_CODES.map((code) => ({
+      code,
+      level: code === 'GENERAL' || code === 'LUBE' ? 2 : 3,
+    })),
   }));
 
   for (const t of techSpecs) {
@@ -237,7 +225,7 @@ async function main() {
       }
     }
   }
-  console.warn(`Technicians: ${techSpecs.length} seeded with baseline + specialized skills`);
+  console.warn(`Technicians: ${techSpecs.length} seeded with full skill set (${ALL_SKILL_CODES.length} skills each)`);
 
   // --- Work Bays ---
   const bays = [

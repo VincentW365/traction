@@ -54,6 +54,22 @@ export default function StaffDetailPage() {
     enabled: !!staffId,
   });
 
+  // CR-2026-067 — canonical skill codes for the add-skill dropdown, derived from the
+  // service catalogue (every service's requiredSkillCode) plus the GENERAL/LUBE baseline.
+  const serviceTypesQuery = useQuery<Array<{ requiredSkillCode: string | null }>>({
+    queryKey: ['service-types'],
+    queryFn: () => api.get('/service-types'),
+  });
+  const knownSkillCodes = Array.from(
+    new Set([
+      'GENERAL',
+      'LUBE',
+      ...(serviceTypesQuery.data ?? [])
+        .map((s) => s.requiredSkillCode)
+        .filter((c): c is string => !!c),
+    ]),
+  ).sort();
+
   const deactivateMutation = useMutation({
     mutationFn: () => api.post(`/staff/${staffId}/deactivate`, {}),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['staff-detail', staffId] }),
@@ -80,6 +96,17 @@ export default function StaffDetailPage() {
       setNewSkillCode('');
       setNewSkillLevel(1);
     },
+  });
+
+  // CR-2026-067 — add every missing skill at once (so a technician can do everything).
+  const addAllSkillsMutation = useMutation({
+    mutationFn: (codes: string[]) =>
+      Promise.all(
+        codes.map((code) =>
+          api.post(`/technicians/${staff?.technician?.id}/skills`, { skillCode: code, proficiencyLevel: 3 }),
+        ),
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['staff-detail', staffId] }),
   });
 
   const removeSkillMutation = useMutation({
@@ -258,38 +285,59 @@ export default function StaffDetailPage() {
                     </div>
                   )}
 
-                  {/* Add skill form */}
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-end gap-2">
-                    <div>
-                      <label className="input-label">Skill Code</label>
-                      <input
-                        type="text"
-                        value={newSkillCode}
-                        onChange={(e) => setNewSkillCode(e.target.value.toUpperCase())}
-                        placeholder="e.g., BRAKE"
-                        className="input-field w-32"
-                      />
-                    </div>
-                    <div>
-                      <label className="input-label">Level</label>
-                      <select
-                        value={newSkillLevel}
-                        onChange={(e) => setNewSkillLevel(Number(e.target.value))}
-                        className="input-field w-20"
-                      >
-                        {[1, 2, 3, 4, 5].map((l) => (
-                          <option key={l} value={l}>{l}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <button
-                      onClick={() => addSkillMutation.mutate({ skillCode: newSkillCode, proficiencyLevel: newSkillLevel })}
-                      disabled={!newSkillCode || addSkillMutation.isPending}
-                      className="btn-primary text-xs"
-                    >
-                      Add Skill
-                    </button>
-                  </div>
+                  {/* Add skill form (CR-2026-067 — pick from known skills; no typing codes) */}
+                  {(() => {
+                    const existing = new Set(staff.technician.skills.map((s) => s.skillCode));
+                    const available = knownSkillCodes.filter((c) => !existing.has(c));
+                    return (
+                      <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
+                        <div className="flex items-end gap-2">
+                          <div>
+                            <label className="input-label">Skill</label>
+                            <select
+                              value={newSkillCode}
+                              onChange={(e) => setNewSkillCode(e.target.value)}
+                              className="input-field w-40"
+                            >
+                              <option value="">Select skill…</option>
+                              {available.map((c) => (
+                                <option key={c} value={c}>{c}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="input-label">Level</label>
+                            <select
+                              value={newSkillLevel}
+                              onChange={(e) => setNewSkillLevel(Number(e.target.value))}
+                              className="input-field w-20"
+                            >
+                              {[1, 2, 3, 4, 5].map((l) => (
+                                <option key={l} value={l}>{l}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            onClick={() => addSkillMutation.mutate({ skillCode: newSkillCode, proficiencyLevel: newSkillLevel })}
+                            disabled={!newSkillCode || addSkillMutation.isPending}
+                            className="btn-primary text-xs"
+                          >
+                            Add Skill
+                          </button>
+                          {available.length > 0 && (
+                            <button
+                              onClick={() => addAllSkillsMutation.mutate(available)}
+                              disabled={addAllSkillsMutation.isPending}
+                              className="btn-secondary text-xs"
+                              title="Give this technician every skill"
+                            >
+                              {addAllSkillsMutation.isPending ? 'Adding…' : `Add all (${available.length})`}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {addSkillMutation.isError && (
                     <p className="text-xs text-red-600 mt-2">
                       {addSkillMutation.error instanceof Error ? addSkillMutation.error.message : 'Failed to add skill'}
