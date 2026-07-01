@@ -176,14 +176,32 @@ async function main() {
   console.warn(`Business rules: ${rules.length} seeded`);
 
   // --- Technicians ---
-  // Seeded from the real roster above. Baseline GENERAL+LUBE skill only (assumption —
-  // real per-technician skill matrices are a pending data-collection item).
-  const techSpecs = technicianRoster.map((t) => ({
+  // CR-2026-061 — every technician keeps the GENERAL+LUBE baseline, PLUS a demo-baseline
+  // specialized-skill spread so every service's requiredSkillCode (ELECTRICAL/BRAKE/
+  // SUSPENSION/TIRE/ALIGNMENT/DIAG/ENGINE/TRANSMISSION) is held by >=2 technicians —
+  // otherwise specialized services can't be assigned to anyone. Real per-technician skill
+  // matrices remain a pending data-collection item; this is representative demo data.
+  const specializedSpread: string[][] = [
+    ['BRAKE', 'DIAG'],             // T01
+    ['SUSPENSION', 'ALIGNMENT'],   // T02
+    ['ELECTRICAL', 'DIAG'],        // T03
+    ['TIRE', 'ALIGNMENT'],         // T04
+    ['ENGINE', 'TRANSMISSION'],    // T05
+    ['BRAKE', 'TIRE'],             // T06
+    ['SUSPENSION', 'ELECTRICAL'],  // T07
+    ['ENGINE', 'DIAG'],            // T08
+    ['TRANSMISSION', 'SUSPENSION'],// T09
+    ['BRAKE', 'ALIGNMENT'],        // T10
+    ['TIRE', 'ELECTRICAL'],        // T11
+    ['ENGINE', 'SUSPENSION'],      // T12
+  ];
+  const techSpecs = technicianRoster.map((t, i) => ({
     email: t.email,
     employeeCode: t.employeeCode,
     skills: [
       { code: 'GENERAL', level: 2 },
       { code: 'LUBE', level: 2 },
+      ...(specializedSpread[i] ?? []).map((code) => ({ code, level: 3 })),
     ],
   }));
 
@@ -191,29 +209,35 @@ async function main() {
     const userId = createdUsers[t.email];
     if (!userId) continue;
 
-    const existing = await prisma.technician.findUnique({ where: { userAccountId: userId } });
-    if (!existing) {
-      const tech = await prisma.technician.create({
-        data: {
-          userAccountId: userId,
-          employeeCode: t.employeeCode,
-          homeSiteId: site.id,
-        },
-      });
+    // Idempotent + additive: upsert the technician, then add any missing skills so a
+    // re-run applies the specialized spread to already-seeded technicians.
+    const tech = await prisma.technician.upsert({
+      where: { userAccountId: userId },
+      update: {},
+      create: {
+        userAccountId: userId,
+        employeeCode: t.employeeCode,
+        homeSiteId: site.id,
+      },
+    });
 
-      for (const skill of t.skills) {
+    for (const skill of t.skills) {
+      const existingSkill = await prisma.technicianSkill.findFirst({
+        where: { technicianId: tech.id, skillCode: skill.code },
+      });
+      if (!existingSkill) {
         await prisma.technicianSkill.create({
           data: {
             technicianId: tech.id,
             skillCode: skill.code,
             proficiencyLevel: skill.level,
-            isPrimary: skill === t.skills[0],
+            isPrimary: skill.code === 'GENERAL',
           },
         });
       }
     }
   }
-  console.warn(`Technicians: ${techSpecs.length} seeded with skills`);
+  console.warn(`Technicians: ${techSpecs.length} seeded with baseline + specialized skills`);
 
   // --- Work Bays ---
   const bays = [
@@ -295,6 +319,12 @@ async function main() {
     { ruleKey: 'notification_provider_email', valueJson: 'stub', notes: 'Email provider: stub | sendgrid | smtp' },
     { ruleKey: 'appointment_reminder_enabled', valueJson: true, notes: 'CR-2026-056: whether the automatic appointment reminder (sent ~24h before) is active' },
     { ruleKey: 'appointment_reminder_hours', valueJson: 24, notes: 'CR-2026-056: how many hours before scheduledStartAt the reminder fires (hourly cron sweep)' },
+    // CR-2026-061 — config keys the code reads with a hardcoded fallback; seed them (= the code defaults) so they are visible/tunable.
+    { ruleKey: 'eta_avg_live_window_days', valueJson: 30, notes: 'CR-2026-061: days of live history used for the ETA average window (queue.service ETA calc)' },
+    { ruleKey: 'eta_avg_min_live_sample', valueJson: 20, notes: 'CR-2026-061: minimum live service-order sample before using the live average vs historical' },
+    { ruleKey: 'eta_avg_outlier_cap_minutes', valueJson: 0, notes: 'CR-2026-061: cap on per-service duration outliers in the ETA average (0 = no cap)' },
+    { ruleKey: 'classification_daily_target', valueJson: 50, notes: 'CR-2026-061: daily target vehicle count for the classification review queue' },
+    { ruleKey: 'complaint_sla_hours_by_severity', valueJson: { LOW: 120, MEDIUM: 72, HIGH: 24, CRITICAL: 4 }, notes: 'CR-2026-061: complaint SLA hours per severity (LOW/MEDIUM/HIGH/CRITICAL)' },
     { ruleKey: 'overflow_mechanic_required', valueJson: true, notes: 'Whether overflow slots require a mechanic assignment' },
     { ruleKey: 'light_slot_mechanic_required', valueJson: false, notes: 'Whether light task slots require a mechanic assignment' },
     { ruleKey: 'reminder_eligible_service_types', valueJson: ['OIL-01'], notes: 'Service type codes eligible for automated maintenance reminders' },
