@@ -111,7 +111,9 @@ const ABANDONABLE_VISIT_STATUSES = ['CREATED', 'ARRIVED', 'CHECKED_IN', 'QUEUED'
 const ORDER_ACTIONS: Record<string, Array<{ label: string; toStatus: string; style: string }>> = {
   DRAFT: [{ label: 'Approve', toStatus: 'APPROVED', style: 'btn-primary' }],
   APPROVED: [],
-  ASSIGNED: [{ label: 'Start Work', toStatus: 'IN_PROGRESS', style: 'btn-success' }],
+  // CR-2026-069 — the assigned technician starts work from their own device, not the
+  // front desk / manager. No "Start Work" here once ASSIGNED.
+  ASSIGNED: [],
   IN_PROGRESS: [
     { label: 'Send to QC', toStatus: 'QC', style: 'btn-primary' },
     { label: 'Wait Parts', toStatus: 'WAITING_PARTS', style: 'btn-secondary' },

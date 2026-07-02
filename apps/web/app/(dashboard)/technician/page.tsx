@@ -19,6 +19,18 @@ interface QueueItem {
   timeWaitingMinutes: number;
 }
 
+// CR-2026-069 — the logged-in technician's not-yet-started assignments.
+interface MyAssignment {
+  assignmentId: string;
+  orderId: string;
+  ticketNumber: string | null;
+  customerName: string;
+  vehicle: string;
+  plate: string;
+  bay: string | null;
+  services: string[];
+}
+
 export default function TechnicianWorkView() {
   const siteId = useSiteId();
   const queryClient = useQueryClient();
@@ -76,6 +88,21 @@ export default function TechnicianWorkView() {
     onSuccess: invalidateWork,
   });
 
+  // CR-2026-069 — the technician's assigned-but-not-started orders, and starting them.
+  const myAssignmentsQuery = useQuery<MyAssignment[]>({
+    queryKey: ['my-assignments'],
+    queryFn: () => api.get('/service-orders/mine/assignments'),
+    refetchInterval: 10000,
+  });
+  const startMutation = useMutation({
+    mutationFn: ({ orderId, assignmentId }: { orderId: string; assignmentId: string }) =>
+      api.post(`/service-orders/${orderId}/assignments/${assignmentId}/start`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-assignments'] });
+      invalidateWork();
+    },
+  });
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-100 p-4">
@@ -95,8 +122,39 @@ export default function TechnicianWorkView() {
           subtitle="Technician View"
         />
 
+        {/* CR-2026-069 — assigned to me, ready to start (the mechanic starts the work) */}
+        {(myAssignmentsQuery.data ?? []).length > 0 && (
+          <div className="card">
+            <div className="card-header">
+              <h2 className="text-sm font-semibold text-slate-900">Ready to Start ({myAssignmentsQuery.data!.length})</h2>
+            </div>
+            <div className="card-body p-0">
+              {myAssignmentsQuery.data!.map((a) => (
+                <div key={a.assignmentId} className="px-5 py-4 border-b border-slate-100 last:border-0 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg font-bold font-mono text-blue-700">{a.ticketNumber ?? '—'}</span>
+                    {a.bay && <span className="badge bg-slate-100 text-slate-600 text-[10px]">Bay {a.bay}</span>}
+                  </div>
+                  <p className="text-sm text-slate-700">{a.customerName} · {a.vehicle} ({a.plate})</p>
+                  <p className="text-xs text-slate-500">{a.services.join(', ')}</p>
+                  {startMutation.isError && startMutation.variables?.assignmentId === a.assignmentId && (
+                    <p className="text-xs text-red-600">{startMutation.error instanceof Error ? startMutation.error.message : 'Failed to start'}</p>
+                  )}
+                  <button
+                    onClick={() => startMutation.mutate({ orderId: a.orderId, assignmentId: a.assignmentId })}
+                    disabled={startMutation.isPending}
+                    className="btn-success w-full py-3 text-base font-bold rounded-lg active:scale-[0.98] transition-transform"
+                  >
+                    {startMutation.isPending && startMutation.variables?.assignmentId === a.assignmentId ? 'Starting…' : 'START WORK'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* No active job */}
-        {!currentJob && (
+        {!currentJob && (myAssignmentsQuery.data ?? []).length === 0 && (
           <EmptyState
             icon={
               <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">

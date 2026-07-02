@@ -7,6 +7,7 @@ import {
   Patch,
   ParseUUIDPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
@@ -43,6 +44,16 @@ export class ServiceOrdersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.serviceOrdersService.create(dto, user.sub);
+  }
+
+  @Get('mine/assignments')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: "The logged-in technician's own assignments (default status ASSIGNED)" })
+  async myAssignments(
+    @Query('status') status: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.getMyAssignments(user.sub, status || 'ASSIGNED');
   }
 
   @Get(':id')

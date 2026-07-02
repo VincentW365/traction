@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
@@ -396,6 +397,56 @@ export class ServiceOrdersService {
       updated.push(await this.assign(o.id, { technicianId } as AssignTechnicianDto, userId));
     }
     return updated;
+  }
+
+  /**
+   * CR-2026-069 — the logged-in technician's own assignments (default: not-yet-started,
+   * so they can start their work). Returns a compact, floor-friendly shape. Non-technician
+   * users have no technician record and get an empty list.
+   */
+  async getMyAssignments(userId: string, status = 'ASSIGNED') {
+    const tech = await this.prisma.technician.findUnique({
+      where: { userAccountId: userId },
+    });
+    if (!tech) return [];
+
+    const assignments = await this.prisma.technicianAssignment.findMany({
+      where: { technicianId: tech.id, status, endedAt: null },
+      include: {
+        bay: { select: { code: true } },
+        serviceOrder: {
+          include: {
+            items: { include: { serviceType: { select: { name: true } } } },
+            serviceVisit: {
+              include: {
+                customer: { select: { firstName: true, lastName: true } },
+                vehicle: { select: { plateNumber: true, make: true, model: true } },
+                queueTicket: { select: { ticketNumber: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { assignedAt: 'asc' },
+    });
+
+    return assignments.map((a) => {
+      const visit = a.serviceOrder.serviceVisit;
+      return {
+        assignmentId: a.id,
+        orderId: a.serviceOrderId,
+        orderStatus: a.serviceOrder.status,
+        serviceVisitId: a.serviceOrder.serviceVisitId,
+        ticketNumber: visit.queueTicket?.ticketNumber ?? null,
+        customerName: `${visit.customer.firstName} ${visit.customer.lastName}`,
+        vehicle:
+          [visit.vehicle.make, visit.vehicle.model].filter(Boolean).join(' ') ||
+          visit.vehicle.plateNumber,
+        plate: visit.vehicle.plateNumber,
+        bay: a.bay?.code ?? null,
+        services: a.serviceOrder.items.map((i) => i.serviceType.name),
+      };
+    });
   }
 
   /**
@@ -809,6 +860,16 @@ export class ServiceOrdersService {
     });
     if (!assignment) {
       throw new NotFoundException(`Assignment ${assignmentId} not found`);
+    }
+
+    // CR-2026-069 — the mechanic starts their own work, not the front desk / manager.
+    const tech = await this.prisma.technician.findUnique({
+      where: { userAccountId: userId },
+    });
+    if (!tech || tech.id !== assignment.technicianId) {
+      throw new ForbiddenException(
+        'Only the assigned technician can start this work.',
+      );
     }
 
     const updated = await this.prisma.technicianAssignment.update({
