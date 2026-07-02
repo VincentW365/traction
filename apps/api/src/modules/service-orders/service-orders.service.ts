@@ -307,18 +307,21 @@ export class ServiceOrdersService {
       bay = picked;
     }
 
-    // 4. Check for double-booking: technician not in an active assignment
+    // 4. Check for double-booking: technician not in an active assignment ON A
+    //    DIFFERENT visit. Multiple orders on the SAME visit (same vehicle) are the
+    //    same job, so the tech may hold all of them (CR-2026-068).
     const activeAssignment = await this.prisma.technicianAssignment.findFirst({
       where: {
         technicianId: dto.technicianId,
         status: { in: ['ASSIGNED', 'IN_PROGRESS'] },
         endedAt: null,
+        serviceOrder: { serviceVisitId: { not: order.serviceVisitId } },
       },
     });
 
     if (activeAssignment) {
       throw new BadRequestException(
-        `Technician ${dto.technicianId} already has an active assignment (${activeAssignment.id})`,
+        `Technician ${dto.technicianId} already has an active assignment on another visit (${activeAssignment.id})`,
       );
     }
 
@@ -370,6 +373,28 @@ export class ServiceOrdersService {
       `ServiceOrder ${id} assigned to technician ${dto.technicianId} in bay ${bay.id}${dto.bayId ? '' : ' (auto-assigned)'}`,
     );
 
+    return updated;
+  }
+
+  /**
+   * CR-2026-068 — assign one technician to ALL of a visit's APPROVED service orders in
+   * a single action (each order gets an auto-selected compatible free bay). Reuses
+   * assign() per order, so skill/bay validation and the same-visit-aware double-booking
+   * guard all apply. Returns the updated orders.
+   */
+  async assignAllForVisit(visitId: string, technicianId: string, userId: string) {
+    const orders = await this.prisma.serviceOrder.findMany({
+      where: { serviceVisitId: visitId, status: 'APPROVED' },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (orders.length === 0) {
+      throw new BadRequestException('No approved service orders to assign for this visit.');
+    }
+    const updated = [];
+    for (const o of orders) {
+      updated.push(await this.assign(o.id, { technicianId } as AssignTechnicianDto, userId));
+    }
     return updated;
   }
 
@@ -672,12 +697,17 @@ export class ServiceOrdersService {
       throw new BadRequestException(`Cannot add technician to order in status ${order.status}`);
     }
 
-    // Double-booking check
+    // Double-booking check — allow the same tech on other orders of the SAME visit (CR-2026-068).
     const active = await this.prisma.technicianAssignment.findFirst({
-      where: { technicianId, status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, endedAt: null },
+      where: {
+        technicianId,
+        status: { in: ['ASSIGNED', 'IN_PROGRESS'] },
+        endedAt: null,
+        serviceOrder: { serviceVisitId: { not: order.serviceVisitId } },
+      },
     });
     if (active) {
-      throw new BadRequestException(`Technician already has an active assignment (${active.id})`);
+      throw new BadRequestException(`Technician already has an active assignment on another visit (${active.id})`);
     }
 
     const assignment = await this.prisma.technicianAssignment.create({
@@ -732,6 +762,13 @@ export class ServiceOrdersService {
     });
     if (!assignment) {
       throw new NotFoundException(`Assignment ${assignmentId} not found on order ${orderId}`);
+    }
+
+    // CR-2026-068 — an assignment can be edited only before the mechanic starts work.
+    if (assignment.status !== 'ASSIGNED') {
+      throw new BadRequestException(
+        'Cannot edit this assignment — work has already started.',
+      );
     }
 
     const updateData: any = {};

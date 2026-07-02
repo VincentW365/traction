@@ -155,6 +155,12 @@ export default function QueueTicketDetailPage() {
   const [showServicePicker, setShowServicePicker] = useState(false);
   const [pickedServiceCodes, setPickedServiceCodes] = useState<string[]>([]);
 
+  // CR-2026-068 — assign one tech to all approved orders; reassign a not-started order.
+  const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
+  const [bulkTechId, setBulkTechId] = useState('');
+  const [reassignOrderId, setReassignOrderId] = useState<string | null>(null);
+  const [reassignTechId, setReassignTechId] = useState('');
+
   // Pause / rework form state (CR-2026-011) — keyed by order id
   const [pauseFormOrderId, setPauseFormOrderId] = useState<string | null>(null);
   const [pauseReason, setPauseReason] = useState<string>(PAUSE_REASONS[0].value);
@@ -232,7 +238,7 @@ export default function QueueTicketDetailPage() {
   const techsQuery = useQuery<TechOption[]>({
     queryKey: ['technicians-list', siteId],
     queryFn: () => api.get(`/technicians?siteId=${siteId}`),
-    enabled: !!assigningOrderId,
+    enabled: !!assigningOrderId || bulkAssignOpen || !!reassignOrderId,
   });
 
   // CR-2026-035 — ranked recommendations for the order being assigned (advisory).
@@ -341,6 +347,28 @@ export default function QueueTicketDetailPage() {
       setAssigningOrderId(null);
       setAssignTechId('');
       setAssignBayId('');
+    },
+  });
+
+  // CR-2026-068 — assign one tech to ALL approved orders on the visit in one action.
+  const assignAll = useMutation({
+    mutationFn: (technicianId: string) =>
+      api.post(`/service-orders/by-visit/${ticket!.serviceVisit.id}/assign-all`, { technicianId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-orders'] });
+      setBulkAssignOpen(false);
+      setBulkTechId('');
+    },
+  });
+
+  // CR-2026-068 — reassign a not-started order to a different technician.
+  const reassign = useMutation({
+    mutationFn: ({ orderId, assignmentId, technicianId }: { orderId: string; assignmentId: string; technicianId: string }) =>
+      api.patch(`/service-orders/${orderId}/assignments/${assignmentId}`, { technicianId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-orders'] });
+      setReassignOrderId(null);
+      setReassignTechId('');
     },
   });
 
@@ -721,6 +749,38 @@ export default function QueueTicketDetailPage() {
             </div>
           )}
 
+          {/* CR-2026-068 — assign ONE technician to all approved orders in one action */}
+          {canManageOrders && orders.filter((o) => o.status === 'APPROVED').length >= 2 && (
+            <div className="mb-4 pb-4 border-b border-slate-100">
+              {!bulkAssignOpen ? (
+                <button onClick={() => setBulkAssignOpen(true)} className="btn-secondary text-xs">
+                  Assign all {orders.filter((o) => o.status === 'APPROVED').length} approved orders to one technician
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <label className="input-label">One technician for all {orders.filter((o) => o.status === 'APPROVED').length} approved orders</label>
+                  <div className="flex items-end gap-2">
+                    <div className="w-56">
+                      <SearchableSelect
+                        value={bulkTechId}
+                        onChange={setBulkTechId}
+                        placeholder="Search technician…"
+                        emptyText="No technicians"
+                        options={(techsQuery.data ?? []).map((t) => ({ value: t.id, label: `${t.employeeCode} — ${t.userAccount.fullName}` }))}
+                      />
+                    </div>
+                    <button onClick={() => assignAll.mutate(bulkTechId)} disabled={!bulkTechId || assignAll.isPending} className="btn-primary text-xs">
+                      {assignAll.isPending ? 'Assigning…' : 'Assign all'}
+                    </button>
+                    <button onClick={() => { setBulkAssignOpen(false); setBulkTechId(''); }} className="btn-secondary text-xs">Cancel</button>
+                  </div>
+                  <p className="text-[10px] text-slate-400">Each order gets a compatible free bay automatically.</p>
+                  {assignAll.isError && <p className="text-xs text-red-600">{assignAll.error instanceof Error ? assignAll.error.message : 'Failed to assign all'}</p>}
+                </div>
+              )}
+            </div>
+          )}
+
           {orders.length === 0 && !showServicePicker ? (
             <p className="text-sm text-slate-500">No service orders created yet.</p>
           ) : orders.length === 0 ? null : (
@@ -758,6 +818,19 @@ export default function QueueTicketDetailPage() {
                           {action.label}
                         </button>
                       ))}
+                      {/* CR-2026-068 — edit assignment before work starts */}
+                      {order.status === 'ASSIGNED' && canManageOrders && (
+                        <button
+                          onClick={() => {
+                            const primary = order.assignments.find((a) => a.isPrimary) ?? order.assignments[0];
+                            setReassignOrderId(reassignOrderId === order.id ? null : order.id);
+                            setReassignTechId(primary?.technician.id ?? '');
+                          }}
+                          className="btn-secondary text-xs py-1 px-2"
+                        >
+                          Reassign
+                        </button>
+                      )}
                       {/* CR-2026-011 pause/resume/rework (dedicated endpoints) */}
                       {order.status === 'IN_PROGRESS' && (
                         <button onClick={() => { setReworkFormOrderId(null); setPauseFormOrderId(pauseFormOrderId === order.id ? null : order.id); }} className="btn-secondary text-xs py-1 px-2">
@@ -776,6 +849,38 @@ export default function QueueTicketDetailPage() {
                       )}
                     </div>
                   </div>
+
+                  {/* CR-2026-068 — reassign form (edit the technician before work starts) */}
+                  {reassignOrderId === order.id && (
+                    <div className="card mb-3 border-blue-200 bg-blue-50">
+                      <div className="card-body space-y-2">
+                        <h3 className="text-xs font-semibold text-slate-900">Reassign technician</h3>
+                        <div className="flex items-end gap-2">
+                          <div className="w-56">
+                            <SearchableSelect
+                              value={reassignTechId}
+                              onChange={setReassignTechId}
+                              placeholder="Search technician…"
+                              emptyText="No technicians"
+                              options={(techsQuery.data ?? []).map((t) => ({ value: t.id, label: `${t.employeeCode} — ${t.userAccount.fullName}` }))}
+                            />
+                          </div>
+                          <button
+                            onClick={() => {
+                              const primary = order.assignments.find((a) => a.isPrimary) ?? order.assignments[0];
+                              if (primary) reassign.mutate({ orderId: order.id, assignmentId: primary.id, technicianId: reassignTechId });
+                            }}
+                            disabled={!reassignTechId || reassign.isPending}
+                            className="btn-primary text-xs"
+                          >
+                            {reassign.isPending ? 'Saving…' : 'Save'}
+                          </button>
+                          <button onClick={() => setReassignOrderId(null)} className="btn-secondary text-xs">Cancel</button>
+                        </div>
+                        {reassign.isError && <p className="text-xs text-red-600">{reassign.error instanceof Error ? reassign.error.message : 'Failed to reassign'}</p>}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Pause reason form */}
                   {pauseFormOrderId === order.id && (

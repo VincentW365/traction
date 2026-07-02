@@ -13,6 +13,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ServiceOrdersService } from './service-orders.service';
 import { CreateServiceOrderDto } from './dto/create-service-order.dto';
 import { AssignTechnicianDto } from './dto/assign-technician.dto';
+import { AssignAllDto } from './dto/assign-all.dto';
 import { AssignAdditionalDto } from './dto/assign-additional.dto';
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 import { ChangeStatusDto } from './dto/change-status.dto';
@@ -79,6 +80,17 @@ export class ServiceOrdersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.serviceOrdersService.assign(id, dto, user.sub);
+  }
+
+  @Post('by-visit/:serviceVisitId/assign-all')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_ASSIGN)
+  @ApiOperation({ summary: "Assign one technician to ALL of a visit's approved orders (auto-bay each)" })
+  async assignAll(
+    @Param('serviceVisitId', ParseUUIDPipe) serviceVisitId: string,
+    @Body() dto: AssignAllDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.assignAllForVisit(serviceVisitId, dto.technicianId, user.sub);
   }
 
   @Post(':id/status')
