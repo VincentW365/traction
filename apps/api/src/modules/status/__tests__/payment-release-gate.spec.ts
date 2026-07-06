@@ -20,7 +20,11 @@ function build(orderPaymentStatuses: string[]) {
       items: [{ serviceType: { requiresMileage: false } }],
     })),
   };
-  const tx = { serviceVisit: { update: vi.fn(async () => ({ id: 'sv1' })) }, vehicle: { update: vi.fn(async () => ({})) } };
+  const tx = {
+    serviceVisit: { update: vi.fn(async () => ({ id: 'sv1' })) },
+    vehicle: { update: vi.fn(async () => ({})) },
+    resourceOccupancy: { updateMany: vi.fn(async () => ({ count: 0 })) },
+  };
   const prisma: any = {
     serviceVisit: { findUnique: vi.fn(async () => visit) },
     $transaction: vi.fn(async (cb: any) => cb(tx)),

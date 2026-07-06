@@ -5,12 +5,16 @@ import { ServiceOrdersService } from '../service-orders.service';
  * CR-2026-073 — the assigned technician finishes work → sends the order to QC, and the
  * work-timing read used to drive the tech's elapsed / actual-working timers.
  */
-function build(opts: { callerTech?: any; timingOrder?: any; pauses?: any[] } = {}) {
+function build(opts: { callerTech?: any; timingOrder?: any; pauses?: any[]; otherActive?: number } = {}) {
   const prisma: any = {
     technician: { findUnique: vi.fn(async () => opts.callerTech ?? null) },
     technicianAssignment: { updateMany: vi.fn(async () => ({ count: 1 })) },
-    serviceOrder: { findUnique: vi.fn(async () => opts.timingOrder ?? null) },
+    serviceOrder: {
+      findUnique: vi.fn(async () => opts.timingOrder ?? null),
+      count: vi.fn(async () => opts.otherActive ?? 0),
+    },
     serviceOrderPause: { findMany: vi.fn(async () => opts.pauses ?? []) },
+    resourceOccupancy: { updateMany: vi.fn(async () => ({ count: 1 })) },
   };
   const statusHistory = { record: vi.fn(async () => ({})) };
   const audit = { log: vi.fn(async () => ({})) };
@@ -35,8 +39,8 @@ function order(overrides: any = {}) {
 describe('readyForQc (CR-2026-073)', () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it('the assigned technician sends an IN_PROGRESS order to QC and ends the assignment', async () => {
-    const h = build({ callerTech: { id: 'tech-1' } });
+  it('the assigned technician sends an IN_PROGRESS order to QC, ends the assignment, frees the bay', async () => {
+    const h = build({ callerTech: { id: 'tech-1' }, otherActive: 0 });
     vi.spyOn(h.service, 'findById').mockResolvedValue(order() as any);
 
     await h.service.readyForQc('so-1', 'u1');
@@ -45,6 +49,22 @@ describe('readyForQc (CR-2026-073)', () => {
     expect(h.prisma.technicianAssignment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { serviceOrderId: 'so-1', endedAt: null } }),
     );
+    // CR-2026-075 — frees the dispatch occupancy when no other active order holds the visit.
+    expect(h.prisma.resourceOccupancy.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { serviceVisitId: 'v1', status: 'OCCUPIED' },
+        data: expect.objectContaining({ status: 'AVAILABLE' }),
+      }),
+    );
+  });
+
+  it('does NOT free the bay while another order on the same visit is still active', async () => {
+    const h = build({ callerTech: { id: 'tech-1' }, otherActive: 1 });
+    vi.spyOn(h.service, 'findById').mockResolvedValue(order() as any);
+
+    await h.service.readyForQc('so-1', 'u1');
+
+    expect(h.prisma.resourceOccupancy.updateMany).not.toHaveBeenCalled();
   });
 
   it('rejects a technician who is not assigned to the order', async () => {

@@ -52,6 +52,8 @@ const RECOMPUTE_TRIGGERS = new Set<ServiceOrderStatus>([
   'WAITING_PARTS' as ServiceOrderStatus,
   'WAITING_CUSTOMER' as ServiceOrderStatus,
   'QC' as ServiceOrderStatus,
+  // CR-2026-075 — the "vehicle is ready for pickup" moment; refresh the boards promptly.
+  'READY_TO_INVOICE' as ServiceOrderStatus,
   'CANCELLED' as ServiceOrderStatus,
 ]);
 
@@ -1065,6 +1067,24 @@ export class ServiceOrdersService {
       where: { serviceOrderId: orderId, endedAt: null },
       data: { endedAt: new Date(), status: 'COMPLETED' },
     });
+
+    // CR-2026-075 — work is done: free the dispatch-board bay (ResourceOccupancy) so it
+    // doesn't linger OCCUPIED through QC. Mirrors the old completeTicket behaviour. The
+    // changeStatus(QC) above already recomputes → the dispatch board refetches and shows
+    // the bay available. Only frees if no OTHER active order on the visit still holds it.
+    const otherActive = await this.prisma.serviceOrder.count({
+      where: {
+        serviceVisitId: order.serviceVisitId,
+        id: { not: orderId },
+        status: { in: ['ASSIGNED', 'IN_PROGRESS', 'PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER'] },
+      },
+    });
+    if (otherActive === 0) {
+      await this.prisma.resourceOccupancy.updateMany({
+        where: { serviceVisitId: order.serviceVisitId, status: 'OCCUPIED' },
+        data: { status: 'AVAILABLE', serviceVisitId: null, technicianId: null },
+      });
+    }
 
     this.logger.log(`ServiceOrder ${orderId} sent to QC by technician (${userId})`);
     return this.findById(orderId);

@@ -255,6 +255,13 @@ export class ServiceVisitCompletionController {
         });
       }
 
+      // CR-2026-075 — closing the visit frees any dispatch-board bay it still holds, so
+      // the board never shows a closed visit occupying a resource.
+      await tx.resourceOccupancy.updateMany({
+        where: { serviceVisitId: id, status: 'OCCUPIED' },
+        data: { status: 'AVAILABLE', serviceVisitId: null, technicianId: null },
+      });
+
       return sv;
     });
 
