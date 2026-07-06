@@ -13,6 +13,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ServiceOrdersService } from './service-orders.service';
 import { CreateServiceOrderDto } from './dto/create-service-order.dto';
+import { UpdateServiceOrderDto } from './dto/update-service-order.dto';
 import { AssignTechnicianDto } from './dto/assign-technician.dto';
 import { AssignAllDto } from './dto/assign-all.dto';
 import { AssignAdditionalDto } from './dto/assign-additional.dto';
@@ -70,6 +71,27 @@ export class ServiceOrdersController {
     @Param('serviceVisitId', ParseUUIDPipe) serviceVisitId: string,
   ) {
     return this.serviceOrdersService.findByVisit(serviceVisitId);
+  }
+
+  @Patch(':id')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_UPDATE)
+  @ApiOperation({ summary: 'Edit a service order (items/notes) before work is assigned' })
+  async update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateServiceOrderDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.updateOrder(id, dto, user.sub);
+  }
+
+  @Delete(':id')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_UPDATE)
+  @ApiOperation({ summary: 'Delete a service order before work is assigned' })
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.deleteOrder(id, user.sub);
   }
 
   @Post(':id/approve')

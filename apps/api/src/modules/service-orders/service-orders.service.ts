@@ -188,6 +188,107 @@ export class ServiceOrdersService {
   }
 
   // ---------------------------------------------------------------------------
+  // UPDATE / DELETE (before work is assigned) — CR-2026-071
+  // ---------------------------------------------------------------------------
+
+  /** Only DRAFT/APPROVED orders (before a technician is assigned) may be edited/deleted. */
+  private assertEditableStatus(status: string, verb: 'edit' | 'delete') {
+    if (!['DRAFT', 'APPROVED'].includes(status)) {
+      throw new BadRequestException(
+        `Cannot ${verb} a service order in status ${status} — only DRAFT or APPROVED (before work is assigned).`,
+      );
+    }
+  }
+
+  async updateOrder(
+    id: string,
+    dto: { items?: Array<{ serviceTypeCode: string; estimateMinutes?: number; notes?: string }>; notes?: string },
+    userId: string,
+  ) {
+    const order = await this.findById(id);
+    this.assertEditableStatus(order.status, 'edit');
+
+    let resolved: Awaited<ReturnType<typeof this.resolveServiceTypeCodes>> | null = null;
+    if (dto.items) {
+      if (dto.items.length === 0) {
+        throw new BadRequestException('A service order must have at least one item.');
+      }
+      resolved = await this.resolveServiceTypeCodes(dto.items.map((i) => i.serviceTypeCode));
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (dto.items && resolved) {
+        await tx.serviceOrderItem.deleteMany({ where: { serviceOrderId: id } });
+        await tx.serviceOrderItem.createMany({
+          data: dto.items.map((item) => {
+            const serviceType = resolved!.get(item.serviceTypeCode)!;
+            return {
+              serviceOrderId: id,
+              serviceTypeId: serviceType.id,
+              estimateMinutes: item.estimateMinutes ?? serviceType.baseDurationMinutes,
+              notes: item.notes,
+            };
+          }),
+        });
+      }
+      return tx.serviceOrder.update({
+        where: { id },
+        data: { ...(dto.notes !== undefined && { notes: dto.notes }) },
+        include: {
+          items: { include: { serviceType: true } },
+          assignments: { include: { technician: true, bay: true } },
+          serviceVisit: true,
+        },
+      });
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: 'SERVICE_ORDER_UPDATED',
+      entityType: 'ServiceOrder',
+      entityId: id,
+      afterJson: { items: dto.items?.map((i) => i.serviceTypeCode), notes: dto.notes },
+    });
+
+    // Line items drive duration estimates — refresh the queue.
+    await this.triggerQueueRecompute(order.serviceVisit.siteId);
+    this.logger.log(`ServiceOrder ${id} edited by ${userId}`);
+    return updated;
+  }
+
+  async deleteOrder(id: string, userId: string) {
+    const order = await this.findById(id);
+    this.assertEditableStatus(order.status, 'delete');
+
+    const activeAssignments = order.assignments.filter(
+      (a) => a.endedAt === null && a.status !== 'REMOVED',
+    );
+    if (activeAssignments.length > 0) {
+      throw new BadRequestException(
+        'Cannot delete a service order with a technician assigned — remove the assignment first.',
+      );
+    }
+
+    await this.prisma.serviceOrder.delete({ where: { id } }); // items cascade
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: 'SERVICE_ORDER_DELETED',
+      entityType: 'ServiceOrder',
+      entityId: id,
+      beforeJson: {
+        status: order.status,
+        serviceVisitId: order.serviceVisitId,
+        items: order.items.map((i) => i.serviceType.code),
+      },
+    });
+
+    await this.triggerQueueRecompute(order.serviceVisit.siteId);
+    this.logger.log(`ServiceOrder ${id} deleted by ${userId}`);
+    return { deleted: true };
+  }
+
+  // ---------------------------------------------------------------------------
   // APPROVE
   // ---------------------------------------------------------------------------
 

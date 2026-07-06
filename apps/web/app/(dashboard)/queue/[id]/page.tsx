@@ -156,6 +156,9 @@ export default function QueueTicketDetailPage() {
   // catalogue via this fallback form.
   const [showServicePicker, setShowServicePicker] = useState(false);
   const [pickedServiceCodes, setPickedServiceCodes] = useState<string[]>([]);
+  // CR-2026-071 — edit an existing order's services.
+  const [editOrderId, setEditOrderId] = useState<string | null>(null);
+  const [editPickedCodes, setEditPickedCodes] = useState<string[]>([]);
 
   // CR-2026-068 — assign one tech to all approved orders; reassign a not-started order.
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
@@ -290,7 +293,7 @@ export default function QueueTicketDetailPage() {
   const serviceTypesQuery = useQuery<Array<{ id: string; code: string; name: string }>>({
     queryKey: ['service-types'],
     queryFn: () => api.get('/service-types'),
-    enabled: showServicePicker,
+    enabled: showServicePicker || !!editOrderId,
   });
 
   // CR-2026-057 — create a service order for this visit from a set of service codes.
@@ -305,6 +308,21 @@ export default function QueueTicketDetailPage() {
       setShowServicePicker(false);
       setPickedServiceCodes([]);
     },
+  });
+
+  // CR-2026-071 — edit / delete a service order (before work is assigned).
+  const updateOrder = useMutation({
+    mutationFn: ({ orderId, codes }: { orderId: string; codes: string[] }) =>
+      api.patch(`/service-orders/${orderId}`, { items: codes.map((code) => ({ serviceTypeCode: code })) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-orders'] });
+      setEditOrderId(null);
+      setEditPickedCodes([]);
+    },
+  });
+  const deleteOrder = useMutation({
+    mutationFn: (orderId: string) => api.delete(`/service-orders/${orderId}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['service-orders'] }),
   });
 
   // CR-2026-011 — dedicated pause/resume/rework endpoints (recording-only; NOT /status)
@@ -810,6 +828,27 @@ export default function QueueTicketDetailPage() {
                           Assign
                         </button>
                       )}
+                      {/* CR-2026-071 — edit / delete before work is assigned */}
+                      {canManageOrders && ['DRAFT', 'APPROVED'].includes(order.status) && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setEditOrderId(editOrderId === order.id ? null : order.id);
+                              setEditPickedCodes(order.items.map((it) => it.serviceType.code));
+                            }}
+                            className="btn-secondary text-xs py-1 px-2"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => { if (window.confirm('Delete this service order?')) deleteOrder.mutate(order.id); }}
+                            disabled={deleteOrder.isPending}
+                            className="btn-secondary text-xs py-1 px-2 text-red-600"
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
                       {(ORDER_ACTIONS[order.status] ?? []).map((action) => (
                         <button
                           key={action.toStatus}
@@ -851,6 +890,49 @@ export default function QueueTicketDetailPage() {
                       )}
                     </div>
                   </div>
+
+                  {/* CR-2026-071 — edit the order's services (before work is assigned) */}
+                  {editOrderId === order.id && (
+                    <div className="card mb-3 border-blue-200 bg-blue-50">
+                      <div className="card-body space-y-3">
+                        <h3 className="text-xs font-semibold text-slate-900">Edit services</h3>
+                        {serviceTypesQuery.isLoading ? (
+                          <p className="text-xs text-slate-500">Loading services…</p>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto">
+                            {(serviceTypesQuery.data ?? []).map((st) => {
+                              const checked = editPickedCodes.includes(st.code);
+                              return (
+                                <label key={st.id} className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) =>
+                                      setEditPickedCodes((prev) =>
+                                        e.target.checked ? [...prev, st.code] : prev.filter((c) => c !== st.code),
+                                      )
+                                    }
+                                  />
+                                  <span>{st.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {updateOrder.isError && <p className="text-xs text-red-600">{updateOrder.error instanceof Error ? updateOrder.error.message : 'Failed to save'}</p>}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => updateOrder.mutate({ orderId: order.id, codes: editPickedCodes })}
+                            disabled={editPickedCodes.length === 0 || updateOrder.isPending}
+                            className="btn-primary text-xs py-1 px-3"
+                          >
+                            {updateOrder.isPending ? 'Saving…' : `Save${editPickedCodes.length ? ` (${editPickedCodes.length})` : ''}`}
+                          </button>
+                          <button onClick={() => { setEditOrderId(null); setEditPickedCodes([]); }} className="btn-secondary text-xs py-1 px-3">Cancel</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* CR-2026-068 — reassign form (edit the technician before work starts) */}
                   {reassignOrderId === order.id && (
