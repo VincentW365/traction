@@ -177,8 +177,8 @@ export default function QueueTicketDetailPage() {
   // Completion form state
   const [showCompletion, setShowCompletion] = useState(false);
   const [mileageOut, setMileageOut] = useState('');
-  const [oilBrandInstalled, setOilBrandInstalled] = useState('');
-  const [oilGradeInstalled, setOilGradeInstalled] = useState('');
+  // CR-2026-072 — completion captures optional mileage + optional notes (oil dropped here).
+  const [completionNotes, setCompletionNotes] = useState('');
   // P4(c) payment-release manager exception (GOV-005)
   const [paymentOverride, setPaymentOverride] = useState(false);
   const [paymentOverrideReason, setPaymentOverrideReason] = useState('');
@@ -395,8 +395,7 @@ export default function QueueTicketDetailPage() {
   const completeVisit = useMutation({
     mutationFn: () => api.patch(`/service-visits/${ticket!.serviceVisit.id}/completion`, {
       mileageOut: mileageOut ? parseInt(mileageOut, 10) : undefined,
-      oilBrandInstalled: oilBrandInstalled || undefined,
-      oilGradeInstalled: oilGradeInstalled || undefined,
+      notes: completionNotes.trim() || undefined,
       paymentReleaseOverride: paymentOverride || undefined,
       paymentReleaseOverrideReason: paymentOverride ? (paymentOverrideReason || undefined) : undefined,
     }),
@@ -1204,38 +1203,17 @@ export default function QueueTicketDetailPage() {
               </button>
             ) : (
               <div className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-3">
                   <div>
-                    <label className="input-label">Mileage Out</label>
-                    <input type="number" value={mileageOut} onChange={(e) => setMileageOut(e.target.value)} className="input-field" placeholder={sv.mileageIn != null ? `Min: ${sv.mileageIn}` : ''} />
+                    <label className="input-label">Mileage Out <span className="text-slate-400 font-normal">(optional)</span></label>
+                    <input type="number" value={mileageOut} onChange={(e) => setMileageOut(e.target.value)} className="input-field" placeholder={sv.mileageIn != null ? `e.g., ${sv.mileageIn}` : 'Optional'} />
                     {sv.mileageIn != null && mileageOut && parseInt(mileageOut, 10) < sv.mileageIn && (
                       <p className="text-[10px] text-red-500 mt-1">Must be ≥ mileage in ({sv.mileageIn.toLocaleString()})</p>
                     )}
                   </div>
                   <div>
-                    <label className="input-label">Oil Brand Installed</label>
-                    <select value={oilBrandInstalled} onChange={(e) => setOilBrandInstalled(e.target.value)} className="input-field">
-                      <option value="">-- Select --</option>
-                      <option value="Amsoil">Amsoil</option>
-                      <option value="Liqui Moly">Liqui Moly</option>
-                      <option value="Valvoline">Valvoline</option>
-                      <option value="Castrol">Castrol</option>
-                      <option value="Mobil 1">Mobil 1</option>
-                      <option value="Other">Other</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="input-label">Oil Grade Installed</label>
-                    <select value={oilGradeInstalled} onChange={(e) => setOilGradeInstalled(e.target.value)} className="input-field">
-                      <option value="">-- Select --</option>
-                      <option value="0W-20">0W-20</option>
-                      <option value="5W-20">5W-20</option>
-                      <option value="5W-30">5W-30</option>
-                      <option value="10W-30">10W-30</option>
-                      <option value="10W-40">10W-40</option>
-                      <option value="15W-40">15W-40</option>
-                      <option value="0W-40">0W-40</option>
-                    </select>
+                    <label className="input-label">Notes <span className="text-slate-400 font-normal">(optional)</span></label>
+                    <textarea value={completionNotes} onChange={(e) => setCompletionNotes(e.target.value)} rows={3} className="input-field" placeholder="Any notes about this completed visit" />
                   </div>
                 </div>
                 {/* P4(c): vehicle-release payment gate (GOV-005) */}

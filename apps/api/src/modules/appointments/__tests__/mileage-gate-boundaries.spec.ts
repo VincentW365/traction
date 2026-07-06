@@ -3,10 +3,9 @@ import { CheckInService } from '../check-in.service';
 import { ServiceVisitCompletionController } from '../../status/status.controller';
 
 /**
- * DMAIC Rule 5 — mileage gate enforced at the two write boundaries:
- *   - check-in (mileageIn)
- *   - completion (mileageOut)
- * Covers: service job requires mileage, non-service ALLOWS mileage (CR-2026-037), manager override (audited).
+ * DMAIC Rule 5 — mileage gate at CHECK-IN (mileageIn) still enforced.
+ * At COMPLETION (mileageOut) mileage is now OPTIONAL always (CR-2026-072) — no gate;
+ * a provided value must still be >= mileage in.
  */
 
 // ---------------------------------------------------------------------------
@@ -93,28 +92,25 @@ function buildCompletion(requiresMileage: boolean) {
   return { controller, audit };
 }
 
-describe('Rule 5 @ completion (mileageOut)', () => {
+describe('completion (mileageOut) — optional always (CR-2026-072)', () => {
   const user = { sub: 'u1' } as any;
 
-  it('service job requires mileage → rejects when mileageOut missing', async () => {
+  it('does NOT require mileage — completes with no mileageOut even for a service job', async () => {
     const h = buildCompletion(true);
-    await expect(h.controller.recordCompletion('sv1', {}, user)).rejects.toThrow(/required/i);
+    await expect(h.controller.recordCompletion('sv1', {}, user)).resolves.toBeDefined();
   });
 
-  it('non-service job → ALLOWS mileageOut (CR-2026-037 — mileage decoupled from service)', async () => {
+  it('accepts an optional mileageOut', async () => {
     const h = buildCompletion(false);
     await expect(
       h.controller.recordCompletion('sv1', { mileageOut: 1000 }, user),
     ).resolves.toBeDefined();
   });
 
-  it('manager override → allows non-service mileageOut AND audits it', async () => {
+  it('accepts optional completion notes', async () => {
     const h = buildCompletion(false);
     await expect(
-      h.controller.recordCompletion('sv1', { mileageOut: 1000, mileageOverride: true, overrideReason: 'mgr ok' }, user),
+      h.controller.recordCompletion('sv1', { notes: 'all good' }, user),
     ).resolves.toBeDefined();
-    expect(h.audit.log).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'MILEAGE_GATE_OVERRIDE', notes: 'mgr ok' }),
-    );
   });
 });

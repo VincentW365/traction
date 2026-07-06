@@ -7,7 +7,6 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
-import { assertMileageGate } from '../../common/helpers/mileage-gate';
 
 /**
  * Public customer status endpoint — NO authentication required.
@@ -162,8 +161,7 @@ export class ServiceVisitCompletionController {
       mileageOut?: number;
       oilBrandInstalled?: string;
       oilGradeInstalled?: string;
-      mileageOverride?: boolean;
-      overrideReason?: string;
+      notes?: string;
       paymentReleaseOverride?: boolean;
       paymentReleaseOverrideReason?: string;
     },
@@ -180,27 +178,8 @@ export class ServiceVisitCompletionController {
 
     if (!visit) throw new NotFoundException(`ServiceVisit ${id} not found`);
 
-    // DMAIC Rule 5: mileage gate (bidirectional + manager override) on mileageOut.
-    const requiresMileage =
-      (visit.appointment?.services ?? []).some((s) => s.serviceType.requiresMileage === true) ||
-      (visit.serviceOrders ?? []).some((so) => so.items.some((i) => i.serviceType.requiresMileage === true));
-    const mileageProvided = body.mileageOut != null;
-    const mileageOverride = body.mileageOverride === true;
-    assertMileageGate({ requiresMileage, mileageProvided, override: mileageOverride });
-
-    const gateWouldBlock =
-      (requiresMileage && !mileageProvided) || (!requiresMileage && mileageProvided);
-    if (mileageOverride && gateWouldBlock) {
-      await this.audit.log({
-        actorUserId: user.sub,
-        action: AUDIT_ACTIONS.MILEAGE_GATE_OVERRIDE,
-        entityType: 'ServiceVisit',
-        entityId: id,
-        afterJson: { requiresMileage, mileageProvided, mileageOut: body.mileageOut ?? null, boundary: 'COMPLETION' },
-        reasonCode: 'MILEAGE_GATE_OVERRIDE',
-        notes: body.overrideReason,
-      });
-    }
+    // CR-2026-072 — mileage is optional at completion (no required-mileage gate here).
+    // If a value IS provided it must still be >= mileage in (data sanity, below).
 
     // Validate mileage out >= mileage in
     if (body.mileageOut != null && visit.mileageIn != null) {
@@ -249,12 +228,21 @@ export class ServiceVisitCompletionController {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      // CR-2026-072 — completion notes are optional; append to any existing visit notes.
+      const noteText = body.notes?.trim();
+      const mergedNotes = noteText
+        ? visit.notes
+          ? `${visit.notes}\n${noteText}`
+          : noteText
+        : undefined;
+
       const sv = await tx.serviceVisit.update({
         where: { id },
         data: {
           mileageOut: body.mileageOut ?? undefined,
           oilBrandInstalled: body.oilBrandInstalled ?? undefined,
           oilGradeInstalled: body.oilGradeInstalled ?? undefined,
+          ...(mergedNotes !== undefined && { notes: mergedNotes }),
           status: 'CLOSED',
         },
       });
