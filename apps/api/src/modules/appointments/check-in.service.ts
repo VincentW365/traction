@@ -85,9 +85,10 @@ export class CheckInService {
     }
 
     // -----------------------------------------------------------------------
-    // 2. Validate appointment status
+    // 2. Validate appointment status — an upcoming, still-active appointment can be
+    //    checked in. RESCHEDULED counts (CR-2026-070): moving the time keeps it active.
     // -----------------------------------------------------------------------
-    if (!['CONFIRMED', 'DRAFT'].includes(appointment.status)) {
+    if (!['CONFIRMED', 'DRAFT', 'RESCHEDULED'].includes(appointment.status)) {
       throw new BadRequestException(
         `Cannot check in appointment in status ${appointment.status}`,
       );

@@ -122,8 +122,9 @@ export default function CheckInPage() {
     queryKey: ['appointments', siteId, today, selectedCustomer?.id],
     queryFn: () => api.get<AppointmentResult[]>(`/appointments?siteId=${siteId}&date=${today}`),
     enabled: !!selectedCustomer && !!selectedVehicle,
+    // CR-2026-070 — RESCHEDULED appointments are still active and checkable-in.
     select: (data) => data.filter((a) =>
-      ['CONFIRMED', 'DRAFT'].includes(a.status)
+      ['CONFIRMED', 'DRAFT', 'RESCHEDULED'].includes(a.status)
     ),
   });
 
@@ -402,7 +403,7 @@ export default function CheckInPage() {
                       </p>
                       <div className="mt-1"><StatusBadge status={appt.status} /></div>
                     </div>
-                    {appt.status === 'CONFIRMED' && (
+                    {['CONFIRMED', 'DRAFT', 'RESCHEDULED'].includes(appt.status) && (
                       <button onClick={() => checkInMutation.mutate(appt.id)}
                         disabled={checkInMutation.isPending}
                         className="btn-success px-6 py-3 text-sm font-bold disabled:opacity-50">

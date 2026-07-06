@@ -137,17 +137,20 @@ export default function CustomerDetailPage() {
     enabled: !!customerId,
   });
 
-  // Check-in is an appointment action: only offer it when this customer has a
-  // CONFIRMED appointment scheduled for today at this site. Fails closed (the
-  // button stays hidden) if the lookup errors or returns nothing.
+  // Check-in is an appointment action: only offer it when this customer has an
+  // active appointment scheduled for today at this site. Fails closed (the button
+  // stays hidden) if the lookup errors or returns nothing. CR-2026-070 — RESCHEDULED
+  // (and DRAFT) appointments are still checkable-in, matching the check-in page.
   const siteId = useSiteId();
   const today = new Date().toISOString().split('T')[0];
-  const checkinableQuery = useQuery<Array<{ id: string; customer: { id: string } | null }>>({
+  const checkinableQuery = useQuery<Array<{ id: string; status: string; customer: { id: string } | null }>>({
     queryKey: ['customer-checkinable', customerId, siteId, today],
-    queryFn: () => api.get(`/appointments?siteId=${siteId}&date=${today}&status=CONFIRMED`),
+    queryFn: () => api.get(`/appointments?siteId=${siteId}&date=${today}`),
     enabled: !!customerId && !!siteId,
   });
-  const hasCheckinableToday = (checkinableQuery.data ?? []).some((a) => a.customer?.id === customerId);
+  const hasCheckinableToday = (checkinableQuery.data ?? []).some(
+    (a) => a.customer?.id === customerId && ['CONFIRMED', 'DRAFT', 'RESCHEDULED'].includes(a.status),
+  );
 
   const addVehicleMutation = useMutation({
     mutationFn: () =>
