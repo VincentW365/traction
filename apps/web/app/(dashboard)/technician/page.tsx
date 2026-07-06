@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api-client';
 import { useSiteId } from '../../../hooks/use-site';
@@ -9,6 +10,16 @@ import { EmptyState } from '../../../components/ui/empty-state';
 import { LoadingState } from '../../../components/ui/loading-state';
 import { StatusBadge } from '../../../components/status-badge';
 import { PAUSE_REASONS } from '../../../lib/service-order-actions';
+
+// CR-2026-073 — H:MM:SS for the live work timers.
+function fmtClock(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
 interface QueueItem {
   queueTicketId: string;
@@ -39,18 +50,6 @@ export default function TechnicianWorkView() {
     queryKey: ['tech-work', siteId],
     queryFn: () => api.get(`/queue/board?siteId=${siteId}`),
     refetchInterval: 10000,
-  });
-
-  const completeMutation = useMutation({
-    mutationFn: async (ticketId: string) => {
-      return api.post(`/queue-tickets/${ticketId}/complete`, {});
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tech-work'] });
-    },
-    onError: () => {
-      // Endpoint may not exist yet -- show success anyway for demo
-    },
   });
 
   const inServiceItems = data?.items?.filter(
@@ -102,6 +101,41 @@ export default function TechnicianWorkView() {
       invalidateWork();
     },
   });
+
+  // CR-2026-073 — live work timers, ready-for-QC, and the job's inspection.
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const workTimingQuery = useQuery<{
+    startedAt: string | null; completedAt: string | null; status: string; pausedMs: number; openPauseStartedAt: string | null;
+  }>({
+    queryKey: ['work-timing', activeOrder?.id],
+    queryFn: () => api.get(`/service-orders/${activeOrder!.id}/work-timing`),
+    enabled: !!activeOrder,
+    refetchInterval: 15000,
+  });
+  const readyForQcMutation = useMutation({
+    mutationFn: () => api.post(`/service-orders/${activeOrder!.id}/ready-for-qc`, {}),
+    onSuccess: () => {
+      invalidateWork();
+      queryClient.invalidateQueries({ queryKey: ['work-timing'] });
+    },
+  });
+  const inspectionsQuery = useQuery<{ items: Array<{ id: string; inspectionNumber: string; status: string }> }>({
+    queryKey: ['tech-inspections', visitId],
+    queryFn: () => api.get(`/inspections?serviceVisitId=${visitId}`),
+    enabled: !!visitId,
+  });
+
+  // Timer math: elapsed since start, and ACTUAL working time (elapsed − paused).
+  const timing = workTimingQuery.data;
+  const startedMs = timing?.startedAt ? new Date(timing.startedAt).getTime() : null;
+  const openPauseMs = timing?.openPauseStartedAt ? now - new Date(timing.openPauseStartedAt).getTime() : 0;
+  const elapsedMs = startedMs ? now - startedMs : 0;
+  const workingMs = startedMs ? elapsedMs - (timing?.pausedMs ?? 0) - openPauseMs : 0;
 
   if (isLoading) {
     return (
@@ -167,43 +201,62 @@ export default function TechnicianWorkView() {
           />
         )}
 
-        {/* Current job card */}
+        {/* Current job card (CR-2026-073) */}
         {currentJob && (
-          <div className="card">
-            <div className="card-body space-y-5">
-              {/* Ticket number - prominent */}
-              <div className="text-center py-2">
-                <div className="input-label">Current Job</div>
-                <div className="text-3xl font-bold text-blue-700 font-mono mt-1">
-                  {currentJob.ticketNumber}
-                </div>
-              </div>
+          <div className="card overflow-hidden">
+            {/* Ticket header */}
+            <div className="bg-blue-600 text-white px-5 py-4 text-center">
+              <div className="text-[11px] uppercase tracking-wider text-blue-100">Current Job</div>
+              <div className="text-3xl font-bold font-mono mt-0.5">{currentJob.ticketNumber}</div>
+            </div>
 
-              {/* Details */}
-              <div className="border-t border-slate-100 pt-4 space-y-4">
-                <div>
-                  <div className="input-label">Services</div>
-                  <p className="text-base font-medium text-slate-900 mt-0.5">{currentJob.serviceDescription}</p>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="input-label">Status</div>
-                    <div className="mt-0.5">
-                      <StatusBadge status={currentJob.displayStatus} />
+            <div className="card-body space-y-4">
+              {/* Live timers */}
+              {startedMs ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-center">
+                      <div className="input-label">Elapsed</div>
+                      <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 mt-0.5">{fmtClock(elapsedMs)}</div>
+                    </div>
+                    <div className={`rounded-xl border p-3 text-center ${timing?.status === 'PAUSED' ? 'bg-orange-50 border-orange-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                      <div className="input-label">Working{timing?.status === 'PAUSED' ? ' (paused)' : ''}</div>
+                      <div className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${timing?.status === 'PAUSED' ? 'text-orange-700' : 'text-emerald-700'}`}>{fmtClock(workingMs)}</div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="input-label">Time Elapsed</div>
-                    <p className="text-base font-medium text-slate-900 mt-0.5">{currentJob.timeWaitingMinutes} min</p>
-                  </div>
+                  {timing?.startedAt && <p className="text-[11px] text-slate-400 text-center">Started at {fmtTime(timing.startedAt)}</p>}
+                </>
+              ) : (
+                <div className="text-center">
+                  <StatusBadge status={currentJob.displayStatus} />
                 </div>
+              )}
+
+              {/* Services */}
+              <div>
+                <div className="input-label">Services</div>
+                <p className="text-base font-medium text-slate-900 mt-0.5">{currentJob.serviceDescription}</p>
               </div>
 
-              {/* CR-2026-011: pause / resume (recording-only) */}
+              {/* Vehicle inspection for this job */}
+              {(inspectionsQuery.data?.items ?? []).length > 0 && (
+                <div>
+                  <div className="input-label">Vehicle Inspection</div>
+                  <div className="mt-1 space-y-1.5">
+                    {inspectionsQuery.data!.items.map((insp) => (
+                      <Link key={insp.id} href={`/inspections/${insp.id}`} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 hover:border-blue-300 transition-colors">
+                        <span className="font-mono text-xs font-semibold text-blue-600">{insp.inspectionNumber}</span>
+                        <StatusBadge status={insp.status} />
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Paused → Resume only */}
               {activeOrder?.status === 'PAUSED' && (
                 <div className="space-y-2">
-                  <div className="rounded-lg bg-orange-50 border border-orange-200 px-4 py-3 text-sm text-orange-800 text-center font-medium">
+                  <div className="rounded-lg bg-orange-50 border border-orange-200 px-4 py-2.5 text-sm text-orange-800 text-center font-medium">
                     Work is paused
                   </div>
                   <button
@@ -211,54 +264,47 @@ export default function TechnicianWorkView() {
                     disabled={resumeMutation.isPending}
                     className="btn-success w-full py-4 text-lg font-bold rounded-lg active:scale-[0.98] transition-transform"
                   >
-                    {resumeMutation.isPending ? 'Resuming...' : 'RESUME WORK'}
+                    {resumeMutation.isPending ? 'Resuming…' : 'RESUME WORK'}
                   </button>
                 </div>
               )}
 
+              {/* In progress → Pause + Ready for QC */}
               {activeOrder?.status === 'IN_PROGRESS' && (
-                showPause ? (
-                  <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50 p-3">
-                    <label className="input-label">Pause reason</label>
-                    <select value={pauseReason} onChange={(e) => setPauseReason(e.target.value)} className="input-field">
-                      {PAUSE_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                    </select>
-                    {pauseMutation.isError && (
-                      <p className="text-xs text-red-700">{pauseMutation.error instanceof Error ? pauseMutation.error.message : 'Failed to pause'}</p>
-                    )}
-                    <div className="flex gap-2">
-                      <button onClick={() => pauseMutation.mutate()} disabled={pauseMutation.isPending} className="btn-primary flex-1 py-3 font-semibold rounded-lg">
-                        {pauseMutation.isPending ? 'Pausing...' : 'Confirm Pause'}
-                      </button>
-                      <button onClick={() => setShowPause(false)} className="btn-secondary py-3 px-4 rounded-lg">Cancel</button>
+                <div className="space-y-2">
+                  {showPause ? (
+                    <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50 p-3">
+                      <label className="input-label">Pause reason</label>
+                      <select value={pauseReason} onChange={(e) => setPauseReason(e.target.value)} className="input-field">
+                        {PAUSE_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                      </select>
+                      {pauseMutation.isError && (
+                        <p className="text-xs text-red-700">{pauseMutation.error instanceof Error ? pauseMutation.error.message : 'Failed to pause'}</p>
+                      )}
+                      <div className="flex gap-2">
+                        <button onClick={() => pauseMutation.mutate()} disabled={pauseMutation.isPending} className="btn-primary flex-1 py-3 font-semibold rounded-lg">
+                          {pauseMutation.isPending ? 'Pausing…' : 'Confirm Pause'}
+                        </button>
+                        <button onClick={() => setShowPause(false)} className="btn-secondary py-3 px-4 rounded-lg">Cancel</button>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <button onClick={() => setShowPause(true)} className="btn-secondary w-full py-3 text-base font-semibold rounded-lg">
-                    Pause Work
+                  ) : (
+                    <button onClick={() => setShowPause(true)} className="btn-secondary w-full py-3 text-base font-semibold rounded-lg">
+                      Pause Work
+                    </button>
+                  )}
+
+                  {readyForQcMutation.isError && (
+                    <p className="text-xs text-red-600 text-center">{readyForQcMutation.error instanceof Error ? readyForQcMutation.error.message : 'Failed to send to QC'}</p>
+                  )}
+                  <button
+                    onClick={() => readyForQcMutation.mutate()}
+                    disabled={readyForQcMutation.isPending}
+                    className="btn-success w-full py-4 text-lg font-bold rounded-lg active:scale-[0.98] transition-transform"
+                  >
+                    {readyForQcMutation.isPending ? 'Sending…' : 'READY FOR QC'}
                   </button>
-                )
-              )}
-
-              {/* Complete button - large touch target (hidden while paused) */}
-              {activeOrder?.status !== 'PAUSED' && (
-                <button
-                  onClick={() => completeMutation.mutate(currentJob.queueTicketId)}
-                  disabled={completeMutation.isPending}
-                  className="btn-success w-full py-4 text-lg font-bold rounded-lg active:scale-[0.98] transition-transform"
-                >
-                  {completeMutation.isPending ? 'Completing...' : 'MARK WORK COMPLETE'}
-                </button>
-              )}
-
-              {completeMutation.isSuccess && (
-                <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 text-center font-medium">
-                  Work marked as complete!
-                </div>
-              )}
-              {completeMutation.isError && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 text-center">
-                  Completion recorded (endpoint may need configuration).
+                  <p className="text-[11px] text-slate-400 text-center">Marks your work finished and notifies the manager for a quality check.</p>
                 </div>
               )}
             </div>

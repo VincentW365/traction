@@ -126,6 +126,23 @@ export class ServiceOrdersController {
     return this.serviceOrdersService.assignAllForVisit(serviceVisitId, dto.technicianId, user.sub);
   }
 
+  @Get(':id/work-timing')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: 'Work timing for a live job (start, completion, paused ms)' })
+  async workTiming(@Param('id', ParseUUIDPipe) id: string) {
+    return this.serviceOrdersService.getWorkTiming(id);
+  }
+
+  @Post(':id/ready-for-qc')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: 'Assigned technician finishes work and sends the order to QC' })
+  async readyForQc(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.readyForQc(id, user.sub);
+  }
+
   @Post(':id/status')
   @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
   @ApiOperation({ summary: 'Change service order status' })

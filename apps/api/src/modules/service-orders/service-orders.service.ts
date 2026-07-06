@@ -1003,6 +1003,73 @@ export class ServiceOrdersService {
     return updated;
   }
 
+  /**
+   * CR-2026-073 — timing for a technician's live job: start time, completion (if any),
+   * and total paused milliseconds (+ the open pause start if currently paused) so the
+   * client can show elapsed time AND actual working time (elapsed − paused).
+   */
+  async getWorkTiming(orderId: string) {
+    const order = await this.prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+      select: { startedAt: true, completedAt: true, status: true },
+    });
+    if (!order) throw new NotFoundException(`ServiceOrder ${orderId} not found`);
+
+    const pauses = await this.prisma.serviceOrderPause.findMany({
+      where: { serviceOrderId: orderId },
+      select: { startedAt: true, endedAt: true },
+    });
+
+    let pausedMs = 0;
+    let openPauseStartedAt: Date | null = null;
+    for (const p of pauses) {
+      if (p.endedAt) pausedMs += p.endedAt.getTime() - p.startedAt.getTime();
+      else openPauseStartedAt = p.startedAt;
+    }
+
+    return {
+      startedAt: order.startedAt,
+      completedAt: order.completedAt,
+      status: order.status,
+      pausedMs,
+      openPauseStartedAt,
+    };
+  }
+
+  /**
+   * CR-2026-073 — the assigned technician finishes their work and hands it to QC.
+   * Verifies the caller is a technician assigned to this order, transitions
+   * IN_PROGRESS → QC (via changeStatus, which stamps completedAt + syncs the visit +
+   * recomputes), and ends the technician's active assignment(s) on the order. The
+   * resulting QC state surfaces to managers as a "ready for QC" alert (CR-2026-074).
+   */
+  async readyForQc(orderId: string, userId: string) {
+    const order = await this.findById(orderId);
+    if (order.status !== 'IN_PROGRESS') {
+      throw new BadRequestException(
+        `Cannot send to QC from status ${order.status} — resume the work first if paused.`,
+      );
+    }
+
+    const tech = await this.prisma.technician.findUnique({
+      where: { userAccountId: userId },
+    });
+    const isAssignedTech =
+      !!tech && order.assignments.some((a) => a.technicianId === tech.id && a.endedAt === null);
+    if (!isAssignedTech) {
+      throw new ForbiddenException('Only the assigned technician can send this work to QC.');
+    }
+
+    await this.changeStatus(orderId, { toStatus: 'QC' as any }, userId);
+    await this.prisma.technicianAssignment.updateMany({
+      where: { serviceOrderId: orderId, endedAt: null },
+      data: { endedAt: new Date(), status: 'COMPLETED' },
+    });
+
+    this.logger.log(`ServiceOrder ${orderId} sent to QC by technician (${userId})`);
+    return this.findById(orderId);
+  }
+
   // ---------------------------------------------------------------------------
   // PRIVATE HELPERS
   // ---------------------------------------------------------------------------
