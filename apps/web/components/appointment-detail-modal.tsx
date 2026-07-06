@@ -36,7 +36,8 @@ interface CheckInResult {
   customerStatusUrl?: string | null;
 }
 
-const CHECKIN_STATUSES = ['CONFIRMED', 'DRAFT'];
+// CR-2026-070 — a RESCHEDULED appointment is still active and must be checkable-in.
+const CHECKIN_STATUSES = ['CONFIRMED', 'DRAFT', 'RESCHEDULED'];
 const RESCHEDULE_STATUSES = ['DRAFT', 'CONFIRMED', 'RESCHEDULED'];
 const isCancellable = (s: string) => !['CANCELLED', 'COMPLETED'].includes(s);
 const WEIGHT_CLASSES = ['LIGHT', 'STANDARD', 'HEAVY'];

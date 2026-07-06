@@ -9,6 +9,11 @@ A rescheduled appointment has status `RESCHEDULED`, but check-in was hard-limite
 - backend guard `check-in.service.ts` (`['CONFIRMED','DRAFT']`),
 - the check-in page list filter and the per-row "Check In" button gate (`=== 'CONFIRMED'`),
 - the customer-detail "Check In Today's Appointment" shortcut (queried `status=CONFIRMED`).
+- **(follow-up)** the **Appointment Detail modal** (opened by clicking an appointment on the
+  Appointments page or the Schedule) gated its inline "Check In" button on `['CONFIRMED','DRAFT']`, so
+  a rescheduled appointment showed only **Reschedule** + **Cancel** — this was the actual entry point
+  the user hit. Fixed by adding `RESCHEDULED` to `CHECKIN_STATUSES` in
+  `apps/web/components/appointment-detail-modal.tsx`.
 
 ## B. Change
 Include `RESCHEDULED` (an active, upcoming appointment) everywhere check-in eligibility is decided:
