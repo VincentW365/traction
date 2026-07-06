@@ -14,7 +14,7 @@ export interface DashboardStats {
 }
 
 export interface DashboardAlert {
-  type: 'OVERDUE_JOB' | 'BLOCKED_PARTS' | 'ABSENT_TECH' | 'INTEGRATION_ERROR';
+  type: 'OVERDUE_JOB' | 'BLOCKED_PARTS' | 'ABSENT_TECH' | 'INTEGRATION_ERROR' | 'READY_FOR_QC';
   severity: 'warning' | 'critical';
   title: string;
   detail: string;
@@ -153,6 +153,36 @@ export class ManagerDashboardService {
         type: 'OVERDUE_JOB',
         severity: elapsed > 240 ? 'critical' : 'warning',
         title: `Job overdue (${elapsed} min)`,
+        detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber}`,
+        entityId: order.id,
+      });
+    }
+
+    // CR-2026-074 — jobs a technician finished and handed to QC (order status QC).
+    const qcOrders = await this.prisma.serviceOrder.findMany({
+      where: {
+        serviceVisit: { siteId, ...serviceVisitIsLive() },
+        status: 'QC',
+      },
+      include: {
+        serviceVisit: {
+          select: {
+            customer: { select: { firstName: true, lastName: true } },
+            vehicle: { select: { plateNumber: true } },
+            queueTicket: { select: { ticketNumber: true } },
+          },
+        },
+      },
+      orderBy: { completedAt: 'asc' },
+      take: 10,
+    });
+
+    for (const order of qcOrders) {
+      const sv = order.serviceVisit;
+      alerts.push({
+        type: 'READY_FOR_QC',
+        severity: 'warning',
+        title: `Ready for QC${sv.queueTicket?.ticketNumber ? ` — ${sv.queueTicket.ticketNumber}` : ''}`,
         detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber}`,
         entityId: order.id,
       });
