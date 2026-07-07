@@ -275,9 +275,15 @@ export class ScheduleService {
       status: sv.status,
     }));
 
-    // Stats
+    // Stats — CR-2026-076: count only active appointments (exclude CANCELLED/MISSED),
+    // matching the calendar which hides those. A cancelled appointment must not keep
+    // inflating the summary banner.
     const todayAppointments = await this.prisma.appointment.count({
-      where: { siteId, scheduledStartAt: { gte: dayStart, lte: dayEnd } },
+      where: {
+        siteId,
+        scheduledStartAt: { gte: dayStart, lte: dayEnd },
+        status: { notIn: ['CANCELLED', 'MISSED'] },
+      },
     });
     // Count all walk-ins that checked in today (matches the calendar), not just
     // those still queued.
@@ -342,7 +348,12 @@ export class ScheduleService {
 
       const [appointmentCount, completedCount, blockedCount] = await Promise.all([
         this.prisma.appointment.count({
-          where: { siteId, scheduledStartAt: { gte: dayStart, lte: dayEnd } },
+          // CR-2026-076 — active appointments only (exclude CANCELLED/MISSED).
+          where: {
+            siteId,
+            scheduledStartAt: { gte: dayStart, lte: dayEnd },
+            status: { notIn: ['CANCELLED', 'MISSED'] },
+          },
         }),
         this.prisma.serviceVisit.count({
           // CR-2026-006: always exclude HISTORICAL_IMPORT (recent import updatedAt

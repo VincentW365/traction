@@ -41,4 +41,13 @@ describe('ScheduleService is always-live (CR-2026-006)', () => {
       expect(call[0].where.sourceType).toEqual(liveVisit.sourceType);
     }
   });
+
+  it('CR-2026-076: appointment counts exclude CANCELLED/MISSED (day + week)', async () => {
+    await h.service.getDaySchedule('site-1', '2026-06-09');
+    await h.service.getWeekSchedule('site-1', '2026-06-07');
+    expect(h.prisma.appointment.count).toHaveBeenCalled();
+    for (const call of h.prisma.appointment.count.mock.calls) {
+      expect(call[0].where.status).toEqual({ notIn: ['CANCELLED', 'MISSED'] });
+    }
+  });
 });
