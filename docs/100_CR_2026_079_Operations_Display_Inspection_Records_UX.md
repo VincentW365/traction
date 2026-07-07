@@ -215,5 +215,50 @@ Owner-approved; shipped web-first with one additive backend field.
 - **Files:** `apps/api/src/modules/queue/queue.service.ts`, `apps/web/app/display/[token]/page.tsx`,
   this doc. Committed as `CR-2026-079`, annotated tag, pushed.
 
-Phases 2 (CR-2026-080 Dispatch) and 3 (CR-2026-081 Inspections) remain **not started** — each returns for
-separate approval before implementation.
+Phase 3 (CR-2026-081 Inspections) remains **not started** — it returns for separate approval before
+implementation.
+
+---
+
+## Implementation record — Phase 2 (CR-2026-080: Dispatch Board resource-management) — **Implemented**
+Owner-approved. Read-model + UI + existing actions only; no auto-assignment, no scheduling/ranking/ETA
+change, no schema change.
+- **Backend — new read-model** `GET /resources/overview?siteId=` (`QUEUE_VIEW`), method
+  `ResourcesService.getDispatchOverview`. A single read-only call that **bridges the two resource systems
+  the platform grew** — System A (`WorkResource`/`ResourceOccupancy`, the physical bay board) and System B
+  (`ServiceOrder`/`TechnicianAssignment`, job execution) — which share only the `ServiceVisit`. It joins
+  them read-side (no writes, no populating `occupancy.technicianId`) and returns, in one payload:
+  - `resources[]` — enriched bay cards: **assigned technician** (preferred from the System-B primary
+    assignment, falling back to `occupancy.technicianId` via a site-tech name map), **service description**,
+    **parts-blocked** flag, and an **aging** flag (elapsed > 2h **or** past `promisedCompletionAt` — reuses
+    the manager-dashboard threshold, no new ETA math). Honours `showOnDispatchBoard`; includes all
+    categories (POWER_WASH/EXTERNAL no longer dropped).
+  - `technicianLoad[]` — every active tech with **open-assignment count**, **current job**, **skills**, and
+    a derived **state** (BUSY / ASSIGNED / IDLE / ABSENT). Open assignments use a **vocab-agnostic**
+    predicate (`endedAt: null` + non-terminal status) that reconciles the inconsistent
+    `ASSIGNED/ACTIVE/IN_PROGRESS` writes across the codebase.
+  - `needsDispatch[]` — checked-in WAITING/PENDING_RANK tickets awaiting a bay, with service description +
+    parts readiness + wait time.
+  - `blocked[]` — unified & deduped by visit: `WAITING_PARTS`/`PAUSED`/`WAITING_CUSTOMER` orders **and**
+    BLOCKED tickets.
+  - `readyForQc[]` + `overdue[]` — reuse the manager-alerts logic (QC orders; in-flight > 2h).
+  - `summary` — counts across all sections. Live-scope filtered (`serviceVisitIsLive()`), excluding
+    historical/test rows exactly like the manager dashboard.
+- **UI** `app/(dashboard)/dispatch/page.tsx` — rebuilt from a flat resource grid into a **panelized ops
+  console**: summary chips (Needs Dispatch · In Service · Blocked · Ready-QC · Overdue · Techs idle/busy);
+  a **search + resource-category filter** bar; panels for **Needs Dispatch**, **Technician Load**,
+  **Bay & Resource View** (enriched cards with tech/service/parts + an aging highlight), **Blocked**,
+  **Ready for QC**, and **Overdue**. Actions are **existing endpoints only** — Call-Next
+  (`/queue/call-next`), Release (`/resources/:id/release`), up/down toggle
+  (`/resources/:id/operational-status`), and **deep links** to the existing ticket-detail page
+  (`/queue/:queueTicketId`) where assignment already lives (recommend-then-confirm). **No inline
+  auto-assign** — that (surfacing the recommender inline) stays Phase 4.
+- **Verification:** `@bsop/api` + `@bsop/web` `tsc --noEmit` clean; **9** new read-model unit tests
+  (showOnDispatchBoard filter, tech bridge, aging, parts-blocked, tech load/state, needs-dispatch, blocked
+  dedup, QC/overdue, occupancy fallback); full API suite **577/577**; web **74/74** (route-smoke incl.).
+- **Files:** `resources.service.ts`, `resources.controller.ts`,
+  `resources/__tests__/dispatch-overview.spec.ts`, `app/(dashboard)/dispatch/page.tsx`, this doc.
+  Committed as `CR-2026-080`, annotated tag, pushed.
+
+Phase 3 (CR-2026-081 Inspections) remains **not started** — it returns for separate approval before
+implementation.

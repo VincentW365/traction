@@ -1,20 +1,35 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
+import { useMemo, useState } from 'react';
 import { api } from '../../../lib/api-client';
 import { useSiteId } from '../../../hooks/use-site';
 import { useAuth } from '../../../hooks/use-auth';
-import { useState } from 'react';
 import { PickupNotificationPanel } from '../../../components/pickup-notification-panel';
 import { PageHeader } from '../../../components/ui/page-header';
-import { EmptyState } from '../../../components/ui/empty-state';
 import { LoadingState } from '../../../components/ui/loading-state';
-import { StatCard } from '../../../components/ui/stat-card';
 
-interface ResourceBoard {
-  siteId: string;
-  generatedAt: string;
-  resources: ResourceItem[];
+/* ---------- Read-model types (mirror GET /resources/overview, CR-2026-080) ---------- */
+
+interface CurrentJob {
+  serviceVisitId: string;
+  serviceOrderId: string | null;
+  queueTicketId: string | null;
+  ticketNumber: string | null;
+  customerName: string;
+  vehiclePlate: string;
+  vehicleDescription: string;
+  technicianId: string | null;
+  technicianName: string | null;
+  serviceDescription: string | null;
+  orderStatus: string | null;
+  partsBlocked: boolean;
+  startedAt: string;
+  expectedEndAt: string | null;
+  promisedCompletionAt: string | null;
+  elapsedMinutes: number | null;
+  aging: boolean;
 }
 
 interface ResourceItem {
@@ -22,23 +37,13 @@ interface ResourceItem {
   code: string;
   name: string;
   resourceCategory: string;
-  maxVehicleWeight: string | null;
   liftType: string | null;
   hasAlignment: boolean;
   hasDiagnostics: boolean;
-  requiresMechanic: boolean;
   isOperational: boolean;
   operationalReason: string | null;
   status: string;
-  currentJob: {
-    serviceVisitId: string;
-    ticketNumber: string | null;
-    customerName: string;
-    vehiclePlate: string;
-    vehicleDescription: string;
-    startedAt: string;
-    expectedEndAt: string | null;
-  } | null;
+  currentJob: CurrentJob | null;
   nextReservation: {
     appointmentId: string;
     customerName: string;
@@ -47,235 +52,556 @@ interface ResourceItem {
   } | null;
 }
 
+interface TechLoad {
+  technicianId: string;
+  employeeCode: string;
+  fullName: string;
+  skills: string[];
+  openAssignments: number;
+  state: 'ABSENT' | 'BUSY' | 'ASSIGNED' | 'IDLE';
+  shiftStatus: string;
+  shift: { start: string; end: string } | null;
+  currentJob: {
+    serviceOrderId: string;
+    orderStatus: string;
+    ticketNumber: string | null;
+    vehiclePlate: string | null;
+    startedAt: string;
+    elapsedMinutes: number | null;
+  } | null;
+}
+
+interface NeedsDispatchItem {
+  queueTicketId: string;
+  serviceVisitId: string;
+  ticketNumber: string;
+  position: number | null;
+  displayStatus: string;
+  customerName: string;
+  vehiclePlate: string;
+  vehicleDescription: string;
+  serviceDescription: string;
+  partsReadiness: string;
+  blockedReason: string | null;
+  waitingMinutes: number | null;
+}
+
+interface BlockedItem {
+  serviceOrderId: string | null;
+  queueTicketId: string | null;
+  serviceVisitId: string;
+  ticketNumber: string | null;
+  customerName: string;
+  vehiclePlate: string;
+  reason: string;
+  status: string;
+  serviceDescription: string | null;
+  blockedMinutes: number | null;
+}
+
+interface QcItem {
+  serviceOrderId: string;
+  serviceVisitId: string;
+  queueTicketId: string | null;
+  ticketNumber: string | null;
+  customerName: string;
+  vehiclePlate: string;
+  waitingMinutes: number | null;
+}
+
+interface OverdueItem {
+  serviceOrderId: string;
+  serviceVisitId: string;
+  queueTicketId: string | null;
+  ticketNumber: string | null;
+  customerName: string;
+  vehiclePlate: string;
+  orderStatus: string;
+  elapsedMinutes: number | null;
+}
+
+interface DispatchOverview {
+  siteId: string;
+  generatedAt: string;
+  summary: {
+    resourcesTotal: number;
+    available: number;
+    occupied: number;
+    reserved: number;
+    down: number;
+    techniciansActive: number;
+    techniciansBusy: number;
+    techniciansIdle: number;
+    techniciansAbsent: number;
+    needsDispatch: number;
+    blocked: number;
+    readyForQc: number;
+    overdue: number;
+  };
+  resources: ResourceItem[];
+  technicianLoad: TechLoad[];
+  needsDispatch: NeedsDispatchItem[];
+  blocked: BlockedItem[];
+  readyForQc: QcItem[];
+  overdue: OverdueItem[];
+}
+
 /* ---------- Helpers ---------- */
 
-function elapsedMinutes(startedAt: string): number {
-  return Math.round((Date.now() - new Date(startedAt).getTime()) / 60000);
+function fmtMins(m: number | null | undefined): string {
+  if (m == null) return '—';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return mm ? `${h}h ${mm}m` : `${h}h`;
 }
 
-function borderColor(status: string): string {
-  if (status === 'AVAILABLE') return 'border-l-emerald-500';
-  if (status === 'OCCUPIED') return 'border-l-amber-500';
-  if (status === 'RESERVED') return 'border-l-blue-500';
-  return 'border-l-slate-300';
+function partsLabel(readiness: string): { label: string; className: string } | null {
+  if (readiness === 'REQUIRED_NOT_READY') return { label: 'Parts not ready', className: 'bg-red-100 text-red-700' };
+  if (readiness === 'REQUIRED_READY') return { label: 'Parts ready', className: 'bg-emerald-100 text-emerald-700' };
+  return null;
 }
 
-function statusDot(status: string): { color: string; label: string } {
-  if (status === 'AVAILABLE') return { color: 'bg-emerald-500', label: 'Available' };
-  if (status === 'OCCUPIED') return { color: 'bg-amber-500', label: 'Occupied' };
-  if (status === 'RESERVED') return { color: 'bg-blue-500', label: 'Reserved' };
-  return { color: 'bg-slate-400', label: status };
+function matches(q: string, ...fields: (string | null | undefined)[]): boolean {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  return fields.some((f) => (f ?? '').toLowerCase().includes(needle));
 }
 
 function categoryLabel(cat: string): string {
-  if (cat === 'BAY') return 'Service Bays';
-  if (cat === 'OVERFLOW') return 'Overflow Area';
-  if (cat === 'LIGHT_SLOT') return 'Light Task Slots';
-  return cat;
+  const map: Record<string, string> = {
+    BAY: 'Service Bays',
+    OVERFLOW: 'Overflow',
+    LIGHT_SLOT: 'Light Task Slots',
+    POWER_WASH: 'Power Wash',
+    EXTERNAL: 'External',
+  };
+  return map[cat] ?? cat;
 }
 
-function categoryIcon(cat: string): React.ReactNode {
-  if (cat === 'BAY') {
-    return (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-      </svg>
-    );
-  }
-  if (cat === 'OVERFLOW') {
-    return (
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-    </svg>
-  );
-}
-
-/* ---------- Component ---------- */
+/* ---------- Page ---------- */
 
 export default function DispatchBoardPage() {
   const siteId = useSiteId();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const canToggleOperational = ['ADMIN', 'SERVICE_ADVISOR'].includes(user?.roleCode ?? '');
 
-  const { data, isLoading, isError } = useQuery<ResourceBoard>({
-    queryKey: ['dispatch-board', siteId],
-    queryFn: () => api.get(`/resources/board?siteId=${siteId}`),
+  const [q, setQ] = useState('');
+  const [category, setCategory] = useState('ALL');
+
+  const { data, isLoading, isError } = useQuery<DispatchOverview>({
+    queryKey: ['dispatch-overview', siteId],
+    queryFn: () => api.get(`/resources/overview?siteId=${siteId}`),
     refetchInterval: 5000,
   });
 
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['dispatch-overview'] });
+
   const callNextMutation = useMutation({
-    mutationFn: () => api.post('/queue/call-next', { siteId: siteId }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dispatch-board'] }),
+    mutationFn: () => api.post('/queue/call-next', { siteId }),
+    onSuccess: invalidate,
   });
-
-  const { user } = useAuth();
-  // CR-2026-065 — Manager + Service Advisor can mark a resource down/up from dispatch.
-  const canToggleOperational = ['ADMIN', 'SERVICE_ADVISOR'].includes(user?.roleCode ?? '');
-
+  const releaseMutation = useMutation({
+    mutationFn: (resourceId: string) => api.post(`/resources/${resourceId}/release`),
+    onSuccess: invalidate,
+  });
   const setOperationalMutation = useMutation({
     mutationFn: (vars: { resourceId: string; isOperational: boolean; reason?: string }) =>
       api.post(`/resources/${vars.resourceId}/operational-status`, {
         isOperational: vars.isOperational,
         reason: vars.reason,
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dispatch-board'] }),
+    onSuccess: invalidate,
   });
 
-  const releaseMutation = useMutation({
-    mutationFn: (resourceId: string) => api.post(`/resources/${resourceId}/release`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dispatch-board'] }),
-  });
-
-  const readyQuery = useQuery<Array<{
-    serviceVisitId: string; ticketNumber: string; customerName: string;
-    customerPhone: string; customerEmail: string | null;
-    vehiclePlate: string; vehicleDescription: string;
-  }>>({
+  const readyQuery = useQuery<
+    Array<{
+      serviceVisitId: string;
+      ticketNumber: string;
+      customerName: string;
+      customerPhone: string;
+      customerEmail: string | null;
+      vehiclePlate: string;
+      vehicleDescription: string;
+    }>
+  >({
     queryKey: ['ready-for-pickup', siteId],
     queryFn: () => api.get(`/queue/ready-for-pickup?siteId=${siteId}`),
     refetchInterval: 10000,
   });
 
-  const resources = data?.resources ?? [];
-  const availableCount = resources.filter((r) => r.status === 'AVAILABLE').length;
-  const occupiedCount = resources.filter((r) => r.status === 'OCCUPIED').length;
-  const reservedCount = resources.filter((r) => r.status === 'RESERVED').length;
+  const s = data?.summary;
 
-  const bays = resources.filter((r) => r.resourceCategory === 'BAY');
-  const overflow = resources.filter((r) => r.resourceCategory === 'OVERFLOW');
-  const lightSlots = resources.filter((r) => r.resourceCategory === 'LIGHT_SLOT');
+  const categories = useMemo(() => {
+    const set = new Set((data?.resources ?? []).map((r) => r.resourceCategory));
+    return Array.from(set);
+  }, [data?.resources]);
 
-  const sections = [
-    { key: 'BAY', items: bays },
-    { key: 'OVERFLOW', items: overflow },
-    { key: 'LIGHT_SLOT', items: lightSlots },
-  ].filter((s) => s.items.length > 0);
+  // --- filtered slices ---
+  const resources = (data?.resources ?? []).filter(
+    (r) =>
+      (category === 'ALL' || r.resourceCategory === category) &&
+      matches(q, r.code, r.name, r.currentJob?.ticketNumber, r.currentJob?.customerName, r.currentJob?.vehiclePlate, r.currentJob?.technicianName),
+  );
+  const needsDispatch = (data?.needsDispatch ?? []).filter((n) =>
+    matches(q, n.ticketNumber, n.customerName, n.vehiclePlate, n.serviceDescription),
+  );
+  const technicianLoad = (data?.technicianLoad ?? []).filter((t) =>
+    matches(q, t.employeeCode, t.fullName, t.currentJob?.ticketNumber, t.currentJob?.vehiclePlate),
+  );
+  const blocked = (data?.blocked ?? []).filter((b) => matches(q, b.ticketNumber, b.customerName, b.vehiclePlate, b.reason));
+  const readyForQc = (data?.readyForQc ?? []).filter((r) => matches(q, r.ticketNumber, r.customerName, r.vehiclePlate));
+  const overdue = (data?.overdue ?? []).filter((o) => matches(q, o.ticketNumber, o.customerName, o.vehiclePlate));
 
   return (
     <div className="page-container">
       <PageHeader
         title="Dispatch Board"
-        subtitle="Resource allocation and bay management"
-        breadcrumbs={[
-          { label: 'Dashboard', href: '/' },
-          { label: 'Dispatch Board' },
-        ]}
+        subtitle="Live resource control — technicians, bays, blocked & QC work"
+        breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Dispatch Board' }]}
         actions={
           <button
             onClick={() => callNextMutation.mutate()}
             disabled={callNextMutation.isPending}
             className="btn-primary text-sm px-4 py-2 disabled:opacity-50"
           >
-            {callNextMutation.isPending ? 'Dispatching...' : 'Call Next'}
+            {callNextMutation.isPending ? 'Dispatching…' : 'Call Next'}
           </button>
         }
       />
 
-      {/* Call-next success toast */}
       {callNextMutation.isSuccess && (
         <div className="card border-l-4 border-l-emerald-500 bg-emerald-50/50 p-3 mb-5">
-          <p className="text-sm text-emerald-700 font-medium">
-            {(callNextMutation.data as any)?.message}
-          </p>
+          <p className="text-sm text-emerald-700 font-medium">{(callNextMutation.data as any)?.message}</p>
         </div>
       )}
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
-        <StatCard value={availableCount} label="Available" color="green" />
-        <StatCard value={occupiedCount} label="Occupied" color="amber" />
-        <StatCard value={reservedCount} label="Reserved" color="blue" />
+      {/* Summary chips */}
+      {s && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 mb-5">
+          <StatChip label="Needs Dispatch" value={s.needsDispatch} tone="blue" />
+          <StatChip label="In Service" value={s.occupied} tone="amber" />
+          <StatChip label="Blocked" value={s.blocked} tone="red" />
+          <StatChip label="Ready for QC" value={s.readyForQc} tone="violet" />
+          <StatChip label="Overdue" value={s.overdue} tone="rose" />
+          <StatChip label="Techs Idle / Busy" value={`${s.techniciansIdle} / ${s.techniciansBusy}`} tone="slate" />
+        </div>
+      )}
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center gap-2 mb-5">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search ticket, customer, plate, tech…"
+          className="input-field text-sm max-w-xs"
+        />
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className="input-field text-sm w-auto">
+          <option value="ALL">All resources</option>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {categoryLabel(c)}
+            </option>
+          ))}
+        </select>
+        {q && (
+          <button onClick={() => setQ('')} className="text-xs text-slate-400 hover:text-slate-600">
+            Clear
+          </button>
+        )}
       </div>
 
-      {/* Pickup notification panel */}
       <PickupNotificationPanel readyVisits={readyQuery.data ?? []} />
 
-      {/* Loading */}
-      {isLoading && <LoadingState message="Loading dispatch board..." />}
-
-      {/* Error */}
+      {isLoading && <LoadingState message="Loading dispatch board…" />}
       {isError && (
         <div className="card border-red-200 bg-red-50 p-5 text-center">
-          <p className="text-sm text-red-700 font-medium">Failed to load dispatch board. Retrying...</p>
+          <p className="text-sm text-red-700 font-medium">Failed to load dispatch board. Retrying…</p>
         </div>
       )}
 
-      {/* Empty */}
-      {data && resources.length === 0 && (
-        <EmptyState
-          title="No resources configured"
-          description="Add service bays and resources to get started."
-          icon={
-            <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-            </svg>
-          }
-        />
-      )}
+      {data && (
+        <div className="space-y-5">
+          {/* Row: Needs Dispatch + Technician Load */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+            <Panel title="Needs Dispatch" count={needsDispatch.length} accent="bg-blue-500" empty="Nothing waiting for a bay">
+              <div className="space-y-2">
+                {needsDispatch.map((n) => (
+                  <NeedsDispatchRow key={n.queueTicketId} item={n} />
+                ))}
+              </div>
+            </Panel>
 
-      {/* Resource sections */}
-      {sections.map((section) => (
-        <section key={section.key} className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="text-slate-400">{categoryIcon(section.key)}</div>
-            <h2 className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
-              {categoryLabel(section.key)}
-            </h2>
-            <span className="text-xs text-slate-400">({section.items.length})</span>
+            <Panel title="Technician Load" count={technicianLoad.length} accent="bg-slate-500" empty="No active technicians">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {technicianLoad.map((t) => (
+                  <TechCard key={t.technicianId} tech={t} />
+                ))}
+              </div>
+            </Panel>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {section.items.map((r) => (
-              <ResourceCard
-                key={r.resourceId}
-                resource={r}
-                onRelease={() => releaseMutation.mutate(r.resourceId)}
-                canToggleOperational={canToggleOperational}
-                busy={setOperationalMutation.isPending}
-                onSetOperational={(isOperational, reason) =>
-                  setOperationalMutation.mutate({ resourceId: r.resourceId, isOperational, reason })
-                }
-              />
-            ))}
+
+          {/* Bay / Resource view */}
+          <Panel title="Bay & Resource View" count={resources.length} accent="bg-amber-500" empty="No resources match">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+              {resources.map((r) => (
+                <ResourceCard
+                  key={r.resourceId}
+                  resource={r}
+                  canToggleOperational={canToggleOperational}
+                  busy={setOperationalMutation.isPending}
+                  onRelease={() => releaseMutation.mutate(r.resourceId)}
+                  onSetOperational={(isOperational, reason) =>
+                    setOperationalMutation.mutate({ resourceId: r.resourceId, isOperational, reason })
+                  }
+                />
+              ))}
+            </div>
+          </Panel>
+
+          {/* Row: Blocked + Ready/QC + Overdue */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <Panel title="Blocked" count={blocked.length} accent="bg-red-500" empty="Nothing blocked">
+              <div className="space-y-2">
+                {blocked.map((b, i) => (
+                  <AwarenessRow
+                    key={(b.serviceOrderId ?? b.queueTicketId ?? b.serviceVisitId) + i}
+                    ticketNumber={b.ticketNumber}
+                    customerName={b.customerName}
+                    vehiclePlate={b.vehiclePlate}
+                    badge={{ text: b.reason, className: 'bg-red-100 text-red-700' }}
+                    meta={b.serviceDescription ?? undefined}
+                    since={b.blockedMinutes}
+                    href={b.queueTicketId ? `/queue/${b.queueTicketId}` : undefined}
+                  />
+                ))}
+              </div>
+            </Panel>
+
+            <Panel title="Ready for QC" count={readyForQc.length} accent="bg-violet-500" empty="Nothing awaiting QC">
+              <div className="space-y-2">
+                {readyForQc.map((r) => (
+                  <AwarenessRow
+                    key={r.serviceOrderId}
+                    ticketNumber={r.ticketNumber}
+                    customerName={r.customerName}
+                    vehiclePlate={r.vehiclePlate}
+                    badge={{ text: 'Awaiting QC', className: 'bg-violet-100 text-violet-700' }}
+                    since={r.waitingMinutes}
+                    href={r.queueTicketId ? `/queue/${r.queueTicketId}` : undefined}
+                  />
+                ))}
+              </div>
+            </Panel>
+
+            <Panel title="Overdue" count={overdue.length} accent="bg-rose-500" empty="Nothing overdue">
+              <div className="space-y-2">
+                {overdue.map((o) => (
+                  <AwarenessRow
+                    key={o.serviceOrderId}
+                    ticketNumber={o.ticketNumber}
+                    customerName={o.customerName}
+                    vehiclePlate={o.vehiclePlate}
+                    badge={{ text: `${fmtMins(o.elapsedMinutes)} elapsed`, className: 'bg-rose-100 text-rose-700' }}
+                    href={o.queueTicketId ? `/queue/${o.queueTicketId}` : undefined}
+                  />
+                ))}
+              </div>
+            </Panel>
           </div>
-        </section>
-      ))}
+        </div>
+      )}
     </div>
   );
 }
 
-/* ---------- Resource Card ---------- */
+/* ---------- Sub-components ---------- */
+
+function StatChip({ label, value, tone }: { label: string; value: number | string; tone: string }) {
+  const tones: Record<string, string> = {
+    blue: 'border-l-blue-500',
+    amber: 'border-l-amber-500',
+    red: 'border-l-red-500',
+    violet: 'border-l-violet-500',
+    rose: 'border-l-rose-500',
+    slate: 'border-l-slate-400',
+  };
+  return (
+    <div className={`card border-l-4 ${tones[tone] ?? 'border-l-slate-400'} px-3 py-2`}>
+      <div className="text-lg font-bold text-slate-900 tabular-nums">{value}</div>
+      <div className="text-[11px] text-slate-500 uppercase tracking-wide">{label}</div>
+    </div>
+  );
+}
+
+function Panel({
+  title,
+  count,
+  accent,
+  empty,
+  children,
+}: {
+  title: string;
+  count: number;
+  accent: string;
+  empty: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="card overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${accent}`} />
+          <h2 className="text-sm font-semibold text-slate-700">{title}</h2>
+          <span className="text-xs text-slate-400">({count})</span>
+        </div>
+      </div>
+      <div className="p-3">
+        {count === 0 ? <p className="text-xs text-slate-400 text-center py-6">{empty}</p> : children}
+      </div>
+    </section>
+  );
+}
+
+function NeedsDispatchRow({ item }: { item: NeedsDispatchItem }) {
+  const parts = partsLabel(item.partsReadiness);
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-2.5">
+      <div className="text-center shrink-0 w-10">
+        <div className="text-lg font-bold text-slate-800 tabular-nums">{item.position ?? '–'}</div>
+        <div className="text-[10px] text-slate-400">pos</div>
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs font-bold text-blue-700">{item.ticketNumber}</span>
+          <span className="text-sm font-medium text-slate-800 truncate">{item.customerName}</span>
+        </div>
+        <div className="text-xs text-slate-500 truncate">{item.serviceDescription}</div>
+        <div className="flex items-center gap-2 mt-0.5">
+          <span className="text-[11px] text-slate-400">{item.vehiclePlate}</span>
+          <span className="text-[11px] text-slate-400">· waiting {fmtMins(item.waitingMinutes)}</span>
+          {parts && <span className={`text-[10px] px-1.5 py-0.5 rounded ${parts.className}`}>{parts.label}</span>}
+        </div>
+      </div>
+      <Link href={`/queue/${item.queueTicketId}`} className="btn-secondary text-xs px-3 py-1 shrink-0">
+        Assign
+      </Link>
+    </div>
+  );
+}
+
+function TechCard({ tech }: { tech: TechLoad }) {
+  const stateStyle: Record<string, string> = {
+    BUSY: 'bg-amber-100 text-amber-700',
+    ASSIGNED: 'bg-blue-100 text-blue-700',
+    IDLE: 'bg-emerald-100 text-emerald-700',
+    ABSENT: 'bg-slate-200 text-slate-500',
+  };
+  return (
+    <div className="rounded-lg border border-slate-100 bg-white p-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-slate-800 truncate">{tech.fullName}</span>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${stateStyle[tech.state]}`}>{tech.state}</span>
+      </div>
+      <div className="flex items-center gap-2 mt-1">
+        <span className="font-mono text-[11px] text-slate-400">{tech.employeeCode}</span>
+        <span className="text-[11px] text-slate-400">· {tech.openAssignments} open</span>
+      </div>
+      {tech.currentJob ? (
+        <div className="text-[11px] text-slate-500 mt-1 truncate">
+          {tech.currentJob.ticketNumber} · {tech.currentJob.vehiclePlate} · {fmtMins(tech.currentJob.elapsedMinutes)}
+        </div>
+      ) : (
+        <div className="text-[11px] text-slate-300 mt-1">No active job</div>
+      )}
+    </div>
+  );
+}
+
+function AwarenessRow({
+  ticketNumber,
+  customerName,
+  vehiclePlate,
+  badge,
+  meta,
+  since,
+  href,
+}: {
+  ticketNumber: string | null;
+  customerName: string;
+  vehiclePlate: string;
+  badge: { text: string; className: string };
+  meta?: string;
+  since?: number | null;
+  href?: string;
+}) {
+  const body = (
+    <div className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white p-2.5 hover:border-slate-200">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          {ticketNumber && <span className="font-mono text-xs font-bold text-slate-600">{ticketNumber}</span>}
+          <span className="text-sm font-medium text-slate-800 truncate">{customerName}</span>
+        </div>
+        <div className="text-[11px] text-slate-400 truncate">
+          {vehiclePlate}
+          {meta && ` · ${meta}`}
+          {since != null && ` · ${fmtMins(since)}`}
+        </div>
+      </div>
+      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${badge.className}`}>{badge.text}</span>
+    </div>
+  );
+  return href ? (
+    <Link href={href} className="block">
+      {body}
+    </Link>
+  ) : (
+    body
+  );
+}
+
+/* ---------- Enriched resource card ---------- */
 
 function ResourceCard({
   resource: r,
-  onRelease,
   canToggleOperational,
   busy,
+  onRelease,
   onSetOperational,
 }: {
   resource: ResourceItem;
-  onRelease: () => void;
   canToggleOperational: boolean;
   busy: boolean;
+  onRelease: () => void;
   onSetOperational: (isOperational: boolean, reason?: string) => void;
 }) {
   const [showDownForm, setShowDownForm] = useState(false);
   const [downReason, setDownReason] = useState('');
-  const dot = statusDot(r.status);
-  const capabilities: string[] = [];
-  if (r.liftType) capabilities.push(r.liftType);
-  if (r.hasAlignment) capabilities.push('Alignment');
-  if (r.hasDiagnostics) capabilities.push('Diagnostics');
-  if (r.maxVehicleWeight) capabilities.push(`Max ${r.maxVehicleWeight}`);
+
+  const border =
+    !r.isOperational
+      ? 'border-l-red-500'
+      : r.status === 'OCCUPIED'
+        ? r.currentJob?.aging
+          ? 'border-l-rose-600'
+          : 'border-l-amber-500'
+        : r.status === 'RESERVED'
+          ? 'border-l-blue-500'
+          : 'border-l-emerald-500';
+
+  const dot =
+    r.status === 'AVAILABLE'
+      ? { color: 'bg-emerald-500', label: 'Available' }
+      : r.status === 'OCCUPIED'
+        ? { color: 'bg-amber-500', label: 'Occupied' }
+        : r.status === 'RESERVED'
+          ? { color: 'bg-blue-500', label: 'Reserved' }
+          : { color: 'bg-slate-400', label: r.status };
 
   return (
-    <div className={`card border-l-4 ${borderColor(r.status)} overflow-hidden`}>
+    <div className={`card border-l-4 ${border} overflow-hidden`}>
       <div className="p-4">
-        {/* Header: code + status */}
         <div className="flex items-center justify-between mb-1">
           <span className="font-mono text-sm font-bold text-slate-900">{r.code}</span>
           <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
@@ -285,7 +611,6 @@ function ResourceCard({
         </div>
         <p className="text-xs text-slate-400 mb-2">{r.name}</p>
 
-        {/* CR-2026-065 — down-for-maintenance banner */}
         {!r.isOperational && (
           <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5">
             <p className="text-[11px] font-semibold text-red-700">● Down for maintenance</p>
@@ -293,72 +618,67 @@ function ResourceCard({
           </div>
         )}
 
-        {/* Capabilities */}
-        {capabilities.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-3">
-            {capabilities.map((cap) => (
-              <span
-                key={cap}
-                className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-500 uppercase tracking-wide"
-              >
-                {cap}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* Occupied: current job */}
         {r.status === 'OCCUPIED' && r.currentJob && (
           <div className="border-t border-slate-100 pt-3 mt-2 space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="font-mono text-xs font-semibold text-slate-700">{r.currentJob.ticketNumber}</span>
-              <span className="font-mono text-xs text-amber-600 font-medium">
-                {elapsedMinutes(r.currentJob.startedAt)} min
+              <span className="font-mono text-xs font-semibold text-slate-700">{r.currentJob.ticketNumber ?? '—'}</span>
+              <span className={`font-mono text-xs font-medium ${r.currentJob.aging ? 'text-rose-600' : 'text-amber-600'}`}>
+                {fmtMins(r.currentJob.elapsedMinutes)}
+                {r.currentJob.aging && ' ⚠'}
               </span>
             </div>
-            <p className="text-xs text-slate-600">{r.currentJob.customerName}</p>
-            <p className="text-xs text-slate-400">
-              {r.currentJob.vehiclePlate} &middot; {r.currentJob.vehicleDescription}
-            </p>
-            <button
-              onClick={onRelease}
-              className="btn-secondary text-xs px-3 py-1 mt-2 w-full"
-            >
-              Release Bay
-            </button>
+            <p className="text-xs text-slate-600 truncate">{r.currentJob.customerName}</p>
+            {r.currentJob.serviceDescription && (
+              <p className="text-xs text-slate-500 truncate">{r.currentJob.serviceDescription}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-1">
+              <span className="text-[11px] text-slate-400">{r.currentJob.vehiclePlate}</span>
+              {r.currentJob.technicianName && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                  {r.currentJob.technicianName}
+                </span>
+              )}
+              {r.currentJob.partsBlocked && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700">Parts not ready</span>
+              )}
+            </div>
+            <div className="flex gap-2 pt-1">
+              {r.currentJob.queueTicketId && (
+                <Link
+                  href={`/queue/${r.currentJob.queueTicketId}`}
+                  className="btn-secondary text-xs px-3 py-1 flex-1 text-center"
+                >
+                  Open
+                </Link>
+              )}
+              <button onClick={onRelease} className="btn-secondary text-xs px-3 py-1 flex-1">
+                Release Bay
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Reserved: next reservation */}
         {r.status === 'RESERVED' && r.nextReservation && (
           <div className="border-t border-slate-100 pt-3 mt-2 space-y-1">
-            <p className="text-xs text-slate-600 font-medium">
-              Reserved: {r.nextReservation.customerName}
-            </p>
+            <p className="text-xs text-slate-600 font-medium truncate">Reserved: {r.nextReservation.customerName}</p>
             <p className="font-mono text-xs text-slate-400">
               {new Date(r.nextReservation.reservedFrom).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              {' - '}
+              {' – '}
               {new Date(r.nextReservation.reservedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </p>
           </div>
         )}
 
-        {/* Available */}
         {r.isOperational && r.status === 'AVAILABLE' && (
           <div className="border-t border-slate-100 pt-3 mt-2">
             <p className="text-xs text-emerald-600 font-medium text-center">Ready for assignment</p>
           </div>
         )}
 
-        {/* CR-2026-065 — up/down toggle (Manager + Service Advisor) */}
         {canToggleOperational && (
           <div className="border-t border-slate-100 pt-2 mt-2">
             {!r.isOperational ? (
-              <button
-                onClick={() => onSetOperational(true)}
-                disabled={busy}
-                className="btn-secondary text-xs px-3 py-1 w-full"
-              >
+              <button onClick={() => onSetOperational(true)} disabled={busy} className="btn-secondary text-xs px-3 py-1 w-full">
                 {busy ? 'Saving…' : 'Back up'}
               </button>
             ) : showDownForm ? (
@@ -372,20 +692,23 @@ function ResourceCard({
                 />
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { onSetOperational(false, downReason.trim() || undefined); setShowDownForm(false); setDownReason(''); }}
+                    onClick={() => {
+                      onSetOperational(false, downReason.trim() || undefined);
+                      setShowDownForm(false);
+                      setDownReason('');
+                    }}
                     disabled={busy}
                     className="btn-danger text-xs px-3 py-1 flex-1"
                   >
                     {busy ? 'Saving…' : 'Confirm down'}
                   </button>
-                  <button onClick={() => { setShowDownForm(false); setDownReason(''); }} className="btn-secondary text-xs px-3 py-1">Cancel</button>
+                  <button onClick={() => { setShowDownForm(false); setDownReason(''); }} className="btn-secondary text-xs px-3 py-1">
+                    Cancel
+                  </button>
                 </div>
               </div>
             ) : (
-              <button
-                onClick={() => setShowDownForm(true)}
-                className="text-[11px] text-slate-400 hover:text-red-600 font-medium"
-              >
+              <button onClick={() => setShowDownForm(true)} className="text-[11px] text-slate-400 hover:text-red-600 font-medium">
                 Mark down for maintenance
               </button>
             )}

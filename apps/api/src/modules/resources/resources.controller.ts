@@ -39,6 +39,16 @@ export class ResourcesController {
     return this.resourcesService.getDispatchBoard(siteId);
   }
 
+  @Get('overview')
+  @RequirePermission(PERMISSIONS.QUEUE_VIEW)
+  @ApiOperation({
+    summary:
+      'Unified dispatch overview: resources, technician load, needs-dispatch, blocked, QC & overdue (CR-2026-080)',
+  })
+  async getDispatchOverview(@Query('siteId') siteId: string) {
+    return this.resourcesService.getDispatchOverview(siteId);
+  }
+
   @Post(':id/assign')
   @RequirePermission(PERMISSIONS.QUEUE_OVERRIDE)
   async assignToResource(
