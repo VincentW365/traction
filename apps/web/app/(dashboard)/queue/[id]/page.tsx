@@ -109,7 +109,9 @@ const ABANDON_ROLES = ['ADMIN', 'SERVICE_ADVISOR'];
 const ABANDONABLE_VISIT_STATUSES = ['CREATED', 'ARRIVED', 'CHECKED_IN', 'QUEUED', 'CALLED', 'IN_SERVICE', 'WAITING_PARTS'];
 
 const ORDER_ACTIONS: Record<string, Array<{ label: string; toStatus: string; style: string }>> = {
-  DRAFT: [{ label: 'Approve', toStatus: 'APPROVED', style: 'btn-primary' }],
+  // CR-2026-077 — DRAFT's Approve is rendered by the dedicated button below (POST /approve);
+  // leaving it here too produced a duplicate "Approve".
+  DRAFT: [],
   APPROVED: [],
   // CR-2026-069 — the assigned technician starts work from their own device, not the
   // front desk / manager. No "Start Work" here once ASSIGNED.
