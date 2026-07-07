@@ -67,7 +67,25 @@ interface ServiceHistoryResponse {
   offset: number;
 }
 
+// CR-2026-081: per-customer inspection archive.
+interface CustomerInspectionRow {
+  id: string;
+  inspectionNumber: string;
+  status: string;
+  inspectionDate: string;
+  signedOffAt: string | null;
+  findings: { immediate: number; future: number; total: number };
+  vehicle: { id: string; plateNumber: string } | null;
+}
+interface CustomerInspectionResponse {
+  items: CustomerInspectionRow[];
+  total: number;
+  take: number;
+  skip: number;
+}
+
 const HISTORY_PAGE = 10;
+const INSPECTIONS_PAGE = 5;
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '—';
@@ -106,6 +124,7 @@ export default function CustomerDetailPage() {
   const [editingLoyalty, setEditingLoyalty] = useState(false);
   const [loyaltyMemberInput, setLoyaltyMemberInput] = useState(false);
   const [historyOffset, setHistoryOffset] = useState(0);
+  const [inspOffset, setInspOffset] = useState(0);
 
   // Inline edit state for the identity, contact, and consent cards. Each card
   // edits a 1:1 subset of Customer fields via the shared PATCH /customers/:id.
@@ -151,6 +170,14 @@ export default function CustomerDetailPage() {
   const hasCheckinableToday = (checkinableQuery.data ?? []).some(
     (a) => a.customer?.id === customerId && ['CONFIRMED', 'DRAFT', 'RESCHEDULED'].includes(a.status),
   );
+
+  // CR-2026-081: per-customer inspection archive (paginated, newest first).
+  const inspectionsQuery = useQuery<CustomerInspectionResponse>({
+    queryKey: ['customer-inspections', customerId, siteId, inspOffset],
+    queryFn: () =>
+      api.get(`/inspections?siteId=${siteId}&customerId=${customerId}&take=${INSPECTIONS_PAGE}&skip=${inspOffset}`),
+    enabled: !!customerId && !!siteId,
+  });
 
   const addVehicleMutation = useMutation({
     mutationFn: () =>
@@ -619,6 +646,82 @@ export default function CustomerDetailPage() {
                   <button
                     onClick={() => setHistoryOffset(historyOffset + HISTORY_PAGE)}
                     disabled={historyOffset + HISTORY_PAGE >= historyQuery.data.total}
+                    className="btn-secondary text-xs disabled:opacity-50"
+                  >Next</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Inspections — CR-2026-081: per-customer inspection archive with date & findings */}
+      <div className="card mb-6">
+        <div className="card-header flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">Inspections</h2>
+          {inspectionsQuery.data && inspectionsQuery.data.total > 0 && (
+            <span className="text-xs text-slate-500">
+              {inspectionsQuery.data.skip + 1}–
+              {Math.min(inspectionsQuery.data.skip + inspectionsQuery.data.items.length, inspectionsQuery.data.total)} of{' '}
+              {inspectionsQuery.data.total}
+            </span>
+          )}
+        </div>
+        <div className="card-body">
+          {inspectionsQuery.isLoading ? (
+            <p className="text-sm text-slate-500">Loading inspections…</p>
+          ) : inspectionsQuery.isError ? (
+            <p className="text-sm text-red-600">Failed to load inspections.</p>
+          ) : !inspectionsQuery.data || inspectionsQuery.data.items.length === 0 ? (
+            <p className="text-sm text-slate-500">No inspections on record.</p>
+          ) : (
+            <>
+              <div className="table-container border-0 shadow-none">
+                <table className="w-full text-sm">
+                  <thead className="table-header">
+                    <tr><th>Date</th><th>Inspection #</th><th>Vehicle</th><th>Status</th><th>Findings</th><th>Sign-off</th></tr>
+                  </thead>
+                  <tbody>
+                    {inspectionsQuery.data.items.map((i) => (
+                      <tr key={i.id} className="table-row">
+                        <td className="text-slate-700 whitespace-nowrap">{fmtDate(i.inspectionDate)}</td>
+                        <td>
+                          <Link href={`/inspections/${i.id}`} className="font-mono text-xs font-semibold text-blue-600 hover:underline">
+                            {i.inspectionNumber}
+                          </Link>
+                        </td>
+                        <td className="text-slate-600 font-mono text-xs">{i.vehicle?.plateNumber ?? '—'}</td>
+                        <td><StatusBadge status={i.status} /></td>
+                        <td className="whitespace-nowrap">
+                          {i.findings.total === 0 ? (
+                            <span className="text-slate-400">—</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5">
+                              {i.findings.immediate > 0 && <span className="badge bg-red-50 text-red-700">{i.findings.immediate} immediate</span>}
+                              {i.findings.future > 0 && <span className="badge bg-amber-50 text-amber-700">{i.findings.future} future</span>}
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          {i.signedOffAt
+                            ? <span className="badge bg-emerald-50 text-emerald-700">Signed off</span>
+                            : <span className="text-xs text-slate-400">Pending</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {inspectionsQuery.data.total > INSPECTIONS_PAGE && (
+                <div className="flex items-center justify-between pt-3 mt-1 border-t border-slate-100">
+                  <button
+                    onClick={() => setInspOffset(Math.max(inspOffset - INSPECTIONS_PAGE, 0))}
+                    disabled={inspOffset === 0}
+                    className="btn-secondary text-xs disabled:opacity-50"
+                  >Previous</button>
+                  <button
+                    onClick={() => setInspOffset(inspOffset + INSPECTIONS_PAGE)}
+                    disabled={inspOffset + INSPECTIONS_PAGE >= inspectionsQuery.data.total}
                     className="btn-secondary text-xs disabled:opacity-50"
                   >Next</button>
                 </div>

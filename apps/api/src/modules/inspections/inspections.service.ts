@@ -127,6 +127,12 @@ export class InspectionsService {
     return this.findById(inspection.id, actor);
   }
 
+  /**
+   * CR-2026-034 (C-2) list; extended in CR-2026-081 with an active/history split,
+   * per-customer archive, date range, free-text search and a severity filter.
+   * Staff-only (INSPECTION_VIEW) and site-scoped — the `q` search over customer
+   * name / plate never reaches the public display.
+   */
   async list(query: InspectionQueryDto, actor: InspectionActor) {
     const take = query.take ?? 50;
     const skip = query.skip ?? 0;
@@ -136,22 +142,71 @@ export class InspectionsService {
     const where: Prisma.VehicleInspectionWhereInput = {};
     where.siteId = actor.role === 'ADMIN' ? query.siteId : actor.siteId!;
     if (query.serviceVisitId) where.serviceVisitId = query.serviceVisitId;
-    if (query.status) where.status = query.status;
+    if (query.customerId) where.customerId = query.customerId;
 
-    const [items, total] = await Promise.all([
+    // Explicit status wins; otherwise `active` narrows to the work-still-needed set
+    // (DRAFT/COMPLETED/SIGNED_OFF), dropping CLOSED/CANCELLED off the worklist.
+    if (query.status) {
+      where.status = query.status;
+    } else if (query.active) {
+      where.status = { in: ['DRAFT', 'COMPLETED', 'SIGNED_OFF'] };
+    }
+
+    // Date range on createdAt (always populated; the display date falls back the
+    // same way). dateTo is inclusive of the whole day.
+    if (query.dateFrom || query.dateTo) {
+      where.createdAt = {};
+      if (query.dateFrom) where.createdAt.gte = new Date(`${query.dateFrom}T00:00:00.000Z`);
+      if (query.dateTo) where.createdAt.lte = new Date(`${query.dateTo}T23:59:59.999Z`);
+    }
+
+    if (query.severity) {
+      where.recommendations = { some: { severity: query.severity } };
+    }
+
+    const q = query.q?.trim();
+    if (q) {
+      where.OR = [
+        { inspectionNumber: { contains: q, mode: 'insensitive' } },
+        { customer: { firstName: { contains: q, mode: 'insensitive' } } },
+        { customer: { lastName: { contains: q, mode: 'insensitive' } } },
+        { vehicle: { plateNumber: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [rows, total] = await Promise.all([
       this.prisma.vehicleInspection.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         take,
         skip,
         select: {
-          id: true, inspectionNumber: true, status: true, createdAt: true, signedOffAt: true,
+          id: true, inspectionNumber: true, status: true,
+          createdAt: true, completedAt: true, signedOffAt: true, closedAt: true, customerAckAt: true,
           customer: { select: { id: true, firstName: true, lastName: true } },
-          vehicle: { select: { id: true, plateNumber: true } },
+          vehicle: { select: { id: true, plateNumber: true, make: true, model: true } },
+          serviceVisit: { select: { id: true } },
+          recommendations: { select: { severity: true } },
         },
       }),
       this.prisma.vehicleInspection.count({ where }),
     ]);
+
+    const items = rows.map((r) => {
+      const { recommendations, ...rest } = r;
+      return {
+        ...rest,
+        // The operational "inspection date": when it actually happened, with a
+        // fallback chain for historical rows that predate completedAt/closedAt.
+        inspectionDate: r.completedAt ?? r.signedOffAt ?? r.createdAt,
+        findings: {
+          immediate: recommendations.filter((x) => x.severity === 'IMMEDIATE').length,
+          future: recommendations.filter((x) => x.severity === 'FUTURE').length,
+          total: recommendations.length,
+        },
+      };
+    });
+
     return { items, total, take, skip };
   }
 
@@ -233,7 +288,8 @@ export class InspectionsService {
     if (!existing) throw new NotFoundException('Inspection not found');
     this.assertSameSite(existing.siteId, actor);
 
-    const { count } = await this.prisma.vehicleInspection.updateMany({ where: { id, status: 'DRAFT' }, data: { status: 'COMPLETED' } });
+    // CR-2026-081 — stamp completedAt so history/records show an accurate date.
+    const { count } = await this.prisma.vehicleInspection.updateMany({ where: { id, status: 'DRAFT' }, data: { status: 'COMPLETED', completedAt: new Date() } });
     if (count === 0) throw new BadRequestException('Inspection is not DRAFT');
 
     await this.statusHistory.record({ entityType: ENTITY, entityId: id, fromStatus: 'DRAFT', toStatus: 'COMPLETED', changedByUserId: actor.sub });
@@ -335,7 +391,8 @@ export class InspectionsService {
     await this.prisma.$transaction(async (tx) => {
       const { count } = await tx.vehicleInspection.updateMany({
         where: { id, status: 'SIGNED_OFF' },
-        data: { status: 'CLOSED', customerAckByUserId: actor.sub, customerAckAt: new Date() },
+        // CR-2026-081 — stamp closedAt on the terminal transition.
+        data: { status: 'CLOSED', customerAckByUserId: actor.sub, customerAckAt: new Date(), closedAt: new Date() },
       });
       if (count === 0) throw new BadRequestException('Inspection must be SIGNED_OFF before customer sign-off');
       await tx.inspectionSignature.create({

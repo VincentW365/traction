@@ -486,6 +486,10 @@ model VehicleInspection {
   signedOffAt              DateTime?          @map("signed_off_at") @db.Timestamptz
   customerAckByUserId      String?            @map("customer_ack_by_user_id") @db.Uuid
   customerAckAt            DateTime?          @map("customer_ack_at") @db.Timestamptz
+  // CR-2026-081 — additive lifecycle timestamps for accurate records/date filtering.
+  // Nullable; historical rows stay null (reads fall back to signedOffAt/customerAckAt/createdAt).
+  completedAt              DateTime?          @map("completed_at") @db.Timestamptz
+  closedAt                 DateTime?          @map("closed_at") @db.Timestamptz
   createdByUserId          String?            @map("created_by_user_id") @db.Uuid
   createdAt                DateTime           @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                DateTime           @updatedAt @map("updated_at") @db.Timestamptz

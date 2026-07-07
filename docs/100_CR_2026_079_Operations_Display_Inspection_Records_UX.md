@@ -215,9 +215,6 @@ Owner-approved; shipped web-first with one additive backend field.
 - **Files:** `apps/api/src/modules/queue/queue.service.ts`, `apps/web/app/display/[token]/page.tsx`,
   this doc. Committed as `CR-2026-079`, annotated tag, pushed.
 
-Phase 3 (CR-2026-081 Inspections) remains **not started** — it returns for separate approval before
-implementation.
-
 ---
 
 ## Implementation record — Phase 2 (CR-2026-080: Dispatch Board resource-management) — **Implemented**
@@ -260,5 +257,43 @@ change, no schema change.
   `resources/__tests__/dispatch-overview.spec.ts`, `app/(dashboard)/dispatch/page.tsx`, this doc.
   Committed as `CR-2026-080`, annotated tag, pushed.
 
-Phase 3 (CR-2026-081 Inspections) remains **not started** — it returns for separate approval before
-implementation.
+---
+
+## Implementation record — Phase 3 (CR-2026-081: Inspection lifecycle + customer archive) — **Implemented**
+Owner-approved. The one schema change in this initiative — **additive & nullable only**.
+- **Schema (additive migration)** `20260707000000_cr_2026_081_inspection_lifecycle_dates` — adds nullable
+  `VehicleInspection.completedAt` + `closedAt` (both `TIMESTAMPTZ`). No backfill: historical rows stay
+  null and reads fall back to `signedOffAt`/`customerAckAt`/`createdAt`. No data changes.
+- **Backend — stamp the transitions:** `complete()` now stamps `completedAt` on DRAFT→COMPLETED;
+  `customerSignoff()` stamps `closedAt` on SIGNED_OFF→CLOSED (alongside the existing `customerAckAt`).
+- **Backend — extended `GET /inspections`** (DTO + service; staff-only `INSPECTION_VIEW`):
+  `customerId` (per-customer archive), `dateFrom`/`dateTo` (inclusive, on the created date), `q`
+  (free-text OR over inspection # / customer name / plate), `severity`, and an **`active`** shortcut
+  (DRAFT/COMPLETED/SIGNED_OFF; explicit `status` wins). Each row now returns an **`inspectionDate`** (the
+  fallback chain above) and a **`findings`** summary (`immediate`/`future`/`total`). Immutability is
+  unchanged — DRAFT-only edits + write-once signatures still lock completed inspections.
+- **UI — active/history split** (`inspections/page.tsx`): **Active** tab (default, `active=true`) shows
+  only work still needing action — completed/closed drop off automatically; **History** tab adds date
+  inputs with **Today / Yesterday / This week** presets, a status filter, and search. Both show the
+  findings summary and the real inspection date; export reflects the active view.
+- **UI — customer archive** (`customers/[id]/page.tsx`): a new paginated **Inspections** card beside
+  "Visit & Service History" — date, inspection #, vehicle, status, findings, and sign-off state, each
+  linking to the full record.
+- **Recordkeeping note:** post-close amendments remain a **future** audited-amendment pattern
+  (`INSPECTION_AMENDED` preserving the original), not built here. Save-as-PDF reuses the existing print
+  view.
+- **Verification:** `@bsop/api` + `@bsop/web` `tsc --noEmit` clean; **9** new unit tests (completedAt/
+  closedAt stamps; customerId/active/status-precedence/date-range/search/severity filters; findings +
+  fallback date); full API suite **586/586**; web **74/74**. **Ops note:** the migration must be applied
+  (`pnpm run db:migrate`) and the Prisma client regenerated on deploy — done automatically by
+  `pnpm run deploy`; it was not applied to a live DB from this session (a running dev server held the
+  engine binary; types regenerated fine for typecheck).
+- **Files:** `prisma/schema.prisma`, the migration SQL, `inspections.service.ts`,
+  `dto/inspection-query.dto.ts`, `inspections/__tests__/inspections-lifecycle.service.spec.ts`,
+  `app/(dashboard)/inspections/page.tsx`, `app/(dashboard)/customers/[id]/page.tsx`, this doc.
+  Committed as `CR-2026-081`, annotated tag, pushed.
+
+## Initiative complete
+All three phases are shipped: **CR-2026-079** (Customer Display), **CR-2026-080** (Dispatch Board),
+**CR-2026-081** (Inspection records). Phase 4 (optional enhancements) remains available for separate
+approval if wanted.
