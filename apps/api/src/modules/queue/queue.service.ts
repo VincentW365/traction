@@ -641,7 +641,7 @@ export class QueueService {
 
     const [site, tickets, occupancies, readyVisits] =
       await Promise.all([
-        this.prisma.site.findUnique({ where: { id: siteId }, select: { name: true } }),
+        this.prisma.site.findUnique({ where: { id: siteId }, select: { name: true, timezone: true } }),
         this.prisma.queueTicket.findMany({
           where: {
             serviceVisit: {
@@ -705,6 +705,9 @@ export class QueueService {
     return {
       siteId,
       siteName: site?.name ?? 'Service Centre',
+      // Site-anchored so the public display's clock/date is correct on a lobby TV
+      // regardless of the device's own timezone (CR-2026-079). PII-free.
+      timezone: site?.timezone ?? 'America/Jamaica',
       generatedAt: now.toISOString(),
       totalInQueue: inQueue.length,
       inQueue,

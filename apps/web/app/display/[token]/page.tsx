@@ -23,7 +23,9 @@ function resolveSocketUrl(): string {
 interface DisplayBoard {
   siteId: string;
   siteName: string;
+  timezone: string; // site-anchored; drives the header clock/date (CR-2026-079)
   generatedAt: string;
+  totalInQueue: number;
   inQueue: { ticketNumber: string; position: number | null }[];
   inService: { ticketNumber: string; bay: string | null }[];
   ready: { ticketNumber: string }[];
@@ -37,6 +39,20 @@ function useClock() {
     return () => clearInterval(id);
   }, []);
   return now;
+}
+
+// Format a Date in the site's timezone, degrading gracefully if the TZ string
+// is unknown to the runtime (falls back to the browser's local zone).
+function formatInTz(
+  date: Date,
+  timeZone: string | undefined,
+  opts: Intl.DateTimeFormatOptions,
+): string {
+  try {
+    return date.toLocaleString([], timeZone ? { ...opts, timeZone } : opts);
+  } catch {
+    return date.toLocaleString([], opts);
+  }
 }
 
 export default function DisplayBoardPage() {
@@ -80,7 +96,7 @@ export default function DisplayBoardPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="flex items-center gap-4 text-slate-400">
           <div className="w-8 h-8 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin" />
           <span className="text-xl">Loading service board…</span>
@@ -92,7 +108,7 @@ export default function DisplayBoardPage() {
   if (error || !data) {
     const invalid = (error as Error)?.message === 'INVALID';
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-8">
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-8">
         <div className="text-center">
           <div className="text-2xl font-bold text-slate-200 mb-2">
             {invalid ? 'Display board unavailable' : 'Unable to load the board'}
@@ -107,114 +123,231 @@ export default function DisplayBoardPage() {
     );
   }
 
-  const updatedTime = clock
-    ? clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const timeStr = clock
+    ? formatInTz(clock, data.timezone, { hour: '2-digit', minute: '2-digit' })
     : '';
-  const queueRanked = data.inQueue.filter((i) => i.position != null).length;
+  const dateStr = clock
+    ? formatInTz(clock, data.timezone, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+      })
+    : '';
 
   return (
-    <div className="min-h-screen bg-slate-900 text-white flex flex-col">
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white flex flex-col">
+      {/* Faint automotive watermark — premium, not busy */}
+      <GearWatermark className="pointer-events-none absolute -right-24 -top-24 h-[42rem] w-[42rem] text-white/[0.02]" />
+      <GearWatermark className="pointer-events-none absolute -left-32 bottom-[-6rem] h-[30rem] w-[30rem] text-white/[0.015]" />
+
       {/* Header */}
-      <header className="flex items-center justify-between px-8 py-5 border-b border-slate-700/60 shrink-0">
-        <div className="flex items-center gap-4">
-          <img src="/brand-mark.png" alt="" className="h-9 w-auto object-contain" />
-          <div>
-            <div className="text-2xl font-bold tracking-tight">{data.siteName}</div>
-            <div className="text-sm text-slate-400">Service Status</div>
+      <header className="relative flex items-center justify-between gap-6 px-[clamp(1.5rem,3vw,3.5rem)] py-[clamp(1rem,1.8vw,2rem)] border-b border-white/10 shrink-0">
+        <div className="flex items-center gap-[clamp(0.75rem,1.4vw,1.5rem)] min-w-0">
+          <img
+            src="/brand-mark.png"
+            alt=""
+            className="h-[clamp(2.25rem,3.6vw,4rem)] w-auto object-contain shrink-0"
+          />
+          <div className="min-w-0">
+            <div className="text-[clamp(1.5rem,2.6vw,3rem)] font-bold tracking-tight leading-none truncate">
+              {data.siteName}
+            </div>
+            <div className="mt-1 text-[clamp(0.7rem,1.1vw,1.15rem)] font-semibold uppercase tracking-[0.25em] text-blue-300/80">
+              Live Service Queue
+            </div>
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-4xl font-bold tabular-nums">{updatedTime}</div>
-          <div className="flex items-center justify-end gap-2 text-xs text-slate-400 mt-1">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            Live
+        <div className="text-right shrink-0">
+          <div className="text-[clamp(2rem,3.6vw,4.25rem)] font-bold tabular-nums leading-none">
+            {timeStr}
+          </div>
+          <div className="mt-1.5 flex items-center justify-end gap-2.5 text-[clamp(0.7rem,1vw,1.1rem)] text-slate-400">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+            </span>
+            <span className="font-medium text-emerald-300">Live</span>
+            <span className="text-slate-600">·</span>
+            <span>{dateStr}</span>
           </div>
         </div>
       </header>
 
-      {/* Columns */}
-      <div className="flex-1 grid grid-cols-3 gap-px bg-slate-700/40 overflow-hidden">
-        <BoardColumn
+      {/* Lanes */}
+      <main className="relative flex-1 grid grid-cols-3 gap-[clamp(0.75rem,1.4vw,1.5rem)] p-[clamp(0.75rem,1.6vw,1.75rem)] overflow-hidden">
+        <Lane
           title="In Queue"
-          accent="text-blue-300"
+          subtitle="Waiting to be called"
           count={data.inQueue.length}
+          accent={ACCENTS.blue}
+          icon={<ClockIcon />}
           empty="No vehicles waiting"
         >
           {data.inQueue.map((item) => (
-            <Row key={item.ticketNumber} ticket={item.ticketNumber} accent="text-blue-300">
+            <TicketCard key={item.ticketNumber} ticket={item.ticketNumber} accent={ACCENTS.blue}>
               {item.position != null ? (
-                <div className="text-right">
-                  <div className="text-3xl font-bold text-slate-200 tabular-nums">#{item.position}</div>
-                  <div className="text-sm text-slate-500">of {queueRanked}</div>
+                <div className="text-right leading-none">
+                  <div className="text-[clamp(1.75rem,3vw,3.5rem)] font-bold tabular-nums text-slate-100">
+                    #{item.position}
+                  </div>
+                  <div className="mt-1 text-[clamp(0.75rem,1vw,1.1rem)] font-medium text-slate-400">
+                    of {data.totalInQueue}
+                  </div>
                 </div>
               ) : (
-                <div className="text-lg text-slate-500">Holding</div>
+                <div className="text-[clamp(1rem,1.4vw,1.5rem)] font-medium text-slate-500">Holding</div>
               )}
-            </Row>
+            </TicketCard>
           ))}
-        </BoardColumn>
+        </Lane>
 
-        <BoardColumn
+        <Lane
           title="In Service"
-          accent="text-amber-300"
+          subtitle="Being worked on now"
           count={data.inService.length}
+          accent={ACCENTS.amber}
+          icon={<WrenchIcon />}
           empty="No active jobs"
         >
           {data.inService.map((item) => (
-            <Row key={item.ticketNumber} ticket={item.ticketNumber} accent="text-amber-300">
-              <div className="text-2xl font-semibold text-amber-200">
-                {item.bay ?? 'Called'}
+            <TicketCard key={item.ticketNumber} ticket={item.ticketNumber} accent={ACCENTS.amber}>
+              <div className="text-right leading-none">
+                <div className="text-[clamp(1.1rem,1.8vw,2.1rem)] font-semibold text-amber-200">
+                  {item.bay ?? 'Called'}
+                </div>
+                <div className="mt-1 text-[clamp(0.7rem,0.95vw,1.05rem)] font-medium uppercase tracking-wider text-amber-400/70">
+                  {item.bay ? 'Service Bay' : 'Please proceed'}
+                </div>
               </div>
-            </Row>
+            </TicketCard>
           ))}
-        </BoardColumn>
+        </Lane>
 
-        <BoardColumn
-          title="Ready for Pickup"
-          accent="text-emerald-300"
+        <Lane
+          title="Ready"
+          subtitle="Ready for pickup"
           count={data.ready.length}
+          accent={ACCENTS.emerald}
+          icon={<CheckBadgeIcon />}
           empty="Nothing ready yet"
         >
           {data.ready.map((item) => (
-            <Row key={item.ticketNumber} ticket={item.ticketNumber} accent="text-emerald-300" highlight>
-              <svg className="w-9 h-9 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-              </svg>
-            </Row>
+            <TicketCard
+              key={item.ticketNumber}
+              ticket={item.ticketNumber}
+              accent={ACCENTS.emerald}
+              highlight
+            >
+              <span className="flex items-center gap-2.5 text-[clamp(0.9rem,1.3vw,1.5rem)] font-bold uppercase tracking-wider text-emerald-300">
+                <svg
+                  className="w-[clamp(1.75rem,2.6vw,2.75rem)] h-[clamp(1.75rem,2.6vw,2.75rem)] text-emerald-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+                Ready
+              </span>
+            </TicketCard>
           ))}
-        </BoardColumn>
-      </div>
+        </Lane>
+      </main>
 
       {/* Footer */}
-      <footer className="px-8 py-3 text-center text-sm text-slate-500 border-t border-slate-700/60 shrink-0">
-        Find your ticket number — given to you at check-in. Updates automatically.
+      <footer className="relative px-[clamp(1.5rem,3vw,3.5rem)] py-[clamp(0.6rem,1.1vw,1.25rem)] text-center border-t border-white/10 shrink-0">
+        <p className="text-[clamp(0.85rem,1.15vw,1.3rem)] font-medium text-slate-400">
+          Please listen for your <span className="text-slate-200">ticket number</span> — given to you at
+          check-in. This board updates automatically.
+        </p>
       </footer>
     </div>
   );
 }
 
-function BoardColumn({
+/* ------------------------------------------------------------------ */
+/* Presentation                                                        */
+/* ------------------------------------------------------------------ */
+
+type Accent = {
+  text: string;
+  strip: string;
+  iconBg: string;
+  countBg: string;
+  ring: string;
+};
+
+const ACCENTS = {
+  blue: {
+    text: 'text-blue-300',
+    strip: 'from-blue-400/70 to-blue-500/0',
+    iconBg: 'bg-blue-500/15 text-blue-300 ring-1 ring-blue-400/25',
+    countBg: 'bg-blue-500/15 text-blue-200',
+    ring: 'ring-white/5',
+  },
+  amber: {
+    text: 'text-amber-300',
+    strip: 'from-amber-400/70 to-amber-500/0',
+    iconBg: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/25',
+    countBg: 'bg-amber-500/15 text-amber-200',
+    ring: 'ring-white/5',
+  },
+  emerald: {
+    text: 'text-emerald-300',
+    strip: 'from-emerald-400/70 to-emerald-500/0',
+    iconBg: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/25',
+    countBg: 'bg-emerald-500/15 text-emerald-200',
+    ring: 'ring-emerald-500/20',
+  },
+} satisfies Record<string, Accent>;
+
+function Lane({
   title,
-  accent,
+  subtitle,
   count,
+  accent,
+  icon,
   empty,
   children,
 }: {
   title: string;
-  accent: string;
+  subtitle: string;
   count: number;
+  accent: Accent;
+  icon: ReactNode;
   empty: string;
   children: ReactNode;
 }) {
   return (
-    <section className="bg-slate-900 flex flex-col overflow-hidden">
-      <div className="px-6 py-4 flex items-baseline justify-between shrink-0">
-        <h2 className={`text-xl font-bold uppercase tracking-wider ${accent}`}>{title}</h2>
-        <span className="text-lg font-semibold text-slate-500 tabular-nums">{count}</span>
+    <section className="relative flex flex-col overflow-hidden rounded-2xl bg-slate-900/50 ring-1 ring-white/5 shadow-2xl shadow-black/40 backdrop-blur-sm">
+      {/* Accent strip */}
+      <div className={`h-1 w-full bg-gradient-to-r ${accent.strip}`} />
+
+      <div className="flex items-center gap-[clamp(0.6rem,1vw,1rem)] px-[clamp(1rem,1.6vw,1.75rem)] pt-[clamp(0.9rem,1.4vw,1.5rem)] pb-[clamp(0.75rem,1.1vw,1.25rem)]">
+        <span
+          className={`flex h-[clamp(2.25rem,3vw,3.25rem)] w-[clamp(2.25rem,3vw,3.25rem)] items-center justify-center rounded-xl ${accent.iconBg}`}
+        >
+          {icon}
+        </span>
+        <div className="flex-1 min-w-0">
+          <h2 className={`text-[clamp(1.15rem,1.9vw,2rem)] font-bold uppercase tracking-wider ${accent.text}`}>
+            {title}
+          </h2>
+          <p className="text-[clamp(0.7rem,0.95vw,1.05rem)] text-slate-500">{subtitle}</p>
+        </div>
+        <span
+          className={`rounded-lg px-[clamp(0.6rem,0.9vw,1rem)] py-[clamp(0.15rem,0.3vw,0.4rem)] text-[clamp(1.1rem,1.8vw,2rem)] font-bold tabular-nums ${accent.countBg}`}
+        >
+          {count}
+        </span>
       </div>
-      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
+
+      <div className="flex-1 overflow-y-auto px-[clamp(0.6rem,1vw,1.1rem)] pb-[clamp(0.6rem,1vw,1.1rem)] space-y-[clamp(0.5rem,0.8vw,0.85rem)]">
         {count === 0 ? (
-          <div className="h-full flex items-center justify-center text-slate-600 text-lg">{empty}</div>
+          <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-600">
+            <span className="opacity-40">{icon}</span>
+            <span className="text-[clamp(0.95rem,1.3vw,1.4rem)]">{empty}</span>
+          </div>
         ) : (
           children
         )}
@@ -223,25 +356,76 @@ function BoardColumn({
   );
 }
 
-function Row({
+function TicketCard({
   ticket,
   accent,
   children,
   highlight,
 }: {
   ticket: string;
-  accent: string;
+  accent: Accent;
   children: ReactNode;
   highlight?: boolean;
 }) {
   return (
     <div
-      className={`flex items-center justify-between rounded-xl px-5 py-4 ${
-        highlight ? 'bg-emerald-500/10 ring-1 ring-emerald-500/30' : 'bg-slate-800/70'
+      className={`flex items-center justify-between gap-3 rounded-xl px-[clamp(0.9rem,1.4vw,1.6rem)] py-[clamp(0.7rem,1.1vw,1.25rem)] ring-1 ${
+        highlight
+          ? 'bg-emerald-500/10 ring-emerald-500/30'
+          : `bg-slate-800/60 ${accent.ring}`
       }`}
     >
-      <div className={`text-4xl font-extrabold tabular-nums ${accent}`}>{ticket}</div>
+      <div className={`text-[clamp(2rem,3.4vw,4.25rem)] font-extrabold tabular-nums leading-none ${accent.text}`}>
+        {ticket}
+      </div>
       {children}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Icons (inline, currentColor)                                        */
+/* ------------------------------------------------------------------ */
+
+const ICON_CLASS = 'w-[clamp(1.35rem,1.9vw,2rem)] h-[clamp(1.35rem,1.9vw,2rem)]';
+
+function ClockIcon() {
+  return (
+    <svg className={ICON_CLASS} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5v4.75l3 1.75" />
+    </svg>
+  );
+}
+
+function WrenchIcon() {
+  return (
+    <svg className={ICON_CLASS} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M14.9 6.1a4 4 0 00-5.4 5.1L4 16.7 7.3 20l5.5-5.5a4 4 0 005.1-5.4l-2.6 2.6-2.4-.6-.6-2.4 2.6-2.6z"
+      />
+    </svg>
+  );
+}
+
+function CheckBadgeIcon() {
+  return (
+    <svg className={ICON_CLASS} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+      />
+    </svg>
+  );
+}
+
+function GearWatermark({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M19.4 13a7.8 7.8 0 000-2l2.1-1.6a.5.5 0 00.1-.6l-2-3.5a.5.5 0 00-.6-.2l-2.5 1a7.3 7.3 0 00-1.7-1l-.4-2.6a.5.5 0 00-.5-.4h-4a.5.5 0 00-.5.4l-.4 2.6a7.3 7.3 0 00-1.7 1l-2.5-1a.5.5 0 00-.6.2l-2 3.5a.5.5 0 00.1.6L4.6 11a7.8 7.8 0 000 2l-2.1 1.6a.5.5 0 00-.1.6l2 3.5a.5.5 0 00.6.2l2.5-1a7.3 7.3 0 001.7 1l.4 2.6a.5.5 0 00.5.4h4a.5.5 0 00.5-.4l.4-2.6a7.3 7.3 0 001.7-1l2.5 1a.5.5 0 00.6-.2l2-3.5a.5.5 0 00-.1-.6L19.4 13zM12 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z" />
+    </svg>
   );
 }
