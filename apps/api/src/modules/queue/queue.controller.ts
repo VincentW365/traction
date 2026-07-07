@@ -58,6 +58,16 @@ export class QueueBoardController {
   async getReadyForPickup(@Query('siteId') siteId: string) {
     return this.queueService.getReadyForPickup(siteId);
   }
+
+  @Post('pickup/:serviceVisitId')
+  @RequirePermission(PERMISSIONS.CHECKIN_PERFORM)
+  @ApiOperation({ summary: 'Mark a visit picked up — close it out and clear the queue (CR-2026-078)' })
+  async markPickedUp(
+    @Param('serviceVisitId', ParseUUIDPipe) serviceVisitId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.queueService.markPickedUp(serviceVisitId, user.sub);
+  }
 }
 
 @ApiTags('Queue Tickets')

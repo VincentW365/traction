@@ -477,6 +477,50 @@ export class QueueService {
     };
   }
 
+  /**
+   * CR-2026-078 — final "Picked Up" close-out. One click after the pickup notification:
+   * closes the visit, completes its ticket (clears the board), frees any bay, and
+   * recomputes. Idempotent; deliberately lightweight (payment/mileage capture stays on
+   * the full "Complete Visit" form for when it's needed).
+   */
+  async markPickedUp(serviceVisitId: string, userId: string) {
+    const visit = await this.prisma.serviceVisit.findUnique({
+      where: { id: serviceVisitId },
+      include: { queueTicket: true },
+    });
+    if (!visit) throw new NotFoundException(`ServiceVisit ${serviceVisitId} not found`);
+    if (visit.status === 'CLOSED') {
+      return { message: 'Visit already closed.', serviceVisitId };
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.serviceVisit.update({
+        where: { id: serviceVisitId },
+        data: { status: 'CLOSED' },
+      });
+      if (visit.queueTicket && !['COMPLETED', 'CANCELLED'].includes(visit.queueTicket.displayStatus)) {
+        await tx.queueTicket.update({
+          where: { id: visit.queueTicket.id },
+          data: { displayStatus: 'COMPLETED' },
+        });
+      }
+      await tx.resourceOccupancy.updateMany({
+        where: { serviceVisitId, status: 'OCCUPIED' },
+        data: { status: 'AVAILABLE', serviceVisitId: null, technicianId: null },
+      });
+    });
+
+    if (visit.queueTicket) {
+      await this.logEvent(serviceVisitId, visit.queueTicket.id, 'PICKED_UP', userId, {
+        reasonCode: 'picked_up',
+      });
+    }
+    await this.schedulingService.recomputeQueue(visit.siteId);
+    this.logger.log(`Visit ${serviceVisitId} marked picked up (closed) by ${userId}`);
+
+    return { message: 'Vehicle picked up. Visit closed.', serviceVisitId };
+  }
+
   // ---------------------------------------------------------------------------
   // ABANDON VISIT — no-show / left before service (CR-2026-018, P3)
   //

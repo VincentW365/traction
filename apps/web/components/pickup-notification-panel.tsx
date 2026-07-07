@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api-client';
 
 interface ReadyVisit {
@@ -37,6 +37,7 @@ export function PickupNotificationPanel({ readyVisits }: PickupNotificationPanel
 
 function PickupCard({ visit }: { visit: ReadyVisit }) {
   const [sent, setSent] = useState<string[]>([]);
+  const queryClient = useQueryClient();
 
   const notifyMutation = useMutation({
     mutationFn: (channels: string[]) =>
@@ -49,9 +50,20 @@ function PickupCard({ visit }: { visit: ReadyVisit }) {
     },
   });
 
+  // CR-2026-078 — final close-out: mark picked up, close the visit, clear the queue.
+  const pickedUpMutation = useMutation({
+    mutationFn: () => api.post(`/queue/pickup/${visit.serviceVisitId}`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ready-for-pickup'] });
+      queryClient.invalidateQueries({ queryKey: ['queue-board'] });
+      queryClient.invalidateQueries({ queryKey: ['dispatch-board'] });
+    },
+  });
+
   const smsSent = sent.includes('SMS');
   const emailSent = sent.includes('EMAIL');
   const callLogged = sent.includes('MANUAL_CALL');
+  const notified = sent.length > 0;
 
   return (
     <div className="bg-white rounded-lg border border-green-200 p-3 flex items-center gap-4">
@@ -109,9 +121,23 @@ function PickupCard({ visit }: { visit: ReadyVisit }) {
         >
           {callLogged ? 'Called' : `Call`}
         </button>
+
+        {/* CR-2026-078 — finish the visit once the customer collects the vehicle */}
+        <div className="w-px self-stretch bg-green-200 mx-1" />
+        <button
+          onClick={() => pickedUpMutation.mutate()}
+          disabled={pickedUpMutation.isPending}
+          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors disabled:opacity-50 ${
+            notified ? 'bg-emerald-600 text-white hover:bg-emerald-700 ring-2 ring-emerald-300'
+                     : 'bg-emerald-600 text-white hover:bg-emerald-700'
+          }`}
+          title="Customer has collected the vehicle — close the visit"
+        >
+          {pickedUpMutation.isPending ? 'Closing…' : '✓ Picked Up'}
+        </button>
       </div>
 
-      {notifyMutation.isError && (
+      {(notifyMutation.isError || pickedUpMutation.isError) && (
         <span className="text-xs text-red-600">Failed - try again</span>
       )}
     </div>

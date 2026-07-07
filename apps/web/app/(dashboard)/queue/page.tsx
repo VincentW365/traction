@@ -83,6 +83,9 @@ export default function QueueBoardPage() {
 
   const readyCount = items.filter((i) => i.readyForDispatch).length;
   const waitingForBayCount = activeItems.filter((i) => !i.readyForDispatch && i.displayStatus !== 'BLOCKED').length;
+  // CR-2026-078 — surface the rest of the lifecycle on the board: in-service + ready-for-pickup.
+  const inServiceCount = items.filter((i) => i.displayStatus === 'IN_SERVICE').length;
+  const readyForPickupCount = readyQuery.data?.length ?? 0;
   // CR-2026-028: total ranked line, for "position N of M" context.
   const rankedTotal = items.filter((i) => i.fifoPosition != null).length;
 
@@ -105,11 +108,13 @@ export default function QueueBoardPage() {
         }
       />
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+      {/* Stat cards — full lifecycle at a glance */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
         <StatCard value={items.length} label="Total in Queue" color="blue" />
-        <StatCard value={readyCount} label="Ready" color="green" />
         <StatCard value={waitingForBayCount} label="Waiting for Bay" color="amber" />
+        <StatCard value={readyCount} label="Ready to Call" color="green" />
+        <StatCard value={inServiceCount} label="In Service" color="blue" />
+        <StatCard value={readyForPickupCount} label="Ready for Pickup" color="green" />
         <StatCard value={blockedItems.length} label="Blocked" color="red" />
       </div>
 
