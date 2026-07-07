@@ -55,10 +55,35 @@ function formatInTz(
   }
 }
 
+// CR-2026-082 — static, PII-free service tips that rotate on the lobby display.
+// No customer data — general service-centre guidance only.
+const SERVICE_TIPS = [
+  'Regular oil changes keep your engine running smoothly.',
+  'Check your tire pressure monthly for safer, more efficient driving.',
+  'Rotating your tires extends their life and improves handling.',
+  'Ask our advisors about your vehicle’s maintenance schedule.',
+  'A healthy battery helps prevent unexpected breakdowns.',
+  'Wheel alignment improves safety and reduces tire wear.',
+  'Keeping up with routine service protects your vehicle’s value.',
+  'Thank you for choosing Bert’s Auto Parts Service Centre.',
+];
+
+// Advance through a list on a fixed interval (no-op for 0/1 items).
+function useRotatingIndex(length: number, intervalMs: number): number {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    if (length <= 1) return;
+    const id = setInterval(() => setI((prev) => (prev + 1) % length), intervalMs);
+    return () => clearInterval(id);
+  }, [length, intervalMs]);
+  return i;
+}
+
 export default function DisplayBoardPage() {
   const params = useParams();
   const token = params.token as string;
   const clock = useClock();
+  const tipIndex = useRotatingIndex(SERVICE_TIPS.length, 9000);
 
   const { data, isLoading, error, refetch } = useQuery<DisplayBoard>({
     queryKey: ['display-board', token],
@@ -254,13 +279,28 @@ export default function DisplayBoardPage() {
         </Lane>
       </main>
 
-      {/* Footer */}
+      {/* Footer — rotating service tip over the persistent listen message */}
       <footer className="relative px-[clamp(1.5rem,3vw,3.5rem)] py-[clamp(0.6rem,1.1vw,1.25rem)] text-center border-t border-white/10 shrink-0">
-        <p className="text-[clamp(0.85rem,1.15vw,1.3rem)] font-medium text-slate-400">
-          Please listen for your <span className="text-slate-200">ticket number</span> — given to you at
+        <div className="flex items-center justify-center gap-2.5 min-h-[clamp(1.5rem,2.2vw,2.5rem)]">
+          <span className="text-blue-300/80 shrink-0">
+            <WrenchIcon />
+          </span>
+          <p
+            key={tipIndex}
+            style={{ animation: 'displayTipFade 700ms ease-out' }}
+            className="text-[clamp(0.95rem,1.35vw,1.6rem)] font-semibold text-slate-200"
+          >
+            {SERVICE_TIPS[tipIndex]}
+          </p>
+        </div>
+        <p className="mt-1 text-[clamp(0.75rem,1vw,1.1rem)] font-medium text-slate-500">
+          Please listen for your <span className="text-slate-300">ticket number</span> — given to you at
           check-in. This board updates automatically.
         </p>
       </footer>
+
+      {/* Keyframe for the tip crossfade (scoped, self-contained) */}
+      <style>{`@keyframes displayTipFade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }`}</style>
     </div>
   );
 }

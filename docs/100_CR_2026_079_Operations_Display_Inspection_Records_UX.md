@@ -295,5 +295,19 @@ Owner-approved. The one schema change in this initiative — **additive & nullab
 
 ## Initiative complete
 All three phases are shipped: **CR-2026-079** (Customer Display), **CR-2026-080** (Dispatch Board),
-**CR-2026-081** (Inspection records). Phase 4 (optional enhancements) remains available for separate
-approval if wanted.
+**CR-2026-081** (Inspection records).
+
+---
+
+## Implementation record — Phase 4 (optional): rotating service tips — **Implemented** (CR-2026-082)
+Owner-requested. Web-only, PII-free, zero backend.
+- `app/display/[token]/page.tsx` — the footer now rotates a **static** list of general service-centre tips
+  (oil changes, tyre pressure, alignment, battery health, a Bert's thank-you) every 9s with a small
+  wrench accent and a subtle fade (self-contained `@keyframes`). The persistent "listen for your ticket
+  number" instruction stays beneath it. Tips are a hard-coded array — **no customer data**, nothing new
+  from the API. `useRotatingIndex` is a no-op for 0/1 tips.
+- **Verification:** `@bsop/web` `tsc --noEmit` clean; web suite **74/74**. Committed as `CR-2026-082`,
+  annotated tag, pushed.
+
+Remaining Phase 4 items still available (not started): inline recommend-then-confirm assignment on the
+dispatch board, advanced dispatch filters/saved views, and a daily inspection-activity mini-dashboard.
