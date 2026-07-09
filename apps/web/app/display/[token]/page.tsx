@@ -409,16 +409,18 @@ function TicketCard({
 }) {
   return (
     <div
-      className={`flex items-center justify-between gap-3 rounded-xl px-[clamp(0.9rem,1.4vw,1.6rem)] py-[clamp(0.7rem,1.1vw,1.25rem)] ring-1 ${
+      className={`flex items-center justify-between gap-[clamp(0.75rem,1.4vw,1.5rem)] rounded-xl px-[clamp(0.9rem,1.4vw,1.6rem)] py-[clamp(0.7rem,1.1vw,1.25rem)] ring-1 ${
         highlight
           ? 'bg-emerald-500/10 ring-emerald-500/30'
           : `bg-slate-800/60 ${accent.ring}`
       }`}
     >
-      <div className={`text-[clamp(2rem,3.4vw,4.25rem)] font-extrabold tabular-nums leading-none ${accent.text}`}>
+      {/* min-w-0 + break-words lets long ticket numbers (e.g. QTK-BERT-01-20260707-0001)
+          wrap cleanly instead of overflowing into the position block. */}
+      <div className={`min-w-0 flex-1 text-[clamp(1.25rem,2vw,2.5rem)] font-extrabold tabular-nums leading-tight break-words ${accent.text}`}>
         {ticket}
       </div>
-      {children}
+      <div className="shrink-0 text-right">{children}</div>
     </div>
   );
 }
