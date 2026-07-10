@@ -176,6 +176,7 @@ export default function CustomerDetailPage() {
     queryKey: ['customer-inspections', customerId, siteId, inspOffset],
     queryFn: () =>
       api.get(`/inspections?siteId=${siteId}&customerId=${customerId}&take=${INSPECTIONS_PAGE}&skip=${inspOffset}`),
+    staleTime: 30000, // inspection records are fresh for 30s
     enabled: !!customerId && !!siteId,
   });
 

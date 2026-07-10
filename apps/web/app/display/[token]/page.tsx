@@ -95,12 +95,14 @@ export default function DisplayBoardPage() {
       }
       return res.json();
     },
+    staleTime: 8000, // data is fresh for 8s (socket updates within 1s typically)
     refetchInterval: 10000, // polling safety net; socket pushes instant updates
     retry: false,
   });
 
   // Live updates: subscribe to the queue gateway and refetch on recompute.
   const siteId = data?.siteId;
+  const [socketConnected, setSocketConnected] = useState(true);
   useEffect(() => {
     if (!siteId) return;
     let socket: Socket | undefined;
@@ -110,9 +112,12 @@ export default function DisplayBoardPage() {
         transports: ['websocket'],
         reconnection: true,
       });
+      socket.on('connect', () => setSocketConnected(true));
+      socket.on('disconnect', () => setSocketConnected(false));
       socket.on('queue:updated', () => refetch());
-    } catch {
+    } catch (e) {
       // socket is an enhancement only — polling still keeps the board fresh
+      console.warn('Socket.IO unavailable; using polling only', e);
     }
     return () => {
       socket?.disconnect();
@@ -187,11 +192,18 @@ export default function DisplayBoardPage() {
             {timeStr}
           </div>
           <div className="mt-1.5 flex items-center justify-end gap-2.5 text-[clamp(0.7rem,1vw,1.1rem)] text-slate-400">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+            <span className="relative flex h-2.5 w-2.5" aria-label={socketConnected ? 'Connected' : 'Polling'}>
+              {socketConnected && (
+                <>
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                </>
+              )}
+              {!socketConnected && (
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
+              )}
             </span>
-            <span className="font-medium text-emerald-300">Live</span>
+            <span className="font-medium text-emerald-300">{socketConnected ? 'Live' : 'Polling'}</span>
             <span className="text-slate-600">·</span>
             <span>{dateStr}</span>
           </div>

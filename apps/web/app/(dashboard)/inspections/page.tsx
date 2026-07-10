@@ -73,6 +73,7 @@ export default function InspectionsPage() {
       }
       return api.get<InspectionList>(`/inspections?${p.toString()}`);
     },
+    staleTime: 30000, // inspection list is fresh for 30s
     enabled: !!siteId,
   });
 
