@@ -20,14 +20,25 @@ it all runs on Render.
    - Web: `https://bsop-web.onrender.com`
    *(If a name was taken, yours may have a random suffix — use whatever Render shows.)*
 
-## Step 2 — Seed the database (one time)
-Migrations run automatically on the API's start. To load the reference data + an admin login:
-- Open **bsop-api ► Shell** and run:
-  ```
-  pnpm db:seed
-  ```
-  This creates the site, service catalogue, business rules, work bays, and the login
-  **`admin@bert.local` / `admin123`**.
+## Step 2 — Seeding (automatic — nothing to do)
+Migrations **and the seed** both run in the API's *build* command, so every deploy loads the
+reference data by itself. That creates the site, service catalogue, business rules, work bays,
+the active **inspection template**, technician **skills**, and the login
+**`admin@bert.local` / `admin123`**.
+
+The seed is idempotent and never touches operational data (customers, visits, orders, queue).
+It runs at build rather than at start because the free plan spins down when idle, and seeding
+on every wake would add ~10s to each cold start.
+
+> **Why this matters:** seeding is how *new* reference data reaches an **already-seeded**
+> database on a later deploy. Skip it and you get failures like
+> *"No active inspection template is configured"* when starting a vehicle inspection, or
+> specialised services (brakes, electrical) that no technician is eligible for.
+
+> **Free tier has no Shell.** Render only offers the Shell tab on paid instance types, which is
+> exactly why seeding is wired into the build instead. If you ever do need to run it by hand,
+> use the **External Database URL** from **bsop-db ► Connect** on your own machine:
+> `$env:DATABASE_URL="<external url>"; pnpm db:seed`
 
 ## Step 3 — Wire the two services together, then redeploy the web
 The web app bakes the API address in at **build** time, so set these once the URLs exist:

@@ -42,6 +42,13 @@ it is **required** so that, on an already-seeded database, these land:
 The default admin login it ensures is `admin@bert.local` / `admin123` — **change this
 immediately** on any internet-reachable deployment.
 
+> **On Render this is already automated.** `render.yaml` runs `prisma migrate deploy` and
+> `pnpm run db:seed` at the end of the API's *build* command, so every deploy seeds itself.
+> It sits in the build rather than the start command because the free plan spins down when
+> idle and re-running the ~10s seed on each wake would slow every cold start. If you change
+> that file, re-sync the Blueprint in Render and confirm the service's Build Command actually
+> updated — a service detached from its Blueprint keeps its old dashboard value.
+
 ## Required environment variables
 - `DATABASE_URL` — PostgreSQL connection string (required).
 - `JWT_SECRET` — min 32 chars (required).

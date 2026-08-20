@@ -1,6 +1,6 @@
 # Render Blueprint — BSOP. Creates everything from this repo:
 #   bsop-db   PostgreSQL (free)
-#   bsop-api  NestJS API (free)   — migrations run on start; seed once via Shell
+#   bsop-api  NestJS API (free)   — migrate + seed run automatically on every deploy
 #   bsop-web  Next.js web (free)
 # Redis is NOT required (BullMQ is not wired). After the first deploy you set a few
 # cross-service URLs and trigger ONE web redeploy — see DEPLOY_RENDER.md.
@@ -17,7 +17,13 @@ services:
     runtime: node
     plan: free
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm exec turbo build --filter=@bsop/api
+    # Migrate + seed run here (once per deploy), not in startCommand: the free plan
+    # spins down when idle, and seeding on every wake would add ~10s to each cold start.
+    # Seeding is idempotent and required — it is how the active inspection template,
+    # technician skills, and new business-rule keys reach an already-seeded database.
+    # A DB failure here fails the deploy on purpose, rather than shipping a broken build.
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm exec turbo build --filter=@bsop/api && pnpm exec prisma migrate deploy && pnpm run db:seed
+    # migrate stays here too as a safety net (idempotent, no-op when already applied).
     startCommand: pnpm exec prisma migrate deploy && pnpm --filter @bsop/api start
     envVars:
       - key: DATABASE_URL
