@@ -110,7 +110,9 @@ export default function SettingsPage() {
         subtitle="Manage business rules and configuration"
         breadcrumbs={[
           { label: 'Dashboard', href: '/' },
-          { label: 'Admin', href: '/admin' },
+          // CR-2026-084 — /admin has no page; every other admin screen uses a
+          // label-only crumb here. This one linked to a 404.
+          { label: 'Admin' },
           { label: 'Settings' },
         ]}
       />

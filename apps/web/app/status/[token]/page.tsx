@@ -29,12 +29,21 @@ interface CustomerStatus {
   currentStep: number;
 }
 
-const STEP_LABELS = ['Checked In', 'In Queue', 'Called', 'In Service', 'Ready'];
+/**
+ * CR-2026-084 — "Called" was removed from the customer's progress bar.
+ *
+ * It is an internal dispatch state (a bay has been claimed) that occurs after the
+ * customer has already handed the car over, so it told them nothing and the copy
+ * that went with it — "please proceed to the service area" — was actively wrong.
+ * The API maps CALLED to "In Queue" and reports 0–3 against these four labels.
+ */
+const STEP_LABELS = ['Checked In', 'In Queue', 'In Service', 'Ready'];
+const FINAL_STEP = STEP_LABELS.length - 1;
 
 function StepCircle({ index, currentStep, isReady }: { index: number; currentStep: number; isReady: boolean }) {
   const isCompleted = index < currentStep;
   const isActive = index === currentStep;
-  const isFinal = isReady && index === 4;
+  const isFinal = isReady && index === FINAL_STEP;
 
   let classes = 'w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 transition-all ';
   if (isFinal || (isCompleted && isReady)) {
@@ -121,7 +130,7 @@ export default function CustomerStatusPage() {
 
   if (!data) return null;
 
-  const isReady = data.currentStep >= 4;
+  const isReady = data.currentStep >= FINAL_STEP;
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-6 md:py-10">
@@ -150,7 +159,7 @@ export default function CustomerStatusPage() {
             {/* Filled bar */}
             <div
               className={`absolute top-[18px] left-[18px] h-1 rounded-full transition-all duration-500 ${isReady ? 'bg-emerald-500' : 'bg-blue-600'}`}
-              style={{ width: `calc(${(Math.min(data.currentStep, 4) / 4) * 100}% - ${data.currentStep === 0 ? 0 : 0}px)` }}
+              style={{ width: `${(Math.min(data.currentStep, FINAL_STEP) / FINAL_STEP) * 100}%` }}
             />
             {STEP_LABELS.map((label, idx) => (
               <div key={label} className="flex flex-col items-center z-10">

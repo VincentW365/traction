@@ -70,11 +70,17 @@ export class StatusController {
       ? '***' + plate.slice(-4)
       : plate;
 
-    // Determine estimated wait text based on position and status
-    const estimatedWait = this.getEstimatedWaitText(displayStatus, position, partsReadiness);
+    // CR-2026-084 — the ticket and the visit each know part of the story, and the
+    // ticket cannot express QC or "ready for pickup" at all. Take whichever is
+    // further along so a finished car never reads as still being worked on.
+    const effectiveStatus =
+      this.stepOf(visit.status) > this.stepOf(displayStatus) ? visit.status : displayStatus;
 
-    // Status progression
-    const statusProgression = ['CHECKED_IN', 'IN_QUEUE', 'CALLED', 'IN_SERVICE', 'READY_FOR_PICKUP'];
+    // Determine estimated wait text based on position and status
+    const estimatedWait = this.getEstimatedWaitText(effectiveStatus, position, partsReadiness);
+
+    // Status progression — "Called" removed (internal dispatch state, see stepOf).
+    const statusProgression = ['CHECKED_IN', 'IN_QUEUE', 'IN_SERVICE', 'READY_FOR_PICKUP'];
     const currentStep = this.getCurrentStep(displayStatus, visit.status);
 
     return {
@@ -98,19 +104,26 @@ export class StatusController {
     position: number | null,
     partsReadiness: string,
   ): string {
-    // Terminal/active states
-    if (displayStatus === 'COMPLETED' || displayStatus === 'CANCELLED') {
+    // Terminal/active states. CR-2026-084 — CLOSED and ABANDONED included: a closed
+    // visit used to fall through every branch and tell the customer "You're in line
+    // — we'll update you soon." after their car had already been collected.
+    if (['COMPLETED', 'CANCELLED', 'CLOSED', 'ABANDONED'].includes(displayStatus)) {
       return 'Visit complete.';
     }
-    if (['READY_FOR_PICKUP', 'QC'].includes(displayStatus)) {
+    if (displayStatus === 'READY_FOR_PICKUP') {
       return 'Your vehicle is ready for pickup!';
+    }
+    // CR-2026-084 — QC is a final check, not collection. Announcing "ready" here
+    // sent customers to the counter before the work had been signed off.
+    if (displayStatus === 'QC') {
+      return 'Work is complete — we are carrying out a final quality check.';
     }
     if (displayStatus === 'IN_SERVICE') {
       return 'Work is in progress on your vehicle.';
     }
-    if (displayStatus === 'CALLED') {
-      return 'You have been called — please proceed to the service area.';
-    }
+    // CR-2026-084 — CALLED is an internal dispatch state. The customer handed the
+    // car over at check-in, so telling them to "proceed to the service area" was
+    // wrong; from their side they are simply still waiting.
 
     // Blocked
     if (displayStatus === 'BLOCKED' || partsReadiness === 'REQUIRED_NOT_READY') {
@@ -127,14 +140,37 @@ export class StatusController {
     return "You're in line — we'll update you soon.";
   }
 
+  /**
+   * CR-2026-084 — the customer-facing progress step.
+   *
+   * "Called" was dropped from the progression. It is an internal dispatch state
+   * (a bay has been claimed) that happens after the customer has already handed
+   * the car over, so it told them nothing and the old copy — "please proceed to
+   * the service area" — actively misled them.
+   *
+   * The step is now the FURTHEST of the ticket's and the visit's own status rather
+   * than blindly preferring the ticket. QueueDisplayStatus has no member for QC or
+   * "ready for pickup", so a ticket sits at IN_SERVICE while the visit moves ahead;
+   * preferring the ticket pinned finished cars at "In Service".
+   */
   private getCurrentStep(displayStatus: string, visitStatus: string): number {
-    // Map to progression: 0=CHECKED_IN, 1=IN_QUEUE, 2=CALLED, 3=IN_SERVICE, 4=READY_FOR_PICKUP
-    const status = displayStatus || visitStatus;
-    if (['READY_FOR_PICKUP', 'QC', 'CLOSED'].includes(status)) return 4;
-    if (status === 'IN_SERVICE') return 3;
-    if (status === 'CALLED') return 2;
-    if (['WAITING', 'BLOCKED', 'PENDING_RANK', 'QUEUED'].includes(status)) return 1;
-    return 0; // CHECKED_IN
+    return Math.max(this.stepOf(displayStatus), this.stepOf(visitStatus));
+  }
+
+  /** Progression: 0=CHECKED_IN, 1=IN_QUEUE, 2=IN_SERVICE, 3=READY_FOR_PICKUP. */
+  private stepOf(status: string | null | undefined): number {
+    if (!status) return 0;
+    if (['READY_FOR_PICKUP', 'CLOSED', 'COMPLETED'].includes(status)) return 3;
+    // CR-2026-084 — QC is NOT "ready". A car awaiting quality sign-off used to tell
+    // the customer their vehicle was ready for pickup; if it then failed QC the bar
+    // visibly ran backwards from "Ready" to "In Queue" and the customer may already
+    // have set out to collect it. Work in QC is still work in progress.
+    if (['IN_SERVICE', 'QC'].includes(status)) return 2;
+    // CALLED means a bay was claimed; from the customer's side they are still waiting.
+    if (['WAITING', 'BLOCKED', 'PENDING_RANK', 'QUEUED', 'ISSUED', 'CALLED'].includes(status)) {
+      return 1;
+    }
+    return 0; // CHECKED_IN / ARRIVED / CREATED
   }
 }
 
@@ -260,6 +296,16 @@ export class ServiceVisitCompletionController {
       await tx.resourceOccupancy.updateMany({
         where: { serviceVisitId: id, status: 'OCCUPIED' },
         data: { status: 'AVAILABLE', serviceVisitId: null, technicianId: null },
+      });
+
+      // CR-2026-084 — close the queue ticket too. The one-click "Picked Up" path
+      // already did this, but this fuller close-out did not: the visit went CLOSED
+      // while its ticket was left reading IN_SERVICE forever. It fell off the board
+      // (which filters on visit status) but stayed permanently wrong in the data,
+      // and any view keyed on the ticket still saw a live job.
+      await tx.queueTicket.updateMany({
+        where: { serviceVisitId: id, displayStatus: { notIn: ['COMPLETED', 'CANCELLED'] } },
+        data: { displayStatus: 'COMPLETED', queueRank: null, readyForDispatch: false },
       });
 
       return sv;

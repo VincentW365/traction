@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../lib/api-client';
-import { useSiteId } from '../../../hooks/use-site';
 import { PageHeader } from '../../../components/ui/page-header';
 import { EmptyState } from '../../../components/ui/empty-state';
 import { LoadingState } from '../../../components/ui/loading-state';
@@ -21,19 +20,22 @@ function fmtClock(ms: number): string {
 }
 const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
-interface QueueItem {
-  queueTicketId: string;
-  ticketNumber: string;
-  fifoPosition: number | null;
-  displayStatus: string;
-  serviceDescription: string;
-  timeWaitingMinutes: number;
-}
-
-// CR-2026-069 — the logged-in technician's not-yet-started assignments.
+/**
+ * CR-2026-084 — one assignment belonging to the logged-in technician.
+ *
+ * This screen used to derive its "Current Job" from the site-wide queue board, which
+ * meant it showed whichever car was first at the whole site — frequently somebody
+ * else's — and the card vanished the moment work started, because the board never
+ * recorded a job as in service. It is now driven entirely by the technician's own
+ * assignments, which is the only source that is actually scoped to them.
+ */
 interface MyAssignment {
   assignmentId: string;
   orderId: string;
+  orderStatus: string;
+  assignmentStatus: string;
+  startedAt: string | null;
+  serviceVisitId: string;
   ticketNumber: string | null;
   customerName: string;
   vehicle: string;
@@ -42,67 +44,52 @@ interface MyAssignment {
   services: string[];
 }
 
+// Order states that mean "this job is live on my bench right now".
+const ACTIVE_ORDER_STATUSES = ['IN_PROGRESS', 'PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER'];
+
 export default function TechnicianWorkView() {
-  const siteId = useSiteId();
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery<{ items: QueueItem[] }>({
-    queryKey: ['tech-work', siteId],
-    queryFn: () => api.get(`/queue/board?siteId=${siteId}`),
-    refetchInterval: 10000,
-  });
-
-  const inServiceItems = data?.items?.filter(
-    (item) => item.displayStatus === 'IN_SERVICE' || item.displayStatus === 'CALLED',
-  ) ?? [];
-
-  const currentJob = inServiceItems[0] ?? null;
-
-  // CR-2026-011: resolve the current job's active service order (ticket -> visit -> orders)
-  const ticketDetailQuery = useQuery<{ serviceVisit: { id: string } }>({
-    queryKey: ['tech-ticket', currentJob?.queueTicketId],
-    queryFn: () => api.get(`/queue-tickets/${currentJob!.queueTicketId}`),
-    enabled: !!currentJob,
-  });
-  const visitId = ticketDetailQuery.data?.serviceVisit?.id;
-  const ordersQuery = useQuery<Array<{ id: string; status: string }>>({
-    queryKey: ['tech-orders', visitId],
-    queryFn: () => api.get(`/service-orders/by-visit/${visitId}`),
-    enabled: !!visitId,
-  });
-  const activeOrder = ordersQuery.data?.find((o) => o.status === 'IN_PROGRESS' || o.status === 'PAUSED') ?? null;
-
-  const [pauseReason, setPauseReason] = useState<string>(PAUSE_REASONS[0].value);
-  const [showPause, setShowPause] = useState(false);
-  const invalidateWork = () => {
-    queryClient.invalidateQueries({ queryKey: ['tech-orders'] });
-    queryClient.invalidateQueries({ queryKey: ['tech-work'] });
-  };
-  const pauseMutation = useMutation({
-    mutationFn: () => api.post(`/service-orders/${activeOrder!.id}/pause`, { reasonCode: pauseReason }),
-    onSuccess: () => { invalidateWork(); setShowPause(false); },
-  });
-  const resumeMutation = useMutation({
-    mutationFn: () => api.post(`/service-orders/${activeOrder!.id}/resume`, {}),
-    onSuccess: invalidateWork,
-  });
-
-  // CR-2026-069 — the technician's assigned-but-not-started orders, and starting them.
   const myAssignmentsQuery = useQuery<MyAssignment[]>({
     queryKey: ['my-assignments'],
     queryFn: () => api.get('/service-orders/mine/assignments'),
     refetchInterval: 10000,
   });
+
+  const assignments = myAssignmentsQuery.data ?? [];
+  const readyToStart = assignments.filter((a) => a.orderStatus === 'ASSIGNED');
+  const activeJobs = assignments.filter((a) => ACTIVE_ORDER_STATUSES.includes(a.orderStatus));
+  const currentJob = activeJobs[0] ?? null;
+  const isPaused = currentJob?.orderStatus === 'PAUSED';
+
+  const [pauseReason, setPauseReason] = useState<string>(PAUSE_REASONS[0].value);
+  const [showPause, setShowPause] = useState(false);
+
+  const invalidateWork = () => {
+    queryClient.invalidateQueries({ queryKey: ['my-assignments'] });
+    queryClient.invalidateQueries({ queryKey: ['work-timing'] });
+    queryClient.invalidateQueries({ queryKey: ['tech-inspections'] });
+  };
+
   const startMutation = useMutation({
     mutationFn: ({ orderId, assignmentId }: { orderId: string; assignmentId: string }) =>
       api.post(`/service-orders/${orderId}/assignments/${assignmentId}/start`, {}),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['my-assignments'] });
-      invalidateWork();
-    },
+    onSuccess: invalidateWork,
+  });
+  const pauseMutation = useMutation({
+    mutationFn: () => api.post(`/service-orders/${currentJob!.orderId}/pause`, { reasonCode: pauseReason }),
+    onSuccess: () => { invalidateWork(); setShowPause(false); },
+  });
+  const resumeMutation = useMutation({
+    mutationFn: () => api.post(`/service-orders/${currentJob!.orderId}/resume`, {}),
+    onSuccess: invalidateWork,
+  });
+  const readyForQcMutation = useMutation({
+    mutationFn: () => api.post(`/service-orders/${currentJob!.orderId}/ready-for-qc`, {}),
+    onSuccess: invalidateWork,
   });
 
-  // CR-2026-073 — live work timers, ready-for-QC, and the job's inspection.
+  // CR-2026-073 — live work timers.
   const [now, setNow] = useState<number>(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -112,22 +99,16 @@ export default function TechnicianWorkView() {
   const workTimingQuery = useQuery<{
     startedAt: string | null; completedAt: string | null; status: string; pausedMs: number; openPauseStartedAt: string | null;
   }>({
-    queryKey: ['work-timing', activeOrder?.id],
-    queryFn: () => api.get(`/service-orders/${activeOrder!.id}/work-timing`),
-    enabled: !!activeOrder,
+    queryKey: ['work-timing', currentJob?.orderId],
+    queryFn: () => api.get(`/service-orders/${currentJob!.orderId}/work-timing`),
+    enabled: !!currentJob,
     refetchInterval: 15000,
   });
-  const readyForQcMutation = useMutation({
-    mutationFn: () => api.post(`/service-orders/${activeOrder!.id}/ready-for-qc`, {}),
-    onSuccess: () => {
-      invalidateWork();
-      queryClient.invalidateQueries({ queryKey: ['work-timing'] });
-    },
-  });
+
   const inspectionsQuery = useQuery<{ items: Array<{ id: string; inspectionNumber: string; status: string }> }>({
-    queryKey: ['tech-inspections', visitId],
-    queryFn: () => api.get(`/inspections?serviceVisitId=${visitId}`),
-    enabled: !!visitId,
+    queryKey: ['tech-inspections', currentJob?.serviceVisitId],
+    queryFn: () => api.get(`/inspections?serviceVisitId=${currentJob!.serviceVisitId}`),
+    enabled: !!currentJob,
   });
 
   // Timer math: elapsed since start, and ACTUAL working time (elapsed − paused).
@@ -137,7 +118,7 @@ export default function TechnicianWorkView() {
   const elapsedMs = startedMs ? now - startedMs : 0;
   const workingMs = startedMs ? elapsedMs - (timing?.pausedMs ?? 0) - openPauseMs : 0;
 
-  if (isLoading) {
+  if (myAssignmentsQuery.isLoading) {
     return (
       <div className="min-h-screen bg-slate-100 p-4">
         <div className="max-w-md mx-auto">
@@ -150,68 +131,28 @@ export default function TechnicianWorkView() {
   return (
     <div className="min-h-screen bg-slate-100 p-4">
       <div className="max-w-md mx-auto space-y-4">
-        {/* Header */}
-        <PageHeader
-          title="My Work"
-          subtitle="Technician View"
-        />
+        <PageHeader title="My Work" subtitle="Technician View" />
 
-        {/* CR-2026-069 — assigned to me, ready to start (the mechanic starts the work) */}
-        {(myAssignmentsQuery.data ?? []).length > 0 && (
-          <div className="card">
-            <div className="card-header">
-              <h2 className="text-sm font-semibold text-slate-900">Ready to Start ({myAssignmentsQuery.data!.length})</h2>
-            </div>
-            <div className="card-body p-0">
-              {myAssignmentsQuery.data!.map((a) => (
-                <div key={a.assignmentId} className="px-5 py-4 border-b border-slate-100 last:border-0 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-lg font-bold font-mono text-blue-700">{a.ticketNumber ?? '—'}</span>
-                    {a.bay && <span className="badge bg-slate-100 text-slate-600 text-[10px]">Bay {a.bay}</span>}
-                  </div>
-                  <p className="text-sm text-slate-700">{a.customerName} · {a.vehicle} ({a.plate})</p>
-                  <p className="text-xs text-slate-500">{a.services.join(', ')}</p>
-                  {startMutation.isError && startMutation.variables?.assignmentId === a.assignmentId && (
-                    <p className="text-xs text-red-600">{startMutation.error instanceof Error ? startMutation.error.message : 'Failed to start'}</p>
-                  )}
-                  <button
-                    onClick={() => startMutation.mutate({ orderId: a.orderId, assignmentId: a.assignmentId })}
-                    disabled={startMutation.isPending}
-                    className="btn-success w-full py-3 text-base font-bold rounded-lg active:scale-[0.98] transition-transform"
-                  >
-                    {startMutation.isPending && startMutation.variables?.assignmentId === a.assignmentId ? 'Starting…' : 'START WORK'}
-                  </button>
-                </div>
-              ))}
-            </div>
+        {myAssignmentsQuery.isError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            Could not load your work.{' '}
+            {myAssignmentsQuery.error instanceof Error ? myAssignmentsQuery.error.message : ''}
           </div>
         )}
 
-        {/* No active job */}
-        {!currentJob && (myAssignmentsQuery.data ?? []).length === 0 && (
-          <EmptyState
-            icon={
-              <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            }
-            title="No Active Assignment"
-            description="Waiting for next dispatch..."
-          />
-        )}
-
-        {/* Current job card (CR-2026-073) */}
+        {/* Current job — the one on the bench right now */}
         {currentJob && (
           <div className="card overflow-hidden">
-            {/* Ticket header */}
             <div className="bg-blue-600 text-white px-5 py-4 text-center">
               <div className="text-[11px] uppercase tracking-wider text-blue-100">Current Job</div>
-              <div className="text-3xl font-bold font-mono mt-0.5">{currentJob.ticketNumber}</div>
+              <div className="text-3xl font-bold font-mono mt-0.5">{currentJob.ticketNumber ?? '—'}</div>
+              <div className="text-xs text-blue-100 mt-1">
+                {currentJob.customerName} · {currentJob.vehicle} ({currentJob.plate})
+                {currentJob.bay ? ` · Bay ${currentJob.bay}` : ''}
+              </div>
             </div>
 
             <div className="card-body space-y-4">
-              {/* Live timers */}
               {startedMs ? (
                 <>
                   <div className="grid grid-cols-2 gap-3">
@@ -219,26 +160,26 @@ export default function TechnicianWorkView() {
                       <div className="input-label">Elapsed</div>
                       <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 mt-0.5">{fmtClock(elapsedMs)}</div>
                     </div>
-                    <div className={`rounded-xl border p-3 text-center ${timing?.status === 'PAUSED' ? 'bg-orange-50 border-orange-200' : 'bg-emerald-50 border-emerald-200'}`}>
-                      <div className="input-label">Working{timing?.status === 'PAUSED' ? ' (paused)' : ''}</div>
-                      <div className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${timing?.status === 'PAUSED' ? 'text-orange-700' : 'text-emerald-700'}`}>{fmtClock(workingMs)}</div>
+                    <div className={`rounded-xl border p-3 text-center ${isPaused ? 'bg-orange-50 border-orange-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                      <div className="input-label">Working{isPaused ? ' (paused)' : ''}</div>
+                      <div className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${isPaused ? 'text-orange-700' : 'text-emerald-700'}`}>{fmtClock(workingMs)}</div>
                     </div>
                   </div>
                   {timing?.startedAt && <p className="text-[11px] text-slate-400 text-center">Started at {fmtTime(timing.startedAt)}</p>}
                 </>
               ) : (
                 <div className="text-center">
-                  <StatusBadge status={currentJob.displayStatus} />
+                  <StatusBadge status={currentJob.orderStatus} />
                 </div>
               )}
 
-              {/* Services */}
               <div>
                 <div className="input-label">Services</div>
-                <p className="text-base font-medium text-slate-900 mt-0.5">{currentJob.serviceDescription}</p>
+                <p className="text-base font-medium text-slate-900 mt-0.5">
+                  {currentJob.services.length > 0 ? currentJob.services.join(', ') : 'No services recorded'}
+                </p>
               </div>
 
-              {/* Vehicle inspection for this job */}
               {(inspectionsQuery.data?.items ?? []).length > 0 && (
                 <div>
                   <div className="input-label">Vehicle Inspection</div>
@@ -253,12 +194,24 @@ export default function TechnicianWorkView() {
                 </div>
               )}
 
-              {/* Paused → Resume only */}
-              {activeOrder?.status === 'PAUSED' && (
+              {/* Held by the front desk — the technician cannot clear these themselves. */}
+              {(currentJob.orderStatus === 'WAITING_PARTS' || currentJob.orderStatus === 'WAITING_CUSTOMER') && (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900 text-center">
+                  <span className="font-semibold">
+                    {currentJob.orderStatus === 'WAITING_PARTS' ? 'Waiting on parts' : 'Waiting on the customer'}
+                  </span>
+                  <p className="text-xs mt-1 text-amber-800">The front desk will release this when it is ready.</p>
+                </div>
+              )}
+
+              {isPaused && (
                 <div className="space-y-2">
                   <div className="rounded-lg bg-orange-50 border border-orange-200 px-4 py-2.5 text-sm text-orange-800 text-center font-medium">
                     Work is paused
                   </div>
+                  {resumeMutation.isError && (
+                    <p className="text-xs text-red-600 text-center">{resumeMutation.error instanceof Error ? resumeMutation.error.message : 'Failed to resume'}</p>
+                  )}
                   <button
                     onClick={() => resumeMutation.mutate()}
                     disabled={resumeMutation.isPending}
@@ -269,8 +222,7 @@ export default function TechnicianWorkView() {
                 </div>
               )}
 
-              {/* In progress → Pause + Ready for QC */}
-              {activeOrder?.status === 'IN_PROGRESS' && (
+              {currentJob.orderStatus === 'IN_PROGRESS' && (
                 <div className="space-y-2">
                   {showPause ? (
                     <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50 p-3">
@@ -311,24 +263,68 @@ export default function TechnicianWorkView() {
           </div>
         )}
 
-        {/* Other active jobs */}
-        {inServiceItems.length > 1 && (
+        {/* Assigned to me, not started yet */}
+        {readyToStart.length > 0 && (
           <div className="card">
             <div className="card-header">
-              <h2 className="text-sm font-semibold text-slate-900">Other Active Jobs</h2>
+              <h2 className="text-sm font-semibold text-slate-900">Ready to Start ({readyToStart.length})</h2>
             </div>
             <div className="card-body p-0">
-              {inServiceItems.slice(1).map((item) => (
-                <div key={item.queueTicketId} className="px-5 py-3 border-b border-slate-100 last:border-0 flex items-center justify-between">
-                  <div>
-                    <span className="text-sm font-bold font-mono text-slate-900">{item.ticketNumber}</span>
-                    <span className="text-sm text-slate-500 ml-2">{item.serviceDescription}</span>
+              {readyToStart.map((a) => (
+                <div key={a.assignmentId} className="px-5 py-4 border-b border-slate-100 last:border-0 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg font-bold font-mono text-blue-700">{a.ticketNumber ?? '—'}</span>
+                    {a.bay && <span className="badge bg-slate-100 text-slate-600 text-[10px]">Bay {a.bay}</span>}
                   </div>
-                  <StatusBadge status={item.displayStatus} />
+                  <p className="text-sm text-slate-700">{a.customerName} · {a.vehicle} ({a.plate})</p>
+                  <p className="text-xs text-slate-500">{a.services.join(', ')}</p>
+                  {startMutation.isError && startMutation.variables?.assignmentId === a.assignmentId && (
+                    <p className="text-xs text-red-600">{startMutation.error instanceof Error ? startMutation.error.message : 'Failed to start'}</p>
+                  )}
+                  <button
+                    onClick={() => startMutation.mutate({ orderId: a.orderId, assignmentId: a.assignmentId })}
+                    disabled={startMutation.isPending}
+                    className="btn-success w-full py-3 text-base font-bold rounded-lg active:scale-[0.98] transition-transform"
+                  >
+                    {startMutation.isPending && startMutation.variables?.assignmentId === a.assignmentId ? 'Starting…' : 'START WORK'}
+                  </button>
                 </div>
               ))}
             </div>
           </div>
+        )}
+
+        {/* My other live jobs */}
+        {activeJobs.length > 1 && (
+          <div className="card">
+            <div className="card-header">
+              <h2 className="text-sm font-semibold text-slate-900">My Other Active Jobs</h2>
+            </div>
+            <div className="card-body p-0">
+              {activeJobs.slice(1).map((a) => (
+                <div key={a.assignmentId} className="px-5 py-3 border-b border-slate-100 last:border-0 flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-bold font-mono text-slate-900">{a.ticketNumber ?? '—'}</span>
+                    <span className="text-sm text-slate-500 ml-2">{a.services.join(', ')}</span>
+                  </div>
+                  <StatusBadge status={a.orderStatus} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {assignments.length === 0 && !myAssignmentsQuery.isError && (
+          <EmptyState
+            icon={
+              <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            }
+            title="Nothing assigned to you"
+            description="When the front desk assigns you a job it will appear here."
+          />
         )}
       </div>
     </div>

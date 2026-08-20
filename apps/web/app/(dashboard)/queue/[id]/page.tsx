@@ -44,7 +44,10 @@ interface TicketDetail {
       scheduledStartAt: string;
       services: Array<{ serviceType: { name: string; code: string } }>;
     } | null;
+    serviceOrders?: Array<{ items: Array<{ serviceType: { name: string; code: string } }> }>;
   };
+  // CR-2026-084 — server-resolved service list (appointment services + order items).
+  serviceDescription?: string;
   queueEvents: Array<{
     id: string;
     eventType: string;
@@ -451,7 +454,9 @@ export default function QueueTicketDetailPage() {
   if (!ticket) return null;
 
   const sv = ticket.serviceVisit;
-  const services = sv.appointment?.services?.map((s) => s.serviceType.name).join(', ') ?? 'Walk-in service';
+  // CR-2026-084 — resolved by the API from the appointment AND the service orders,
+  // so a walk-in shows what it actually came in for instead of "Walk-in service".
+  const services = ticket.serviceDescription ?? 'No services recorded';
   const orders = ordersQuery.data ?? [];
   const canOverride = !ticket.overrideActive && DISPATCHABLE_STATUSES.includes(ticket.displayStatus);
   const showCompletionSection = sv.status === 'READY_FOR_PICKUP' || sv.status === 'QC';

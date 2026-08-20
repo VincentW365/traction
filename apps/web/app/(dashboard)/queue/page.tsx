@@ -18,6 +18,9 @@ interface QueueItem {
   ticketNumber: string;
   fifoPosition: number | null;
   displayStatus: string;
+  // CR-2026-084 — QueueDisplayStatus cannot express QC or "ready for pickup", so the
+  // board also carries the visit's own status for an accurate lifecycle breakdown.
+  visitStatus?: string;
   sourceType: string;
   blockedReason: string | null;
   readyForDispatch: boolean;
@@ -81,10 +84,20 @@ export default function QueueBoardPage() {
   const activeItems = items.filter((i) => i.displayStatus !== 'BLOCKED');
   const blockedItems = items.filter((i) => i.displayStatus === 'BLOCKED');
 
+  // CR-2026-084 — a car that is being worked on is not "waiting for a bay"; it has
+  // one. Before the ticket status was synced this could never happen, so the old
+  // filters never had to exclude it.
+  const inServiceItems = items.filter(
+    (i) => i.displayStatus === 'IN_SERVICE' || i.visitStatus === 'IN_SERVICE' || i.visitStatus === 'QC',
+  );
+  const inServiceIds = new Set(inServiceItems.map((i) => i.queueTicketId));
+
   const readyCount = items.filter((i) => i.readyForDispatch).length;
-  const waitingForBayCount = activeItems.filter((i) => !i.readyForDispatch && i.displayStatus !== 'BLOCKED').length;
+  const waitingForBayCount = activeItems.filter(
+    (i) => !i.readyForDispatch && i.displayStatus !== 'BLOCKED' && !inServiceIds.has(i.queueTicketId),
+  ).length;
   // CR-2026-078 — surface the rest of the lifecycle on the board: in-service + ready-for-pickup.
-  const inServiceCount = items.filter((i) => i.displayStatus === 'IN_SERVICE').length;
+  const inServiceCount = inServiceItems.length;
   const readyForPickupCount = readyQuery.data?.length ?? 0;
   // CR-2026-028: total ranked line, for "position N of M" context.
   const rankedTotal = items.filter((i) => i.fifoPosition != null).length;

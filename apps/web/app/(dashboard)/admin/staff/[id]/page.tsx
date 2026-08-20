@@ -382,7 +382,7 @@ export default function StaffDetailPage() {
       {activeTab === 'activity' && (
         <div className="card p-6 text-center">
           <p className="text-sm text-slate-500">Audit log for this user will be loaded from the existing audit-logs endpoint.</p>
-          <Link href={`/admin/settings`} className="text-xs text-blue-600 hover:underline mt-2 inline-block">
+          <Link href={`/admin/audit-logs`} className="text-xs text-blue-600 hover:underline mt-2 inline-block">
             View Audit Logs
           </Link>
         </div>

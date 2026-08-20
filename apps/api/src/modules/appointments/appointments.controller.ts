@@ -50,12 +50,14 @@ export class AppointmentsController {
   @ApiQuery({ name: 'siteId', required: true, description: 'Site ID to filter by' })
   @ApiQuery({ name: 'date', required: false, description: 'Filter by date (YYYY-MM-DD)' })
   @ApiQuery({ name: 'status', required: false, description: 'Filter by appointment status' })
+  @ApiQuery({ name: 'customerId', required: false, description: 'Filter by customer' })
   async findAll(
     @Query('siteId') siteId: string,
     @Query('date') date?: string,
     @Query('status') status?: string,
+    @Query('customerId') customerId?: string,
   ) {
-    return this.appointmentsService.findBySite(siteId, { date, status });
+    return this.appointmentsService.findBySite(siteId, { date, status, customerId });
   }
 
   @Get(':id')

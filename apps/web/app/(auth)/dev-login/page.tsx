@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../../lib/api-client';
 import { useAuth } from '../../../hooks/use-auth';
+import { landingRouteForRole } from '../../../lib/landing-route';
 
 interface DevProfile {
   role: string;
@@ -21,7 +22,7 @@ interface ProfilesResponse {
 const GROUP_ORDER = ['Administration', 'Front Office', 'Workshop'];
 
 export default function DevLoginPage() {
-  const { user, loading, error, devLogin } = useAuth();
+  const { user, loading, error, devLogin, sandboxRole } = useAuth();
   const [data, setData] = useState<ProfilesResponse | null>(null);
   const [disabled, setDisabled] = useState(false);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
@@ -46,7 +47,12 @@ export default function DevLoginPage() {
 
   // Already signed in (or just signed in) → into the app.
   if (user && !loading) {
-    if (typeof window !== 'undefined') window.location.href = '/check-in';
+    // CR-2026-084 — land on a screen the chosen role can use. A sandbox session
+    // reports an effective roleCode of ADMIN for gating, so prefer the role that
+    // was actually picked on this page.
+    if (typeof window !== 'undefined') {
+      window.location.href = landingRouteForRole(sandboxRole ?? user.roleCode);
+    }
     return null;
   }
 

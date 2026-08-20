@@ -11,6 +11,10 @@ import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { StatusHistoryService } from '../audit/status-history.service';
 import { SchedulingService } from '../scheduling/scheduling.service';
 import { liveVisitSql } from '../../common/helpers/operational-scope';
+import {
+  describeVisitServices,
+  VISIT_SERVICES_INCLUDE,
+} from '../../common/helpers/service-description';
 
 /**
  * CR-2026-018 (P3) — a ServiceVisit may be marked ABANDONED (no-show / left
@@ -65,7 +69,12 @@ export class QueueService {
       where: {
         serviceVisit: {
           siteId,
-          status: { in: ['CHECKED_IN', 'QUEUED', 'CALLED', 'IN_SERVICE'] },
+          // CR-2026-084 — 'QC' included. A car sent for a quality check dropped off
+          // the board completely: it was no longer waiting, no longer in service,
+          // and not yet ready for pickup, so for the whole QC window nobody could
+          // see it anywhere on the queue. READY_FOR_PICKUP is deliberately left out
+          // — those cars surface in the dedicated pickup panel above the board.
+          status: { in: ['CHECKED_IN', 'QUEUED', 'CALLED', 'IN_SERVICE', 'QC'] },
         },
         displayStatus: {
           in: ['PENDING_RANK', 'WAITING', 'CALLED', 'IN_SERVICE', 'BLOCKED'],
@@ -73,11 +82,8 @@ export class QueueService {
       },
       include: {
         serviceVisit: {
-          include: {
-            appointment: {
-              include: { services: { include: { serviceType: true } } },
-            },
-          },
+          // CR-2026-084 — service orders too, so a walk-in's services resolve.
+          include: VISIT_SERVICES_INCLUDE,
         },
       },
       orderBy: [{ queueRank: { sort: 'asc', nulls: 'last' } }],
@@ -88,15 +94,17 @@ export class QueueService {
 
     const items = tickets.map((t) => {
       const sv = t.serviceVisit;
-      const services = sv.appointment?.services ?? [];
-      const serviceDescription =
-        services.map((s) => s.serviceType.name).join(' + ') || 'Walk-in service';
+      const serviceDescription = describeVisitServices(sv);
 
       return {
         queueTicketId: t.id,
         ticketNumber: t.ticketNumber,
         fifoPosition: t.queueRank,
         displayStatus: t.displayStatus,
+        // CR-2026-084 — QueueDisplayStatus cannot express QC or "ready for pickup",
+        // so the board also carries the visit's own status. Without it the board
+        // could never distinguish a car being worked on from one awaiting collection.
+        visitStatus: sv.status,
         sourceType: sv.sourceType,
         blockedReason: t.blockedReason ?? (t.displayStatus === 'BLOCKED' ? this.getBlockedReason(sv) : null),
         readyForDispatch: t.readyForDispatch,
@@ -135,9 +143,9 @@ export class QueueService {
           include: {
             customer: { select: { id: true, firstName: true, lastName: true, phone: true } },
             vehicle: { select: { id: true, plateNumber: true, make: true, model: true } },
-            appointment: {
-              include: { services: { include: { serviceType: true } } },
-            },
+            // CR-2026-084 — service orders too, so a walk-in's services resolve
+            // instead of the page falling back to the literal "Walk-in service".
+            ...VISIT_SERVICES_INCLUDE,
           },
         },
         queueEvents: { orderBy: { createdAt: 'desc' }, take: 30 },
@@ -145,7 +153,11 @@ export class QueueService {
     });
 
     if (!ticket) throw new NotFoundException(`Queue ticket ${ticketId} not found`);
-    return ticket;
+    // Resolved server-side so every client shows the same answer.
+    return {
+      ...ticket,
+      serviceDescription: describeVisitServices(ticket.serviceVisit, ', '),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -486,11 +498,27 @@ export class QueueService {
   async markPickedUp(serviceVisitId: string, userId: string) {
     const visit = await this.prisma.serviceVisit.findUnique({
       where: { id: serviceVisitId },
-      include: { queueTicket: true },
+      include: { queueTicket: true, serviceOrders: true },
     });
     if (!visit) throw new NotFoundException(`ServiceVisit ${serviceVisitId} not found`);
     if (visit.status === 'CLOSED') {
       return { message: 'Visit already closed.', serviceVisitId };
+    }
+
+    // CR-2026-084 — GOV-005 also applies here. This one-click button sits on the
+    // dispatch and queue boards and used to close a visit with no payment check at
+    // all, while the fuller "Complete & Close Visit" flow on the ticket enforced it.
+    // Two doors out, one of them unlocked. The manager exception lives on the other
+    // flow (it needs a typed reason to audit), so this path refuses and points there.
+    const PAYMENT_CLEARED = ['PAID', 'ON_ACCOUNT', 'WAIVED'];
+    const unpaidOrders = (visit.serviceOrders ?? []).filter(
+      (so) => !PAYMENT_CLEARED.includes(so.paymentStatus),
+    );
+    if (unpaidOrders.length > 0) {
+      throw new BadRequestException(
+        `Cannot release vehicle: payment is not cleared on ${unpaidOrders.length} order(s). ` +
+          'Use "Complete & Close Visit" on the ticket, where a manager can authorise an audited exception.',
+      );
     }
 
     await this.prisma.$transaction(async (tx) => {

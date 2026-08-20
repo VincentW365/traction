@@ -49,23 +49,28 @@ export class ServiceOrdersController {
 
   @Get('mine/assignments')
   @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
-  @ApiOperation({ summary: "The logged-in technician's own assignments (default status ASSIGNED)" })
+  @ApiOperation({
+    summary:
+      "The logged-in technician's own open assignments (default: ASSIGNED, IN_PROGRESS and PAUSED)",
+  })
   async myAssignments(
     @Query('status') status: string | undefined,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.serviceOrdersService.getMyAssignments(user.sub, status || 'ASSIGNED');
+    // CR-2026-084 — no longer defaults to ASSIGNED only, which made a job disappear
+    // from the technician's screen the instant they started it.
+    return this.serviceOrdersService.getMyAssignments(user.sub, status);
   }
 
   @Get(':id')
-  @RequirePermission(PERMISSIONS.SERVICE_ORDER_CREATE)
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_VIEW)
   @ApiOperation({ summary: 'Get service order by ID' })
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.serviceOrdersService.findById(id);
   }
 
   @Get('by-visit/:serviceVisitId')
-  @RequirePermission(PERMISSIONS.SERVICE_ORDER_CREATE)
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_VIEW)
   @ApiOperation({ summary: 'List service orders for a visit' })
   async findByVisit(
     @Param('serviceVisitId', ParseUUIDPipe) serviceVisitId: string,

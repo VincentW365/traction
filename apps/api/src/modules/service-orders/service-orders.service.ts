@@ -31,7 +31,11 @@ const VALID_TRANSITIONS: Record<string, ServiceOrderStatus[]> = {
   PAUSED: ['IN_PROGRESS', 'CANCELLED'],
   WAITING_PARTS: ['IN_PROGRESS', 'CANCELLED'],
   WAITING_CUSTOMER: ['IN_PROGRESS', 'CANCELLED'],
-  QC: ['READY_TO_INVOICE', 'IN_PROGRESS', 'CANCELLED'],
+  // CR-2026-084 — a failed QC returns the order to APPROVED, not straight to
+  // IN_PROGRESS. The technician's assignment is already ended when they send work
+  // to QC, so resuming directly left the order "in progress" with nobody assigned
+  // to it. Rework now has to be assigned again like any other work.
+  QC: ['READY_TO_INVOICE', 'APPROVED', 'CANCELLED'],
   READY_TO_INVOICE: ['CLOSED', 'CANCELLED'],
   CLOSED: [],
   CANCELLED: [],
@@ -45,8 +49,33 @@ const ORDER_TO_VISIT_STATUS: Partial<Record<ServiceOrderStatus, string>> = {
   READY_TO_INVOICE: 'READY_FOR_PICKUP',
 };
 
+/**
+ * CR-2026-084 — map ServiceOrder status to the QueueTicket's display status.
+ *
+ * Nothing used to write `IN_SERVICE` to a queue ticket anywhere in production code,
+ * so starting work updated the order and the visit but left the ticket reading
+ * WAITING/CALLED. That single missing write is why the queue board never showed a
+ * job as started, the customer's status link stayed on "in queue" while the car was
+ * on the lift, and the technician's own card vanished.
+ *
+ * QueueDisplayStatus has no READY_FOR_PICKUP member, so a finished car stays
+ * IN_SERVICE on the ticket until it is closed; the richer ServiceVisit status is
+ * surfaced alongside it on the board instead.
+ */
+const ORDER_TO_TICKET_STATUS: Partial<Record<ServiceOrderStatus, string>> = {
+  IN_PROGRESS: 'IN_SERVICE',
+  QC: 'IN_SERVICE',
+  READY_TO_INVOICE: 'IN_SERVICE',
+  // Back out of the working states: the car rejoins the waiting line and the next
+  // recompute gives it a position again.
+  APPROVED: 'WAITING',
+};
+
 // Transitions that should trigger a queue recompute
 const RECOMPUTE_TRIGGERS = new Set<ServiceOrderStatus>([
+  // CR-2026-084 — rework sends an order back to APPROVED; the car rejoins the
+  // waiting line and needs a position again.
+  'APPROVED' as ServiceOrderStatus,
   'ASSIGNED' as ServiceOrderStatus,
   'IN_PROGRESS' as ServiceOrderStatus,
   'WAITING_PARTS' as ServiceOrderStatus,
@@ -507,14 +536,28 @@ export class ServiceOrdersService {
    * so they can start their work). Returns a compact, floor-friendly shape. Non-technician
    * users have no technician record and get an empty list.
    */
-  async getMyAssignments(userId: string, status = 'ASSIGNED') {
+  /**
+   * CR-2026-084 — the technician's own live work.
+   *
+   * This used to filter on a single status defaulting to ASSIGNED, so the moment a
+   * technician pressed START WORK their job flipped to IN_PROGRESS and dropped out
+   * of their own list — the card vanished and nothing replaced it. It now returns
+   * every still-open assignment and reports each one's order status, so the screen
+   * can show "ready to start" and "working on now" from one authoritative source
+   * that is genuinely scoped to this technician.
+   */
+  async getMyAssignments(userId: string, status?: string) {
     const tech = await this.prisma.technician.findUnique({
       where: { userAccountId: userId },
     });
     if (!tech) return [];
 
+    const statuses = status
+      ? [status]
+      : ['ASSIGNED', 'IN_PROGRESS', 'PAUSED'];
+
     const assignments = await this.prisma.technicianAssignment.findMany({
-      where: { technicianId: tech.id, status, endedAt: null },
+      where: { technicianId: tech.id, status: { in: statuses }, endedAt: null },
       include: {
         bay: { select: { code: true } },
         serviceOrder: {
@@ -539,6 +582,10 @@ export class ServiceOrdersService {
         assignmentId: a.id,
         orderId: a.serviceOrderId,
         orderStatus: a.serviceOrder.status,
+        // CR-2026-084 — the technician screen renders "ready to start" vs "working
+        // on now" from these, instead of guessing from the site-wide queue board.
+        assignmentStatus: a.status,
+        startedAt: a.serviceOrder.startedAt,
         serviceVisitId: a.serviceOrder.serviceVisitId,
         ticketNumber: visit.queueTicket?.ticketNumber ?? null,
         customerName: `${visit.customer.firstName} ${visit.customer.lastName}`,
@@ -669,6 +716,9 @@ export class ServiceOrdersService {
       });
     }
 
+    // CR-2026-084 — keep the queue ticket in step with the work.
+    await this.syncQueueTicket(order.serviceVisitId, toStatus);
+
     // End technician assignments on terminal statuses
     if (toStatus === 'CANCELLED' || toStatus === 'CLOSED') {
       await this.prisma.technicianAssignment.updateMany({
@@ -788,8 +838,10 @@ export class ServiceOrdersService {
     const updated = await this.prisma.$transaction(async (tx) => {
       const so = await tx.serviceOrder.update({
         where: { id },
-        // Re-opening: clear completedAt (set on entry to QC) — no longer complete.
-        data: { status: 'IN_PROGRESS', completedAt: null },
+        // Re-opening: clear completedAt (set on entry to QC) and startedAt, so the
+        // next technician's elapsed/working clocks time THIS attempt rather than
+        // carrying the failed one's hours.
+        data: { status: 'APPROVED', completedAt: null, startedAt: null },
       });
       await tx.serviceOrderRework.create({
         data: {
@@ -800,6 +852,12 @@ export class ServiceOrdersService {
           openedByUserId: userId,
         },
       });
+      // Defensive: entry to QC already ends the assignment, but never leave an open
+      // one attached to an order that is going back out for assignment.
+      await tx.technicianAssignment.updateMany({
+        where: { serviceOrderId: id, endedAt: null },
+        data: { endedAt: new Date(), status: 'COMPLETED' },
+      });
       return so;
     });
 
@@ -807,33 +865,30 @@ export class ServiceOrdersService {
       entityType: 'ServiceOrder',
       entityId: id,
       fromStatus: 'QC',
-      toStatus: 'IN_PROGRESS',
+      toStatus: 'APPROVED',
       changedByUserId: userId,
       reasonCode: `REWORK:${dto.reasonCode}`,
       notes: dto.description,
     });
 
-    // Returning to active work reuses the EXISTING IN_PROGRESS semantics (not a new
-    // scheduling behaviour): sync the visit back to IN_SERVICE and recompute.
-    const visitStatus = ORDER_TO_VISIT_STATUS['IN_PROGRESS' as ServiceOrderStatus];
-    if (visitStatus) {
-      await this.prisma.serviceVisit.update({
-        where: { id: order.serviceVisitId },
-        data: { status: visitStatus as any },
-      });
-      await this.statusHistory.record({
-        entityType: 'ServiceVisit',
-        entityId: order.serviceVisitId,
-        fromStatus: order.serviceVisit.status,
-        toStatus: visitStatus,
-        changedByUserId: userId,
-        reasonCode: 'REWORK_REOPEN',
-        notes: `ServiceOrder ${id} sent back to rework`,
-      });
-    }
-    if (RECOMPUTE_TRIGGERS.has('IN_PROGRESS' as ServiceOrderStatus)) {
-      await this.triggerQueueRecompute(order.serviceVisit.siteId);
-    }
+    // The car is back in the shop's queue awaiting assignment — not in service.
+    await this.prisma.serviceVisit.update({
+      where: { id: order.serviceVisitId },
+      data: { status: 'QUEUED' as any },
+    });
+    await this.statusHistory.record({
+      entityType: 'ServiceVisit',
+      entityId: order.serviceVisitId,
+      fromStatus: order.serviceVisit.status,
+      toStatus: 'QUEUED',
+      changedByUserId: userId,
+      reasonCode: 'REWORK_REOPEN',
+      notes: `ServiceOrder ${id} failed QC and needs reassignment`,
+    });
+
+    // Put the ticket back in the waiting line so the recompute ranks it again.
+    await this.syncQueueTicket(order.serviceVisitId, 'APPROVED' as ServiceOrderStatus);
+    await this.triggerQueueRecompute(order.serviceVisit.siteId);
 
     this.logger.log(
       `ServiceOrder ${id} sent to rework (#${priorCount + 1}, ${dto.reasonCode}) by ${userId}`,
@@ -1131,6 +1186,44 @@ export class ServiceOrdersService {
    * Trigger a queue recompute for the given site.
    * Failures are logged but do not block the calling operation.
    */
+  /**
+   * CR-2026-084 — mirror a ServiceOrder transition onto the visit's queue ticket.
+   *
+   * Called before the recompute so the ticket is already in its new state when the
+   * scheduler runs. A ticket entering IN_SERVICE also surrenders its queue position:
+   * the car is no longer waiting, and leaving a stale rank behind made it collide
+   * with the positions handed to the tickets still in line.
+   */
+  private async syncQueueTicket(
+    serviceVisitId: string,
+    toStatus: ServiceOrderStatus,
+  ): Promise<void> {
+    const target = ORDER_TO_TICKET_STATUS[toStatus];
+    if (!target) return;
+
+    const ticket = await this.prisma.queueTicket.findUnique({
+      where: { serviceVisitId },
+      select: { id: true, displayStatus: true },
+    });
+    // Never resurrect a ticket that has already been closed out or cancelled.
+    if (!ticket || ['COMPLETED', 'CANCELLED'].includes(ticket.displayStatus)) return;
+    if (ticket.displayStatus === target) return;
+
+    await this.prisma.queueTicket.update({
+      where: { id: ticket.id },
+      data: {
+        displayStatus: target as any,
+        // Out of the waiting line while in service; re-ranked by the next recompute
+        // when it goes back to WAITING.
+        ...(target === 'IN_SERVICE' ? { queueRank: null, readyForDispatch: false } : {}),
+      },
+    });
+
+    this.logger.log(
+      `QueueTicket ${ticket.id} display status ${ticket.displayStatus} -> ${target} (order ${toStatus})`,
+    );
+  }
+
   private async triggerQueueRecompute(siteId: string): Promise<void> {
     try {
       await this.schedulingService.recomputeQueue(siteId);

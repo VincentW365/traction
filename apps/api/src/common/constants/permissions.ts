@@ -30,6 +30,10 @@ export const PERMISSIONS = {
   SERVICE_ORDER_UPDATE: 'service_order:update',
   SERVICE_ORDER_ASSIGN: 'service_order:assign',
   SERVICE_ORDER_STATUS: 'service_order:status',
+  // CR-2026-084 — read-only view of service orders. The two GET endpoints used to
+  // be gated on SERVICE_ORDER_CREATE, which technicians do not hold, so their own
+  // job's order 403'd and the Pause / Resume / Ready-for-QC controls never rendered.
+  SERVICE_ORDER_VIEW: 'service_order:view',
 
   // Config
   CONFIG_VIEW: 'config:view',
@@ -119,6 +123,7 @@ const SERVICE_ADVISOR_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.APPOINTMENT_CREATE,
   PERMISSIONS.APPOINTMENT_UPDATE,
   PERMISSIONS.APPOINTMENT_CANCEL,
+  PERMISSIONS.SERVICE_ORDER_VIEW,
   PERMISSIONS.SERVICE_ORDER_CREATE,
   PERMISSIONS.SERVICE_ORDER_UPDATE,
   PERMISSIONS.SERVICE_ORDER_ASSIGN,
@@ -136,6 +141,9 @@ const SERVICE_ADVISOR_PERMISSIONS: PermissionKey[] = [
 
 const TECHNICIAN_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.QUEUE_VIEW,
+  // CR-2026-084 — a technician must be able to READ the order they are working on;
+  // without this their own job 403'd and they could start work but never finish it.
+  PERMISSIONS.SERVICE_ORDER_VIEW,
   PERMISSIONS.SERVICE_ORDER_STATUS,
   // Inspections: technicians perform/fill inspections (CR-2026-034)
   PERMISSIONS.INSPECTION_VIEW,

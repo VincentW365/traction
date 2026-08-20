@@ -2,6 +2,7 @@
 
 import { useState, FormEvent } from 'react';
 import { useAuth } from '../../../hooks/use-auth';
+import { landingRouteForRole } from '../../../lib/landing-route';
 
 export default function LoginPage() {
   const { user, loading, error, login } = useAuth();
@@ -11,7 +12,8 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false);
 
   if (user && !loading) {
-    window.location.href = '/check-in';
+    // CR-2026-084 — land each role on a screen it can actually use.
+    window.location.href = landingRouteForRole(user.roleCode);
     return null;
   }
 

@@ -8,12 +8,25 @@ import { WalkInsService } from '../walk-ins.service';
 function build(requiresMileage: boolean) {
   const prisma: any = {
     site: { findUnique: vi.fn(async () => ({ id: 's1', code: 'BERT-01', timezone: 'America/Jamaica', isActive: true })) },
-    customer: { findUnique: vi.fn(async () => ({ id: 'c1', firstName: 'A', lastName: 'B', phone: 'x' })) },
+    customer: {
+      findUnique: vi.fn(async () => ({
+        id: 'c1', firstName: 'A', lastName: 'B', phone: 'x',
+        notificationOptInSms: false, notificationOptInEmail: false,
+      })),
+      update: vi.fn(async () => ({})),
+    },
     vehicle: { findUnique: vi.fn(async () => ({ id: 'v1', customerId: 'c1', plateNumber: 'P', make: 'M', model: 'Mo', modelYear: 2015 })), update: vi.fn(async () => ({})) },
     serviceType: { findMany: vi.fn(async () => [{ id: 'st1', code: 'OIL-01', baseDurationMinutes: 30, requiresMileage }]) },
     serviceVisit: { findFirst: vi.fn(async () => null) },
-    // canned tx → callback (ticket generation etc.) never executes
-    $transaction: vi.fn(async () => ({ serviceVisit: { id: 'sv1' }, queueTicket: { ticketNumber: 'A001' }, statusToken: 'tok' })),
+    // canned tx → callback (ticket generation etc.) never executes.
+    // CR-2026-084 — the walk-in now also raises a DRAFT service order from the
+    // selected services, so the canned result has to carry one.
+    $transaction: vi.fn(async () => ({
+      serviceVisit: { id: 'sv1' },
+      queueTicket: { ticketNumber: 'A001' },
+      statusToken: 'tok',
+      serviceOrder: { id: 'so1', items: [{ id: 'soi1' }] },
+    })),
   };
   const statusHistory = { record: vi.fn(async () => ({})) };
   const audit = { log: vi.fn(async () => ({})) };

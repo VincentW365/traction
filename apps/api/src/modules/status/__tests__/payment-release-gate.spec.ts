@@ -24,6 +24,9 @@ function build(orderPaymentStatuses: string[]) {
     serviceVisit: { update: vi.fn(async () => ({ id: 'sv1' })) },
     vehicle: { update: vi.fn(async () => ({})) },
     resourceOccupancy: { updateMany: vi.fn(async () => ({ count: 0 })) },
+    // CR-2026-084 — closing a visit now also closes its queue ticket, which this
+    // path previously left reading IN_SERVICE forever.
+    queueTicket: { updateMany: vi.fn(async () => ({ count: 1 })) },
   };
   const prisma: any = {
     serviceVisit: { findUnique: vi.fn(async () => visit) },

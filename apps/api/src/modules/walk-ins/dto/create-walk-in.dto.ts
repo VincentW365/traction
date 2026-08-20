@@ -107,4 +107,17 @@ export class CreateWalkInDto {
   @IsOptional()
   @IsString()
   overrideReason?: string;
+
+  // CR-2026-084 — notification consent, matching the appointment check-in path.
+  // The walk-in screen collected these but had nowhere to send them, so a
+  // customer's answer was silently discarded and they stayed opted out.
+  @ApiPropertyOptional({ description: 'Customer consents to SMS updates (captured at intake, audited)' })
+  @IsOptional()
+  @IsBoolean()
+  notificationOptInSms?: boolean;
+
+  @ApiPropertyOptional({ description: 'Customer consents to email updates (captured at intake, audited)' })
+  @IsOptional()
+  @IsBoolean()
+  notificationOptInEmail?: boolean;
 }

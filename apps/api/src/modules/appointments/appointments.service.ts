@@ -164,7 +164,7 @@ export class AppointmentsService {
 
   async findBySite(
     siteId: string,
-    filters: { date?: string; status?: string },
+    filters: { date?: string; status?: string; customerId?: string },
   ) {
     const where: Record<string, unknown> = { siteId };
 
@@ -177,6 +177,14 @@ export class AppointmentsService {
 
     if (filters.status) {
       where.status = filters.status;
+    }
+
+    // CR-2026-084 — the check-in screen needs THIS customer's appointments. It used
+    // to request the whole site's day and filter only by status, so after selecting
+    // a customer the staff member was shown every active booking at the site, each
+    // with its own live "Check In" button — a real risk of checking in the wrong car.
+    if (filters.customerId) {
+      where.customerId = filters.customerId;
     }
 
     return this.prisma.appointment.findMany({

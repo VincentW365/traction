@@ -46,6 +46,8 @@ interface ServiceType {
   family: string;
   baseDurationMinutes: number;
   partsPrepositionRequired?: boolean;
+  // CR-2026-084 — drives whether "Mileage In" is genuinely required (DMAIC Rule 5).
+  requiresMileage?: boolean;
 }
 
 interface CheckInResponse {
@@ -120,7 +122,12 @@ export default function CheckInPage() {
   const today = new Date().toISOString().split('T')[0];
   const appointmentsQuery = useQuery({
     queryKey: ['appointments', siteId, today, selectedCustomer?.id],
-    queryFn: () => api.get<AppointmentResult[]>(`/appointments?siteId=${siteId}&date=${today}`),
+    // CR-2026-084 — scope to the selected customer. The customer id was in the query
+    // KEY but never in the request, so this listed every active booking at the site.
+    queryFn: () =>
+      api.get<AppointmentResult[]>(
+        `/appointments?siteId=${siteId}&date=${today}&customerId=${selectedCustomer!.id}`,
+      ),
     enabled: !!selectedCustomer && !!selectedVehicle,
     // CR-2026-070 — RESCHEDULED appointments are still active and checkable-in.
     select: (data) => data.filter((a) =>
@@ -133,7 +140,9 @@ export default function CheckInPage() {
   const serviceTypesQuery = useQuery({
     queryKey: ['service-types'],
     queryFn: () => api.get<ServiceType[]>('/service-types'),
-    enabled: showWalkInForm,
+    // CR-2026-084 — also needed once a vehicle is picked, so the intake form knows
+    // whether mileage is actually required rather than always claiming it is.
+    enabled: showWalkInForm || !!selectedVehicle,
   });
   // Searchable walk-in services — match name, family, or code (selections persist).
   const filteredServices = (serviceTypesQuery.data ?? []).filter((st) =>
@@ -179,6 +188,8 @@ export default function CheckInPage() {
       oilGrade?: string;
       vehicleWeightClass?: string;
       color?: string;
+      notificationOptInSms?: boolean;
+      notificationOptInEmail?: boolean;
     }) => api.post<CheckInResponse>('/walk-ins', payload),
     onSuccess: (data) => {
       setSuccessResult({
@@ -223,6 +234,24 @@ export default function CheckInPage() {
     setVehicleColor('');
   }
 
+  /**
+   * CR-2026-084 — is a mileage reading actually required right now?
+   *
+   * The label was hard-coded to "Mileage In *" for every visit and nothing enforced
+   * it, so it was both misleading and unenforced. DMAIC Rule 5 is bidirectional —
+   * the server rejects a missing reading on a service job AND a supplied reading on
+   * a job that does not take one — so the honest answer depends on the services in
+   * play: the walk-in selection if that form is open, otherwise the customer's
+   * appointments for today.
+   */
+  const mileageRequiringCodes = new Set(
+    (serviceTypesQuery.data ?? []).filter((st) => st.requiresMileage).map((st) => st.code),
+  );
+  const activeServiceCodes = showWalkInForm
+    ? selectedServiceCodes
+    : (appointmentsQuery.data ?? []).flatMap((a) => a.services.map((s) => s.serviceType.code));
+  const mileageRequired = activeServiceCodes.some((code) => mileageRequiringCodes.has(code));
+
   function handleWalkInSubmit() {
     if (!selectedCustomer || !selectedVehicle || selectedServiceCodes.length === 0) return;
     walkInMutation.mutate({
@@ -235,6 +264,11 @@ export default function CheckInPage() {
       oilGrade: (oilGrade === 'Other' ? (oilGradeOther.trim() || 'Other') : oilGrade) || undefined,
       vehicleWeightClass: vehicleWeightClass || undefined,
       color: vehicleColor || undefined,
+      // CR-2026-084 — the consent checkboxes were rendered and toggled on this page
+      // but never sent on the walk-in path, so a customer's answer was discarded and
+      // they stayed opted out. The appointment path always sent them.
+      notificationOptInSms: notifyOptInSms,
+      notificationOptInEmail: notifyOptInEmail,
     });
   }
 
@@ -427,10 +461,17 @@ export default function CheckInPage() {
               <h3 className="text-sm font-semibold text-slate-700">Intake Details</h3>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="input-label">Mileage In *</label>
+                  <label className="input-label">
+                    Mileage In{mileageRequired ? ' *' : ''}
+                  </label>
                   <input type="number" value={mileageIn} onChange={(e) => setMileageIn(e.target.value)}
                     placeholder="e.g., 45230" min="0"
                     className="input-field" />
+                  {mileageRequired && !mileageIn && (
+                    <p className="text-[11px] text-amber-700 mt-1">
+                      Required for the selected service.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="input-label">Vehicle Weight</label>

@@ -12,6 +12,13 @@ function buildService() {
     serviceOrderPause: { create: vi.fn(async () => ({})), updateMany: vi.fn(async () => ({ count: 1 })) },
     serviceOrderRework: { count: vi.fn(async () => 0), create: vi.fn(async () => ({})) },
     serviceVisit: { update: vi.fn(async () => ({})) },
+    // CR-2026-084 — rework now also ends any open assignment and returns the
+    // queue ticket to the waiting line.
+    technicianAssignment: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    queueTicket: {
+      findUnique: vi.fn(async () => ({ id: 'qt-1', displayStatus: 'IN_SERVICE' })),
+      update: vi.fn(async () => ({})),
+    },
   };
   prisma.$transaction = vi.fn(async (cb: any) => cb(prisma));
 
@@ -97,19 +104,44 @@ describe('ServiceOrder pause/resume/rework (CR-2026-001, recording-only)', () =>
   });
 
   // --- REWORK --------------------------------------------------------------
-  it('opens rework from QC: returns to IN_PROGRESS, clears completedAt, records a rework row', async () => {
+  /**
+   * CR-2026-084 — rework returns the order to APPROVED, not IN_PROGRESS.
+   *
+   * Sending work to QC already ends the technician's assignment, so the old
+   * behaviour left the order reading "in progress" with nobody assigned to it and
+   * no way for any technician to pick it up. A failed QC now puts the job back in
+   * the queue to be assigned again like any other work.
+   */
+  it('opens rework from QC: returns to APPROVED for reassignment, clears timestamps, records a rework row', async () => {
     vi.spyOn(h.service, 'findById').mockResolvedValue(order('QC') as any);
     await h.service.openRework('so-1', { reasonCode: 'QC_FAIL_BRAKES', description: 'pads not seated' } as any, 'user-1');
 
     expect(h.prisma.serviceOrder.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: 'IN_PROGRESS', completedAt: null } }),
+      expect.objectContaining({ data: { status: 'APPROVED', completedAt: null, startedAt: null } }),
     );
     expect(h.prisma.serviceOrderRework.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ reasonCode: 'QC_FAIL_BRAKES', reworkCount: 1 }) }),
     );
-    // Rework reuses existing IN_PROGRESS semantics: visit re-syncs and queue recomputes.
-    expect(h.prisma.serviceVisit.update).toHaveBeenCalled();
+    // No open assignment may survive an order going back out for assignment.
+    expect(h.prisma.technicianAssignment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ serviceOrderId: 'so-1', endedAt: null }),
+      }),
+    );
+    // The car rejoins the queue rather than staying "in service".
+    expect(h.prisma.serviceVisit.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'QUEUED' }) }),
+    );
     expect(h.recompute).toHaveBeenCalledWith('site-1');
+  });
+
+  it('rework puts the queue ticket back in the waiting line', async () => {
+    vi.spyOn(h.service, 'findById').mockResolvedValue(order('QC') as any);
+    await h.service.openRework('so-1', { reasonCode: 'QC_FAIL_BRAKES' } as any, 'user-1');
+
+    expect(h.prisma.queueTicket.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ displayStatus: 'WAITING' }) }),
+    );
   });
 
   it('rejects rework when the order is not in QC', async () => {

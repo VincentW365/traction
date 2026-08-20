@@ -54,7 +54,15 @@ export class WalkInsService {
       }),
       this.prisma.customer.findUnique({
         where: { id: data.customerId },
-        select: { id: true, firstName: true, lastName: true, phone: true },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          // CR-2026-084 — needed to persist only an actual consent CHANGE.
+          notificationOptInSms: true,
+          notificationOptInEmail: true,
+        },
       }),
       this.prisma.vehicle.findUnique({
         where: { id: data.vehicleId },
@@ -232,6 +240,30 @@ export class WalkInsService {
           },
         });
 
+        // 5b. CR-2026-084 — persist the services chosen at registration.
+        // Previously these codes were validated and then discarded, so a walk-in
+        // had no record of what it came in for: every "Services" display fell back
+        // to the literal "Walk-in service", and staff had to re-pick the same
+        // services to raise the order. A walk-in now gets the same DRAFT order an
+        // appointment produces, so the rest of the flow is identical from here on.
+        const serviceOrder = await tx.serviceOrder.create({
+          data: {
+            serviceVisitId: serviceVisit.id,
+            advisorUserId: userId,
+            status: 'DRAFT',
+            items: {
+              create: uniqueCodes.map((code) => {
+                const st = serviceTypeMap.get(code)!;
+                return {
+                  serviceTypeId: st.id,
+                  estimateMinutes: st.baseDurationMinutes,
+                };
+              }),
+            },
+          },
+          include: { items: { include: { serviceType: true } } },
+        });
+
         // Update vehicle weight class if provided
         if (data.vehicleWeightClass) {
           await tx.vehicle.update({
@@ -254,7 +286,7 @@ export class WalkInsService {
           });
         }
 
-        return { serviceVisit, queueTicket, statusToken };
+        return { serviceVisit, queueTicket, statusToken, serviceOrder };
       },
       {
         isolationLevel: 'Serializable',
@@ -272,10 +304,58 @@ export class WalkInsService {
       changedByUserId: userId,
     });
 
+    // CR-2026-084 — capture notification consent, mirroring the check-in path.
+    // Only an actual change is written, and every change is audited.
+    const optInUpdate: { notificationOptInSms?: boolean; notificationOptInEmail?: boolean } = {};
+    if (
+      data.notificationOptInSms !== undefined &&
+      data.notificationOptInSms !== customer.notificationOptInSms
+    ) {
+      optInUpdate.notificationOptInSms = data.notificationOptInSms;
+    }
+    if (
+      data.notificationOptInEmail !== undefined &&
+      data.notificationOptInEmail !== customer.notificationOptInEmail
+    ) {
+      optInUpdate.notificationOptInEmail = data.notificationOptInEmail;
+    }
+    if (Object.keys(optInUpdate).length > 0) {
+      const before = {
+        notificationOptInSms: customer.notificationOptInSms,
+        notificationOptInEmail: customer.notificationOptInEmail,
+      };
+      await this.prisma.customer.update({
+        where: { id: data.customerId },
+        data: optInUpdate,
+      });
+      await this.audit.log({
+        actorUserId: userId,
+        action: AUDIT_ACTIONS.CUSTOMER_NOTIFICATION_OPTIN,
+        entityType: 'Customer',
+        entityId: data.customerId,
+        beforeJson: before,
+        afterJson: { ...before, ...optInUpdate },
+        reasonCode: 'WALKIN_CAPTURE',
+        notes: 'Notification consent captured at walk-in registration',
+      });
+    }
+
+    // CR-2026-084 — the auto-raised DRAFT order is a real status transition too.
+    await this.statusHistory.record({
+      entityType: 'ServiceOrder',
+      entityId: result.serviceOrder.id,
+      fromStatus: null,
+      toStatus: 'DRAFT',
+      changedByUserId: userId,
+      reasonCode: 'WALK_IN_INTAKE',
+      notes: 'Raised automatically from the services selected at walk-in registration',
+    });
+
     this.logger.log(
       `[WALK_IN] Registered walk-in → ` +
         `ServiceVisit ${result.serviceVisit.id}, ` +
-        `Ticket ${result.queueTicket.ticketNumber}`,
+        `Ticket ${result.queueTicket.ticketNumber}, ` +
+        `ServiceOrder ${result.serviceOrder.id} (${result.serviceOrder.items.length} item(s))`,
     );
 
     // -----------------------------------------------------------------------

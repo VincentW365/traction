@@ -67,9 +67,14 @@ export class SchedulingService {
         orderBy: { checkinSequence: 'asc' },
       });
 
+      // CR-2026-084 — deliberately NO early return here. This used to `return` when
+      // the queue was empty, which skipped the `queue.recomputed` emit at the end of
+      // the method, so the boards and the lobby display never heard about the change
+      // that emptied the queue and kept showing the last car indefinitely. Every step
+      // below is a no-op on an empty list, so falling through is safe and the event
+      // always fires.
       if (tickets.length === 0) {
-        this.logger.log(`No active tickets for site ${siteId}`);
-        return;
+        this.logger.log(`No active tickets for site ${siteId} — clearing the board`);
       }
 
       // 3. Evaluate parts readiness for each ticket
