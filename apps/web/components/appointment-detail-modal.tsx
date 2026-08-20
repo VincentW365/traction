@@ -175,6 +175,24 @@ export function AppointmentDetailModal({
                 <div><p className="input-label">Priority</p><div className="mt-1"><StatusBadge status={result.priorityClass} /></div></div>
                 <div><p className="input-label">ETA</p><p className="text-sm font-semibold text-slate-900 mt-1">{result.etaStartAt ? fmtTime(result.etaStartAt) : 'Pending'}</p></div>
               </div>
+
+              {/*
+                CR-2026-085 — the status link is minted for appointments too, and the
+                API has always returned it here, but this panel never rendered it. That
+                is why the link appeared to exist only for walk-ins.
+              */}
+              {result.customerStatusUrl && (
+                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-left">
+                  <p className="text-[11px] uppercase tracking-wider text-blue-600 mb-1">Customer Status Link</p>
+                  <code className="block text-xs text-slate-700 break-all">
+                    {typeof window !== 'undefined' ? window.location.origin : ''}{result.customerStatusUrl}
+                  </code>
+                  <p className="text-[11px] text-blue-700 mt-1.5">
+                    Also available any time from the ticket, if the customer loses it.
+                  </p>
+                </div>
+              )}
+
               <button onClick={onClose} className="btn-primary text-xs mt-6">Done</button>
             </div>
           )}

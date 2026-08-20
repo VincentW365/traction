@@ -226,29 +226,21 @@ export class ServiceVisitCompletionController {
       }
     }
 
-    // P4(c) GOV-005: vehicle-release payment gate. Releasing (status -> CLOSED)
-    // is blocked unless every service order's payment is cleared, OR a manager
-    // records an audited exception. Cleared = PAID / ON_ACCOUNT / WAIVED.
+    // CR-2026-085 — GOV-005's vehicle-release payment gate was REMOVED at the
+    // owner's direction. Payment is settled in the external POS, not in Traction,
+    // so blocking close-out here stalled the front desk on a status this system is
+    // not the source of truth for. Closing a visit is now purely operational.
+    //
+    // Payment state is still RECORDED on each ServiceOrder and still reportable —
+    // it simply no longer gates release. Re-introducing a gate is a business-rule
+    // decision (docs/03_Business_Rules.md, GOV-005), not a code tweak.
     const PAYMENT_CLEARED = ['PAID', 'ON_ACCOUNT', 'WAIVED'];
     const unpaidOrders = (visit.serviceOrders ?? []).filter(
       (so) => !PAYMENT_CLEARED.includes(so.paymentStatus),
     );
     if (unpaidOrders.length > 0) {
-      if (body.paymentReleaseOverride !== true) {
-        throw new BadRequestException(
-          'Cannot release vehicle: payment is not cleared. A manager exception is required.',
-        );
-      }
-      if (!['ADMIN'].includes(user.role)) {
-        throw new BadRequestException(
-          'Only a manager or admin can authorize a payment-release exception.',
-        );
-      }
-      if (!body.paymentReleaseOverrideReason?.trim()) {
-        throw new BadRequestException(
-          'A reason is required to authorize a payment-release exception.',
-        );
-      }
+      // Not a block — an audit breadcrumb, so "released before payment cleared"
+      // remains answerable after the fact.
       await this.audit.log({
         actorUserId: user.sub,
         action: AUDIT_ACTIONS.PAYMENT_RELEASE_OVERRIDE,
@@ -257,9 +249,11 @@ export class ServiceVisitCompletionController {
         beforeJson: {
           unpaidOrders: unpaidOrders.map((o) => ({ id: o.id, paymentStatus: o.paymentStatus })),
         },
-        afterJson: { released: true },
-        reasonCode: 'PAYMENT_RELEASE_OVERRIDE',
-        notes: body.paymentReleaseOverrideReason,
+        afterJson: { released: true, gateEnforced: false },
+        reasonCode: 'RELEASED_PAYMENT_NOT_CLEARED',
+        notes:
+          body.paymentReleaseOverrideReason?.trim() ||
+          'Visit closed with payment not cleared (payment gate disabled — settled in the external POS).',
       });
     }
 

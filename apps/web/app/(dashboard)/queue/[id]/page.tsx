@@ -45,6 +45,9 @@ interface TicketDetail {
       services: Array<{ serviceType: { name: string; code: string } }>;
     } | null;
     serviceOrders?: Array<{ items: Array<{ serviceType: { name: string; code: string } }> }>;
+    // CR-2026-085 — surfaced so staff can re-send the customer's status link.
+    customerStatusToken?: string | null;
+    tokenExpiresAt?: string | null;
   };
   // CR-2026-084 — server-resolved service list (appointment services + order items).
   serviceDescription?: string;
@@ -119,14 +122,18 @@ const ORDER_ACTIONS: Record<string, Array<{ label: string; toStatus: string; sty
   // CR-2026-069 — the assigned technician starts work from their own device, not the
   // front desk / manager. No "Start Work" here once ASSIGNED.
   ASSIGNED: [],
+  // CR-2026-085 — labels now describe what pressing the button actually does.
+  // "Send to QC" moved work INTO the quality check, so calling that "Complete
+  // Quality Check" would have been backwards; the button that genuinely completes
+  // the check is the one at the QC stage, which used to say "Ready to Invoice".
   IN_PROGRESS: [
-    { label: 'Send to QC', toStatus: 'QC', style: 'btn-primary' },
+    { label: 'Mark Work Complete', toStatus: 'QC', style: 'btn-primary' },
     { label: 'Wait Parts', toStatus: 'WAITING_PARTS', style: 'btn-secondary' },
     { label: 'Wait Customer', toStatus: 'WAITING_CUSTOMER', style: 'btn-secondary' },
   ],
   WAITING_PARTS: [{ label: 'Resume Work', toStatus: 'IN_PROGRESS', style: 'btn-success' }],
   WAITING_CUSTOMER: [{ label: 'Resume Work', toStatus: 'IN_PROGRESS', style: 'btn-success' }],
-  QC: [{ label: 'Ready to Invoice', toStatus: 'READY_TO_INVOICE', style: 'btn-primary' }],
+  QC: [{ label: 'Complete Quality Check', toStatus: 'READY_TO_INVOICE', style: 'btn-primary' }],
   READY_TO_INVOICE: [{ label: 'Close Order', toStatus: 'CLOSED', style: 'btn-success' }],
 };
 
@@ -179,14 +186,14 @@ export default function QueueTicketDetailPage() {
   const [reworkReason, setReworkReason] = useState<string>(REWORK_REASONS[0].value);
   const [reworkDesc, setReworkDesc] = useState('');
 
-  // Completion form state
+  // Completion form state. CR-2026-085 — the payment-release exception state is
+  // gone with GOV-005; closing a visit no longer depends on payment.
   const [showCompletion, setShowCompletion] = useState(false);
   const [mileageOut, setMileageOut] = useState('');
   // CR-2026-072 — completion captures optional mileage + optional notes (oil dropped here).
   const [completionNotes, setCompletionNotes] = useState('');
-  // P4(c) payment-release manager exception (GOV-005)
-  const [paymentOverride, setPaymentOverride] = useState(false);
-  const [paymentOverrideReason, setPaymentOverrideReason] = useState('');
+  // CR-2026-085 — feedback for the "copy customer link" button.
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // Abandon / no-show form state (CR-2026-018, P3)
   const [showAbandonForm, setShowAbandonForm] = useState(false);
@@ -283,9 +290,13 @@ export default function QueueTicketDetailPage() {
   const changeOrderStatus = useMutation({
     mutationFn: ({ orderId, toStatus }: { orderId: string; toStatus: string }) =>
       api.post(`/service-orders/${orderId}/status`, { toStatus }),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['service-orders'] });
       queryClient.invalidateQueries({ queryKey: ['queue-ticket', ticketId] });
+      // CR-2026-085 — passing the quality check is the moment the car is finished,
+      // so hand the close-out straight to the user instead of making them hunt for
+      // a collapsed panel further down the page.
+      if (variables.toStatus === 'READY_TO_INVOICE') setShowCompletion(true);
     },
   });
 
@@ -401,11 +412,10 @@ export default function QueueTicketDetailPage() {
     mutationFn: () => api.patch(`/service-visits/${ticket!.serviceVisit.id}/completion`, {
       mileageOut: mileageOut ? parseInt(mileageOut, 10) : undefined,
       notes: completionNotes.trim() || undefined,
-      paymentReleaseOverride: paymentOverride || undefined,
-      paymentReleaseOverrideReason: paymentOverride ? (paymentOverrideReason || undefined) : undefined,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['queue-ticket', ticketId] });
+      queryClient.invalidateQueries({ queryKey: ['service-orders'] });
       setShowCompletion(false);
     },
   });
@@ -460,15 +470,21 @@ export default function QueueTicketDetailPage() {
   const orders = ordersQuery.data ?? [];
   const canOverride = !ticket.overrideActive && DISPATCHABLE_STATUSES.includes(ticket.displayStatus);
   const showCompletionSection = sv.status === 'READY_FOR_PICKUP' || sv.status === 'QC';
-  // P4(c): vehicle-release payment gate (GOV-005). Cleared = PAID/ON_ACCOUNT/WAIVED.
-  const PAYMENT_CLEARED = ['PAID', 'ON_ACCOUNT', 'WAIVED'];
-  const unpaidOrders = orders.filter((o) => !PAYMENT_CLEARED.includes(o.paymentStatus));
-  const paymentBlocked = unpaidOrders.length > 0;
   const isManager = ['ADMIN'].includes(user?.roleCode ?? '');
+  // CR-2026-085 — the customer's own status link, available for every visit rather
+  // than only on the walk-in confirmation screen.
+  const statusLink =
+    sv.customerStatusToken && typeof window !== 'undefined'
+      ? `${window.location.origin}/status/${sv.customerStatusToken}`
+      : null;
+  const statusLinkExpired =
+    !!sv.tokenExpiresAt && new Date(sv.tokenExpiresAt).getTime() < Date.now();
+  // CR-2026-085 — GOV-005 withdrawn: payment lives in the external POS and no longer
+  // gates release. The only thing that can hold up a close-out now is a mileage-out
+  // reading lower than mileage-in, which is a data error rather than a policy.
   const releaseDisabled =
     completeVisit.isPending ||
-    (!!mileageOut && sv.mileageIn != null && parseInt(mileageOut, 10) < sv.mileageIn) ||
-    (paymentBlocked && (!isManager || !paymentOverride || !paymentOverrideReason.trim()));
+    (!!mileageOut && sv.mileageIn != null && parseInt(mileageOut, 10) < sv.mileageIn);
   const canAbandon =
     ABANDON_ROLES.includes(user?.roleCode ?? '') &&
     sv.sourceType !== 'HISTORICAL_IMPORT' &&
@@ -696,6 +712,56 @@ export default function QueueTicketDetailPage() {
           </div>
         </div>
       </div>
+
+      {/*
+        CR-2026-085 — Customer Status Link.
+        This link is minted for EVERY visit, but the only place it was ever shown was
+        the walk-in success screen, so in practice it existed only for walk-ins and
+        only for the few seconds that screen was open. The ticket is the right home
+        for it: staff can pull it up for any active visit, at any point, and re-send
+        it to a customer who lost it.
+      */}
+      {statusLink && (
+        <div className="card mb-6 border-blue-200">
+          <div className="card-header bg-blue-50/50 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-blue-900">Customer Status Link</h2>
+            {statusLinkExpired && (
+              <span className="badge bg-amber-100 text-amber-800 text-[10px]">Expired</span>
+            )}
+          </div>
+          <div className="card-body space-y-2">
+            <p className="text-xs text-slate-500">
+              Text or hand this to the customer — it shows their place in line and
+              progress, with no prices and only a masked plate.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <code className="flex-1 min-w-[12rem] text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1.5 text-slate-700 break-all">
+                {statusLink}
+              </code>
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(statusLink).then(
+                    () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); },
+                    () => setLinkCopied(false),
+                  );
+                }}
+                className="btn-secondary text-xs"
+              >
+                {linkCopied ? 'Copied' : 'Copy'}
+              </button>
+              <a href={statusLink} target="_blank" rel="noopener noreferrer" className="btn-secondary text-xs">
+                Open
+              </a>
+            </div>
+            {statusLinkExpired && (
+              <p className="text-[11px] text-amber-700">
+                This link has passed its 24-hour window and will show the customer an
+                expired notice.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Service Orders Section */}
       <div className="card mb-6">
@@ -1197,74 +1263,93 @@ export default function QueueTicketDetailPage() {
         </div>
       </div>
 
-      {/* Visit Completion Section */}
+      {/* CR-2026-085 — one prominent button; the details live in a modal. */}
       {showCompletionSection && (
         <div className="card mb-6 border-emerald-200">
-          <div className="card-header bg-emerald-50/50">
-            <h2 className="text-sm font-semibold text-emerald-900">Complete Visit</h2>
+          <div className="card-body flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-emerald-900">
+                {sv.status === 'QC' ? 'Work finished — awaiting quality check' : 'Ready for collection'}
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Closing takes one step. Mileage out and notes are optional.
+              </p>
+            </div>
+            <button onClick={() => setShowCompletion(true)} className="btn-success text-sm px-5 py-2.5 font-semibold">
+              Close Visit
+            </button>
           </div>
-          <div className="card-body">
-            {!showCompletion ? (
-              <button onClick={() => setShowCompletion(true)} className="btn-success text-sm">
-                Record Completion Details
-              </button>
-            ) : (
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 gap-3">
-                  <div>
-                    <label className="input-label">Mileage Out <span className="text-slate-400 font-normal">(optional)</span></label>
-                    <input type="number" value={mileageOut} onChange={(e) => setMileageOut(e.target.value)} className="input-field" placeholder={sv.mileageIn != null ? `e.g., ${sv.mileageIn}` : 'Optional'} />
-                    {sv.mileageIn != null && mileageOut && parseInt(mileageOut, 10) < sv.mileageIn && (
-                      <p className="text-[10px] text-red-500 mt-1">Must be ≥ mileage in ({sv.mileageIn.toLocaleString()})</p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="input-label">Notes <span className="text-slate-400 font-normal">(optional)</span></label>
-                    <textarea value={completionNotes} onChange={(e) => setCompletionNotes(e.target.value)} rows={3} className="input-field" placeholder="Any notes about this completed visit" />
-                  </div>
-                </div>
-                {/* P4(c): vehicle-release payment gate (GOV-005) */}
-                {paymentBlocked && (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 space-y-2">
-                    <p className="text-xs font-semibold text-amber-800">
-                      Payment not cleared on {unpaidOrders.length} order{unpaidOrders.length > 1 ? 's' : ''}
-                      {' '}({unpaidOrders.map((o) => o.paymentStatus).join(', ')}). Release is blocked.
-                    </p>
-                    {isManager ? (
-                      <>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input type="checkbox" checked={paymentOverride} onChange={(e) => setPaymentOverride(e.target.checked)}
-                            className="rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
-                          <span className="text-xs text-amber-800">Authorize manager release exception (audited)</span>
-                        </label>
-                        {paymentOverride && (
-                          <input type="text" value={paymentOverrideReason} onChange={(e) => setPaymentOverrideReason(e.target.value)}
-                            className="input-field text-xs" placeholder="Reason for releasing without cleared payment (required)" />
-                        )}
-                      </>
-                    ) : (
-                      <p className="text-xs text-amber-700">A manager or admin must authorize release without cleared payment.</p>
-                    )}
-                  </div>
+        </div>
+      )}
+
+      {/* Close-out modal */}
+      {showCompletion && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="close-visit-title"
+          onClick={() => !completeVisit.isPending && setShowCompletion(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h2 id="close-visit-title" className="text-base font-semibold text-slate-900">Close Visit</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {ticket.ticketNumber} · {sv.customer.firstName} {sv.customer.lastName} · {sv.vehicle.plateNumber}
+              </p>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              <div>
+                <label className="input-label">Mileage Out <span className="text-slate-400 font-normal">(optional)</span></label>
+                <input
+                  type="number"
+                  autoFocus
+                  value={mileageOut}
+                  onChange={(e) => setMileageOut(e.target.value)}
+                  className="input-field"
+                  placeholder={sv.mileageIn != null ? `e.g., ${sv.mileageIn.toLocaleString()}` : 'Optional'}
+                />
+                {sv.mileageIn != null && mileageOut && parseInt(mileageOut, 10) < sv.mileageIn && (
+                  <p className="text-[11px] text-red-500 mt-1">Must be ≥ mileage in ({sv.mileageIn.toLocaleString()})</p>
                 )}
-                {completeVisit.isError && (
-                  <p className="text-xs text-red-600">{completeVisit.error instanceof Error ? completeVisit.error.message : 'Failed to complete'}</p>
-                )}
-                {completeVisit.isSuccess && (
-                  <p className="text-xs text-emerald-600 font-medium">Visit completed successfully.</p>
-                )}
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => completeVisit.mutate()}
-                    disabled={releaseDisabled}
-                    className="btn-success text-xs"
-                  >
-                    {completeVisit.isPending ? 'Completing...' : 'Complete & Close Visit'}
-                  </button>
-                  <button onClick={() => setShowCompletion(false)} className="btn-secondary text-xs">Cancel</button>
-                </div>
               </div>
-            )}
+              <div>
+                <label className="input-label">Notes <span className="text-slate-400 font-normal">(optional)</span></label>
+                <textarea
+                  value={completionNotes}
+                  onChange={(e) => setCompletionNotes(e.target.value)}
+                  rows={3}
+                  className="input-field"
+                  placeholder="Anything worth recording about this visit"
+                />
+              </div>
+              {completeVisit.isError && (
+                <p className="text-xs text-red-600">
+                  {completeVisit.error instanceof Error ? completeVisit.error.message : 'Failed to close the visit'}
+                </p>
+              )}
+            </div>
+
+            <div className="px-5 py-4 border-t border-slate-100 flex gap-2 justify-end">
+              <button
+                onClick={() => setShowCompletion(false)}
+                disabled={completeVisit.isPending}
+                className="btn-secondary text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => completeVisit.mutate()}
+                disabled={releaseDisabled}
+                className="btn-success text-sm px-5 font-semibold"
+              >
+                {completeVisit.isPending ? 'Closing…' : 'Close Visit'}
+              </button>
+            </div>
           </div>
         </div>
       )}

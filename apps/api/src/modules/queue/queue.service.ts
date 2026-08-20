@@ -505,20 +505,26 @@ export class QueueService {
       return { message: 'Visit already closed.', serviceVisitId };
     }
 
-    // CR-2026-084 — GOV-005 also applies here. This one-click button sits on the
-    // dispatch and queue boards and used to close a visit with no payment check at
-    // all, while the fuller "Complete & Close Visit" flow on the ticket enforced it.
-    // Two doors out, one of them unlocked. The manager exception lives on the other
-    // flow (it needs a typed reason to audit), so this path refuses and points there.
+    // CR-2026-085 — the payment gate was removed at the owner's direction (payment
+    // is settled in the external POS). Both close-out paths now behave the same:
+    // neither blocks, and both leave an audit trail if payment was not cleared.
     const PAYMENT_CLEARED = ['PAID', 'ON_ACCOUNT', 'WAIVED'];
     const unpaidOrders = (visit.serviceOrders ?? []).filter(
       (so) => !PAYMENT_CLEARED.includes(so.paymentStatus),
     );
     if (unpaidOrders.length > 0) {
-      throw new BadRequestException(
-        `Cannot release vehicle: payment is not cleared on ${unpaidOrders.length} order(s). ` +
-          'Use "Complete & Close Visit" on the ticket, where a manager can authorise an audited exception.',
-      );
+      await this.auditService.log({
+        actorUserId: userId,
+        action: AUDIT_ACTIONS.PAYMENT_RELEASE_OVERRIDE,
+        entityType: 'ServiceVisit',
+        entityId: serviceVisitId,
+        beforeJson: {
+          unpaidOrders: unpaidOrders.map((o) => ({ id: o.id, paymentStatus: o.paymentStatus })),
+        },
+        afterJson: { released: true, gateEnforced: false },
+        reasonCode: 'RELEASED_PAYMENT_NOT_CLEARED',
+        notes: 'Vehicle marked picked up with payment not cleared (payment gate disabled).',
+      });
     }
 
     await this.prisma.$transaction(async (tx) => {

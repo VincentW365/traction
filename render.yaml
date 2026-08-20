@@ -17,6 +17,9 @@ services:
     runtime: node
     plan: free
     rootDir: .
+    # CR-2026-085 — stated explicitly rather than relying on Render's default, so a
+    # push to master always redeploys (and therefore always re-runs migrate + seed).
+    autoDeploy: true
     # Migrate + seed run here (once per deploy), not in startCommand: the free plan
     # spins down when idle, and seeding on every wake would add ~10s to each cold start.
     # Seeding is idempotent and required — it is how the active inspection template,
@@ -44,6 +47,7 @@ services:
     runtime: node
     plan: free
     rootDir: .
+    autoDeploy: true
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec turbo build --filter=@bsop/web
     startCommand: pnpm --filter @bsop/web start
     envVars:

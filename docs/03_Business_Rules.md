@@ -387,13 +387,25 @@ The CSV version lives in `data/business_rules.csv`.
 - **Phase introduced:** 2
 
 
-### GOV-005 — Vehicle release should require payment cleared or approved account exception before final closure.
+### GOV-005 — ~~Vehicle release should require payment cleared or approved account exception before final closure.~~ **WITHDRAWN**
 
 - **Category:** Governance
-- **Example:** Cashier cannot close order until POS confirms payment.
-- **Exception:** Charge account / fleet account with approved terms.
-- **System response:** Block final close or mark on-account exception.
-- **Phase introduced:** 2
+- **Status:** **Withdrawn 2026-08-20 (CR-2026-085), by owner direction.**
+- **Rationale:** Payment is settled in the external POS, which is the source of truth
+  for it. Traction only ever mirrored a `paymentStatus` field, so gating close-out on
+  it stalled the front desk on data this system does not own, and every real release
+  became a manager override — an exception that fires every time is not a control.
+- **System response now:** Closing a visit is a purely operational action and is never
+  blocked by payment. `ServiceOrder.paymentStatus` is still recorded and still
+  reportable. If a visit is closed while payment is not cleared, an `AuditLog` row is
+  written (`reasonCode: RELEASED_PAYMENT_NOT_CLEARED`) so the question "was this car
+  released before payment cleared?" stays answerable after the fact.
+- **Applies to both close-out paths:** the one-click *Picked Up* on the boards and
+  *Close Visit* on the ticket now behave identically.
+- **Re-introducing a gate is a business-rule decision, not a code tweak** — it needs a
+  change request under `docs/21_Approval_Gates.md`, and ideally a real POS integration
+  rather than a mirrored field.
+- **Phase introduced:** 2 · **Withdrawn:** CR-2026-085
 
 
 
