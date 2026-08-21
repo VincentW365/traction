@@ -48,7 +48,7 @@ export class CheckInDto {
 
   @ApiPropertyOptional({
     description:
-      'Vehicle service class (SEDAN_CLASS, SUV_LIGHT, SUV_HEAVY, PICKUP, VAN, TRUCK, UNKNOWN_REQUIRES_REVIEW). Drives mobile-jack eligibility (DMAIC Rule 3).',
+      'Vehicle service class (SEDAN_CLASS, SUV_CLASS, UNKNOWN_REQUIRES_REVIEW). Drives mobile-jack eligibility (DMAIC Rule 3) — only SEDAN_CLASS is eligible.',
     enum: VehicleServiceClass,
   })
   @IsOptional()

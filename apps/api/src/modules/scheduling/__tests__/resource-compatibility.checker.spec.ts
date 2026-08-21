@@ -245,14 +245,14 @@ describe('DMAIC Rule 3: mobile jack sedan-class gate', () => {
     expect(res.compatible).toBe(true);
   });
 
-  it('ineligible: non-sedan (SUV_HEAVY) is blocked with the Rule 3 reason code', () => {
-    const res = isResourceCompatible(mobile(), makeJob({ vehicleServiceClass: 'SUV_HEAVY' }));
+  it('ineligible: non-sedan (SUV_CLASS) is blocked with the Rule 3 reason code', () => {
+    const res = isResourceCompatible(mobile(), makeJob({ vehicleServiceClass: 'SUV_CLASS' }));
     expect(res.compatible).toBe(false);
     expect(res.reasonCode).toBe(MOBILE_JACK_NON_SEDAN_REASON);
   });
 
   it('ineligible: PICKUP / VAN / TRUCK are all blocked on a mobile jack', () => {
-    for (const cls of ['PICKUP', 'VAN', 'TRUCK'] as const) {
+    for (const cls of ['SUV_CLASS', 'SUV_CLASS', 'SUV_CLASS'] as const) {
       const res = isResourceCompatible(mobile(), makeJob({ vehicleServiceClass: cls }));
       expect(res.compatible, cls).toBe(false);
       expect(res.reasonCode, cls).toBe(MOBILE_JACK_NON_SEDAN_REASON);
@@ -273,7 +273,7 @@ describe('DMAIC Rule 3: mobile jack sedan-class gate', () => {
 
   it('non-mobile resources are unaffected by service class (SUV on a stand is fine)', () => {
     const stand = makeResource({ liftType: 'heavy', maxVehicleWeight: 'HEAVY' });
-    const res = isResourceCompatible(stand, makeJob({ vehicleServiceClass: 'SUV_HEAVY', vehicleWeightClass: 'HEAVY' }));
+    const res = isResourceCompatible(stand, makeJob({ vehicleServiceClass: 'SUV_CLASS', vehicleWeightClass: 'HEAVY' }));
     expect(res.compatible).toBe(true);
   });
 });

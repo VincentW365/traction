@@ -10,13 +10,10 @@
 
 export type VehicleWeight = 'LIGHT' | 'STANDARD' | 'HEAVY';
 export type ResourceCategory = 'BAY' | 'OVERFLOW' | 'LIGHT_SLOT' | 'POWER_WASH' | 'EXTERNAL';
+// CR-2026-087 — two working classes plus the review state (was seven members).
 export type VehicleServiceClass =
   | 'SEDAN_CLASS'
-  | 'SUV_LIGHT'
-  | 'SUV_HEAVY'
-  | 'PICKUP'
-  | 'VAN'
-  | 'TRUCK'
+  | 'SUV_CLASS'
   | 'UNKNOWN_REQUIRES_REVIEW';
 
 /** Reason code emitted when a mobile jack is blocked for a non-sedan vehicle (DMAIC Rule 3). */

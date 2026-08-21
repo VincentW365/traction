@@ -15,11 +15,11 @@ describe('planConfirmation', () => {
 
   it('keeps the vehicle weight when the suggestion has no weight', () => {
     const row: PendingClassRow = {
-      vehicleId: 'v2', suggestedServiceClass: 'VAN', suggestedWeightClass: null,
+      vehicleId: 'v2', suggestedServiceClass: 'SUV_CLASS', suggestedWeightClass: null,
       currentServiceClass: null, currentWeightClass: 'STANDARD',
     };
     const d = planConfirmation(row);
-    expect(d.serviceClass).toBe('VAN');
+    expect(d.serviceClass).toBe('SUV_CLASS');
     expect(d.weightClass).toBe('STANDARD');
     expect(d.becomesMobileJackEligible).toBe(false); // not sedan
   });
@@ -49,7 +49,7 @@ describe('summarizeDecisions', () => {
   it('aggregates totals, applied vs defaulted, by target class, newly eligible', () => {
     const rows: PendingClassRow[] = [
       { vehicleId: 'a', suggestedServiceClass: 'SEDAN_CLASS', suggestedWeightClass: 'LIGHT', currentServiceClass: null, currentWeightClass: null },
-      { vehicleId: 'b', suggestedServiceClass: 'SUV_HEAVY', suggestedWeightClass: 'HEAVY', currentServiceClass: null, currentWeightClass: null },
+      { vehicleId: 'b', suggestedServiceClass: 'SUV_CLASS', suggestedWeightClass: 'HEAVY', currentServiceClass: null, currentWeightClass: null },
       { vehicleId: 'c', suggestedServiceClass: null, suggestedWeightClass: null, currentServiceClass: null, currentWeightClass: null },
       { vehicleId: 'd', suggestedServiceClass: null, suggestedWeightClass: null, currentServiceClass: null, currentWeightClass: null },
     ];
@@ -58,6 +58,6 @@ describe('summarizeDecisions', () => {
     expect(s.appliedSuggestion).toBe(2);
     expect(s.defaultedUnknown).toBe(2);
     expect(s.newlyMobileJackEligible).toBe(1);
-    expect(s.byTargetServiceClass).toEqual({ SEDAN_CLASS: 1, SUV_HEAVY: 1, UNKNOWN_REQUIRES_REVIEW: 2 });
+    expect(s.byTargetServiceClass).toEqual({ SEDAN_CLASS: 1, SUV_CLASS: 1, UNKNOWN_REQUIRES_REVIEW: 2 });
   });
 });

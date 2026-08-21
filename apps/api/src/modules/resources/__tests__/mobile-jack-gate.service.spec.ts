@@ -39,7 +39,7 @@ describe('ResourcesService.assignToResource — mobile-jack gate (DMAIC Rule 3)'
   });
 
   it('ineligible non-sedan: blocks mobile-jack assignment without override', async () => {
-    const h = build('mobile', 'SUV_HEAVY');
+    const h = build('mobile', 'SUV_CLASS');
     await expect(h.service.assignToResource('r1', 't1', null, 'u1')).rejects.toThrow(/sedan-only/i);
     expect(h.prisma.resourceOccupancy.upsert).not.toHaveBeenCalled();
     expect(h.audit.log).not.toHaveBeenCalled();
@@ -52,7 +52,7 @@ describe('ResourcesService.assignToResource — mobile-jack gate (DMAIC Rule 3)'
   });
 
   it('manager override: assigns non-sedan to mobile jack AND writes an audit record', async () => {
-    const h = build('mobile', 'SUV_HEAVY');
+    const h = build('mobile', 'SUV_CLASS');
     await expect(
       h.service.assignToResource('r1', 't1', null, 'u1', { mobileJackOverride: true, overrideReason: 'manager ok' }),
     ).resolves.toBeDefined();
@@ -63,7 +63,7 @@ describe('ResourcesService.assignToResource — mobile-jack gate (DMAIC Rule 3)'
   });
 
   it('non-mobile resource: service class is irrelevant (SUV on a stand is fine)', async () => {
-    const h = build('heavy', 'SUV_HEAVY');
+    const h = build('heavy', 'SUV_CLASS');
     await expect(h.service.assignToResource('r1', 't1', null, 'u1')).resolves.toBeDefined();
     expect(h.audit.log).not.toHaveBeenCalled();
   });

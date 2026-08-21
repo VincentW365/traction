@@ -9,7 +9,7 @@ import { type VehicleSuggestionRule } from '../../../common/helpers/vehicle-clas
 
 const RULES: VehicleSuggestionRule[] = [
   { makePattern: 'Toyota', modelPattern: 'Corolla', yearFrom: null, yearTo: null, suggestedWeightClass: 'LIGHT', suggestedServiceClass: 'SEDAN_CLASS' },
-  { makePattern: 'Toyota', modelPattern: 'Hilux', yearFrom: null, yearTo: null, suggestedWeightClass: 'STANDARD', suggestedServiceClass: 'PICKUP' },
+  { makePattern: 'Toyota', modelPattern: 'Hilux', yearFrom: null, yearTo: null, suggestedWeightClass: 'STANDARD', suggestedServiceClass: 'SUV_CLASS' },
 ];
 
 describe('planClassificationBackfill', () => {

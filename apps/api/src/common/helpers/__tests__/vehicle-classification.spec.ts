@@ -6,8 +6,8 @@ import {
 
 const RULES: VehicleSuggestionRule[] = [
   { makePattern: 'Toyota', modelPattern: 'Corolla', yearFrom: null, yearTo: null, suggestedWeightClass: 'LIGHT', suggestedServiceClass: 'SEDAN_CLASS' },
-  { makePattern: 'Toyota', modelPattern: 'Hilux', yearFrom: 2015, yearTo: 2024, suggestedWeightClass: 'STANDARD', suggestedServiceClass: 'PICKUP' },
-  { makePattern: 'Toyota', modelPattern: 'Land Cruiser', yearFrom: null, yearTo: null, suggestedWeightClass: 'HEAVY', suggestedServiceClass: 'SUV_HEAVY' },
+  { makePattern: 'Toyota', modelPattern: 'Hilux', yearFrom: 2015, yearTo: 2024, suggestedWeightClass: 'STANDARD', suggestedServiceClass: 'SUV_CLASS' },
+  { makePattern: 'Toyota', modelPattern: 'Land Cruiser', yearFrom: null, yearTo: null, suggestedWeightClass: 'HEAVY', suggestedServiceClass: 'SUV_CLASS' },
   // generic make-level fallback rule (no model)
   { makePattern: 'Suzuki', modelPattern: null, yearFrom: null, yearTo: null, suggestedWeightClass: 'LIGHT', suggestedServiceClass: 'SEDAN_CLASS' },
 ];
@@ -15,7 +15,7 @@ const RULES: VehicleSuggestionRule[] = [
 describe('suggestVehicleClass', () => {
   it('HIGH: make + model + year within rule range', () => {
     const r = suggestVehicleClass({ make: 'Toyota', model: 'Hilux', modelYear: 2020 }, RULES);
-    expect(r).toEqual({ suggestedServiceClass: 'PICKUP', suggestedWeightClass: 'STANDARD', confidence: 'HIGH', source: 'MAKE_MODEL_LOOKUP' });
+    expect(r).toEqual({ suggestedServiceClass: 'SUV_CLASS', suggestedWeightClass: 'STANDARD', confidence: 'HIGH', source: 'MAKE_MODEL_LOOKUP' });
   });
 
   it('MEDIUM: make + model match, rule has no year bounds', () => {
@@ -27,7 +27,7 @@ describe('suggestVehicleClass', () => {
   it('MEDIUM: make + model match but vehicle year unknown for a year-bounded rule', () => {
     const r = suggestVehicleClass({ make: 'Toyota', model: 'Hilux', modelYear: null }, RULES);
     expect(r.confidence).toBe('MEDIUM');
-    expect(r.suggestedServiceClass).toBe('PICKUP');
+    expect(r.suggestedServiceClass).toBe('SUV_CLASS');
   });
 
   it('year OUT of range excludes the rule → NONE when no other match', () => {

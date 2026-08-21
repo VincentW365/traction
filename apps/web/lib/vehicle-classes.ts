@@ -3,13 +3,10 @@
 // Keep in sync with prisma/schema.prisma (VehicleServiceClass / VehicleWeightClass /
 // ClassificationConfidence).
 
+// CR-2026-087 — two working classes plus the review state (was seven members).
 export type VehicleServiceClass =
   | 'SEDAN_CLASS'
-  | 'SUV_LIGHT'
-  | 'SUV_HEAVY'
-  | 'PICKUP'
-  | 'VAN'
-  | 'TRUCK'
+  | 'SUV_CLASS'
   | 'UNKNOWN_REQUIRES_REVIEW';
 
 export type VehicleWeightClass = 'LIGHT' | 'STANDARD' | 'HEAVY';
@@ -18,11 +15,7 @@ export type ClassificationConfidence = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
 
 export const SERVICE_CLASSES: { value: VehicleServiceClass; label: string }[] = [
   { value: 'SEDAN_CLASS', label: 'Sedan (mobile-jack eligible)' },
-  { value: 'SUV_LIGHT', label: 'SUV — Light' },
-  { value: 'SUV_HEAVY', label: 'SUV — Heavy' },
-  { value: 'PICKUP', label: 'Pickup' },
-  { value: 'VAN', label: 'Van' },
-  { value: 'TRUCK', label: 'Truck' },
+  { value: 'SUV_CLASS', label: 'SUV' },
   { value: 'UNKNOWN_REQUIRES_REVIEW', label: 'Unknown — needs review' },
 ];
 

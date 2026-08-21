@@ -188,13 +188,21 @@ enum VehicleWeightClass {
 
 // DMAIC Rule 3: operational vehicle service class. Only SEDAN_CLASS is eligible
 // for mobile jacks; everything else (incl. UNKNOWN) is blocked unless overridden.
+//
+// CR-2026-087 — reduced from seven members to two working classes plus the
+// review state, at the owner's direction: the shop only distinguishes sedans
+// from SUVs, and the per-category service times are defined for exactly those
+// two. SUV_LIGHT, SUV_HEAVY, PICKUP, VAN and TRUCK were folded into SUV_CLASS
+// (749 vehicles; there were no TRUCK rows).
+//
+// UNKNOWN_REQUIRES_REVIEW is deliberately KEPT. Rule 3 is fail-safe — anything
+// not positively a sedan is mobile-jack blocked — so collapsing "never
+// classified" into SUV_CLASS would still be safe for the jack gate, but it would
+// make an unreviewed vehicle indistinguishable from a confirmed SUV and quietly
+// empty the classification queue.
 enum VehicleServiceClass {
   SEDAN_CLASS
-  SUV_LIGHT
-  SUV_HEAVY
-  PICKUP
-  VAN
-  TRUCK
+  SUV_CLASS
   UNKNOWN_REQUIRES_REVIEW
 }
 

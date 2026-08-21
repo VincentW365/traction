@@ -74,16 +74,13 @@ describe('ClassificationService.getQueue', () => {
 describe('ClassificationService.getStats', () => {
   it('returns live-only counts, percent classified, mobile-jack eligible, and breakdowns', async () => {
     const h = build();
-    // Call order: totalLive, unclassified, then 7 serviceClasses (SEDAN first), then 4 confidences (HIGH,MEDIUM,LOW,NONE)
+    // CR-2026-087 — three service classes now (was seven), so the call order is
+    // totalLive, unclassified, 3 serviceClasses (SEDAN first), then 4 confidences.
     h.prisma.vehicle.count
       .mockResolvedValueOnce(100) // totalLive
       .mockResolvedValueOnce(60) // unclassified
       .mockResolvedValueOnce(10) // SEDAN_CLASS
-      .mockResolvedValueOnce(8) // SUV_LIGHT
-      .mockResolvedValueOnce(5) // SUV_HEAVY
-      .mockResolvedValueOnce(7) // PICKUP
-      .mockResolvedValueOnce(4) // VAN
-      .mockResolvedValueOnce(3) // TRUCK
+      .mockResolvedValueOnce(27) // SUV_CLASS
       .mockResolvedValueOnce(3) // UNKNOWN_REQUIRES_REVIEW
       .mockResolvedValueOnce(0) // HIGH
       .mockResolvedValueOnce(30) // MEDIUM
@@ -97,7 +94,7 @@ describe('ClassificationService.getStats', () => {
     expect(out.classified).toBe(40);
     expect(out.percentClassified).toBe(40);
     expect(out.mobileJackEligible).toBe(10);
-    expect(out.confirmedByClass).toHaveLength(7);
+    expect(out.confirmedByClass).toHaveLength(3);
     expect(out.confirmedByClass[0]).toEqual({ serviceClass: 'SEDAN_CLASS', count: 10 });
     expect(out.pendingByConfidence).toEqual([
       { confidence: 'HIGH', count: 0 },
@@ -232,7 +229,7 @@ describe('ClassificationService.bulkConfirm', () => {
 
     const out = await h.service.bulkConfirm('u1', [
       { vehicleId: 'v1', serviceClass: 'SEDAN_CLASS' },
-      { vehicleId: 'v2', serviceClass: 'PICKUP' },
+      { vehicleId: 'v2', serviceClass: 'SUV_CLASS' },
     ]);
 
     expect(out.confirmed).toBe(1);
