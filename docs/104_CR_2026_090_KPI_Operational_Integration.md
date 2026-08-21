@@ -79,6 +79,14 @@ diagnostics, machine-shop work, and so on).
 
 ### Why the seed under-claims on purpose
 
+> **Extended by [CR-2026-091](105_CR_2026_091_Pending_Benchmark_Review.md).** An
+> unmapped service now produces a job that is **unrated and flagged for benchmark
+> review** — no adjusted rating and no absolute band either — held out of every
+> technician denominator, listed in a review queue, and rateable for the first time once
+> the mapping exists. The "safe direction" below was correct but incomplete: it still
+> let the absolute band show a result on a job whose unaccounted work was the reason it
+> ran long.
+
 An unmapped service is **not** neutral — it forces `CUSTOM_UNBENCHMARKED`. That is the
 safe direction, because the failure modes are not symmetric:
 

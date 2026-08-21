@@ -108,6 +108,17 @@ export interface PackageDetectionResult {
    * than reporting a dead end.
    */
   resolvableByAxleQualifier: boolean;
+  /**
+   * CR-2026-091 — the job is unbenchmarked because CONFIGURATION is missing, not
+   * because the work has no agreed standard.
+   *
+   * The distinction decides how the job is rated. "This is a gearbox strip, which has
+   * no standard" is a finished answer, and the job is reported as unbenchmarked. "A
+   * service on this job was never mapped" is an outstanding admin task, and rating the
+   * technician on it would charge them for someone else's paperwork. The second gets
+   * no rating at all until the gap is closed.
+   */
+  requiresBenchmarkReview: boolean;
   reason: string | null;
 }
 
@@ -174,6 +185,7 @@ export function detectPackage(
     awaitingAxleQualifierServiceTypeIds: [] as string[],
     disqualifiedByAxleServiceTypeIds: [] as string[],
     resolvableByAxleQualifier: false,
+    requiresBenchmarkReview: false,
   };
 
   if (lines.length === 0) {
@@ -294,11 +306,18 @@ export function detectPackage(
     forcesCustom.length === 0 &&
     disqualifiedByAxle.length === 0;
 
+  // Something a person can supply is missing. Note what is NOT here: a service
+  // deliberately marked as forcing a custom benchmark, and a combination that simply
+  // is not one of the approved packages. Those are answers, not gaps — no amount of
+  // configuration turns rear-brake work into the front-brake standard.
+  const requiresBenchmarkReview = unmapped.length > 0 || awaitingAxle.length > 0;
+
   if (blockers.length > 0) {
     return {
       ...base,
       packageType: 'CUSTOM_UNBENCHMARKED',
       resolvableByAxleQualifier,
+      requiresBenchmarkReview,
       reason: blockers.join(' '),
     };
   }
@@ -314,6 +333,7 @@ export function detectPackage(
       ...base,
       packageType: 'CUSTOM_UNBENCHMARKED',
       resolvableByAxleQualifier: false,
+      requiresBenchmarkReview: false,
       reason:
         components.length === 0
           ? 'None of this job’s services map to a benchmark component.'
@@ -325,6 +345,7 @@ export function detectPackage(
     ...base,
     packageType: match.packageType,
     resolvableByAxleQualifier: false,
+    requiresBenchmarkReview: false,
     reason: null,
   };
 }

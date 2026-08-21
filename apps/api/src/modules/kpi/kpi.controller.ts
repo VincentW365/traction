@@ -186,6 +186,35 @@ export class KpiController {
     return this.reporting.getSharedJobs(query);
   }
 
+  /**
+   * CR-2026-091 — jobs held because benchmark configuration is missing.
+   *
+   * These carry no rating and sit outside every technician denominator. The queue
+   * exists so a temporary gap does not become a permanent one: nothing else surfaces
+   * them, and an unrated job that nobody looks at is an unrated job forever.
+   */
+  @Get('reports/benchmark-review')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({
+    summary: 'Jobs awaiting benchmark configuration, with the services blocking each',
+  })
+  benchmarkReviewQueue() {
+    return this.kpi.listPendingBenchmarkReview();
+  }
+
+  @Post('orders/:serviceOrderId/resolve-benchmark-review')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({
+    summary:
+      'Rate a job that was held for benchmark review, now the mapping exists. Refuses any job that already carries a rating.',
+  })
+  resolveBenchmarkReview(
+    @Param('serviceOrderId', ParseUUIDPipe) serviceOrderId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.kpi.resolveBenchmarkReview(serviceOrderId, user.sub);
+  }
+
   // -------------------------------------------------------------------------
   // Work segments (CR-2026-090)
   // -------------------------------------------------------------------------

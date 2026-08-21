@@ -1850,7 +1850,13 @@ enum KpiApprovalStatus {
 enum KpiEligibilityStatus {
   ELIGIBLE
   MISSING_VEHICLE_CLASS
+  /// The work genuinely has no agreed standard — a deliberate answer, not a gap.
   NOT_BENCHMARKED
+  /// CR-2026-091 — configuration is missing, so the job cannot be rated YET. Distinct
+  /// from NOT_BENCHMARKED because it is an outstanding task rather than a conclusion,
+  /// and because a job in this state carries NO rating of any kind: an admin gap must
+  /// never read as a technician's poor result.
+  PENDING_BENCHMARK_REVIEW
   MISSING_TIMESTAMPS
   NO_PRIMARY_TECHNICIAN
   CANCELLED_OR_VOID
@@ -1978,6 +1984,22 @@ model WorkOrderKpiSnapshot {
 
   eligibilityStatus KpiEligibilityStatus @default(ELIGIBLE) @map("eligibility_status")
   eligibilityReason String?              @map("eligibility_reason")
+
+  /// CR-2026-091 — the job could not be benchmarked because CONFIGURATION is missing
+  /// (a service nobody has mapped, or a brake line with no axle recorded), not because
+  /// the work genuinely has no agreed standard.
+  ///
+  /// Kept as its own fact rather than inferred from the reason text, because the two
+  /// cases need opposite handling: a deliberate custom job is a finished answer, while
+  /// this is an outstanding task. Recorded when the snapshot opens and refreshed on
+  /// scope changes, so the classification reflects the mapping in force at the time
+  /// rather than whatever the mapping happens to say when a report is run.
+  pendingBenchmarkReview Boolean @default(false) @map("pending_benchmark_review")
+
+  /// Set when a manager re-rated the job after supplying the missing configuration.
+  /// Always audited — this is the one path that gives a finished job its first rating.
+  benchmarkResolvedAt       DateTime? @map("benchmark_resolved_at") @db.Timestamptz
+  benchmarkResolvedByUserId String?   @map("benchmark_resolved_by_user_id") @db.Uuid
 
   primaryTechnicianId String? @map("primary_technician_id") @db.Uuid
 

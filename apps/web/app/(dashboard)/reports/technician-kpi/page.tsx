@@ -54,7 +54,29 @@ interface Dashboard {
   byIneligibility: Record<string, number>;
   unbenchmarkedJobs: number;
   sharedOrReassignedJobs: number;
+  // CR-2026-091 — unrated because configuration is missing, not because the work has
+  // no standard. An outstanding task rather than a conclusion.
+  pendingBenchmarkReviewJobs: number;
+  byTechnician: TechnicianRow[];
   approvedExclusionMinutesByReason: Array<{ reasonCode: string; minutes: number; events: number }>;
+}
+
+/**
+ * Per-technician numbers come from the API, which owns the rule about what counts.
+ * Rolling them up here from the job rows would repeat that rule in a second place and
+ * cap it at whatever the job table happened to fetch.
+ */
+interface TechnicianRow {
+  technicianId: string;
+  technicianCode: string | null;
+  technicianName: string | null;
+  jobs: number;
+  onTarget: number;
+  onTargetPercent: number;
+  medianVarianceMinutes: number | null;
+  p75VarianceMinutes: number | null;
+  excludedPendingReview: number;
+  excludedSharedOrReassigned: number;
 }
 
 interface JobRow {
@@ -76,6 +98,8 @@ interface JobRow {
   onTarget: boolean;
   eligibilityStatus: string;
   eligibilityReason: string | null;
+  pendingBenchmarkReview: boolean;
+  benchmarkResolvedAt: string | null;
   isSharedOrReassigned: boolean;
   hadRework: boolean;
   policyVersion: number;
@@ -148,36 +172,17 @@ export default function TechnicianKpiPage() {
   const d = dash.data;
   const rows = jobs.data ?? [];
 
-  // Per-technician roll-up. Shared and reassigned jobs are excluded from individual
-  // comparison — attributing a whole elapsed time to whoever happened to finish it
-  // would be a lie — but they stay in the job table below.
-  const byTech = new Map<string, { name: string; code: string; jobs: number; onTarget: number; variances: number[] }>();
-  for (const r of rows) {
-    if (r.isSharedOrReassigned || r.eligibilityStatus !== 'ELIGIBLE' || !r.technicianCode) continue;
-    const key = r.technicianCode;
-    const e = byTech.get(key) ?? {
-      name: r.technicianName ?? key,
-      code: key,
-      jobs: 0,
-      onTarget: 0,
-      variances: [],
-    };
-    e.jobs++;
-    if (r.onTarget) e.onTarget++;
-    if (r.varianceMinutes != null) e.variances.push(r.varianceMinutes);
-    byTech.set(key, e);
-  }
-  const techRows = [...byTech.values()]
-    .map((t) => ({
-      ...t,
-      onTargetPercent: t.jobs > 0 ? Math.round((t.onTarget / t.jobs) * 1000) / 10 : 0,
-      medianVariance:
-        t.variances.length > 0
-          ? [...t.variances].sort((a, b) => a - b)[Math.floor(t.variances.length / 2)]
-          : null,
-      belowThreshold: t.jobs < minJobs,
-    }))
-    .sort((a, b) => b.onTargetPercent - a.onTargetPercent);
+  // Straight from the API. What counts towards a technician's numbers is a domain
+  // rule, and it belongs in one place — a job held for benchmark review is out of the
+  // denominator because nobody had said what to measure it against, not because of
+  // anything a report page should be deciding.
+  const techRows = (d?.byTechnician ?? []).map((t) => ({
+    ...t,
+    name: t.technicianName ?? t.technicianCode ?? t.technicianId,
+    code: t.technicianCode ?? '--',
+    medianVariance: t.medianVarianceMinutes,
+    belowThreshold: t.jobs < minJobs,
+  }));
 
   const buildExport = (): ExportDocument | null => {
     if (!d) return null;
@@ -329,6 +334,37 @@ export default function TechnicianKpiPage() {
             <Stat label="Shared / reassigned" value={String(d.sharedOrReassignedJobs)} hint="excluded from comparison" />
           </div>
 
+          {/* CR-2026-091 — these are somebody's outstanding task, not a conclusion.
+              Unrated jobs that nobody surfaces stay unrated for good. */}
+          {d.pendingBenchmarkReviewJobs > 0 && (
+            <div className="card mb-6 border-amber-200 bg-amber-50">
+              <div className="card-body">
+                <h2 className="text-sm font-semibold text-amber-900">
+                  {d.pendingBenchmarkReviewJobs} job
+                  {d.pendingBenchmarkReviewJobs === 1 ? '' : 's'} awaiting benchmark setup
+                </h2>
+                <p className="text-xs text-amber-800 mt-1 max-w-3xl">
+                  These carry no rating at all — not even an absolute band — because a service
+                  on them is not mapped to a benchmark component yet, or a brake line has no
+                  axle recorded. The work was done; nobody has said what it should be measured
+                  against. They are excluded from every technician&apos;s figures so an
+                  administrative gap never reads as somebody&apos;s poor result.
+                </p>
+                <p className="text-xs text-amber-800 mt-2">
+                  Once the mapping exists, each job can be rated for the first time.
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <Link href="/reports/benchmark-review" className="btn-secondary text-xs py-1 px-3">
+                    Review queue
+                  </Link>
+                  <Link href="/admin/kpi-mapping" className="btn-secondary text-xs py-1 px-3">
+                    KPI mapping
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Per technician */}
           <div className="table-container mb-6">
             <div className="px-5 py-4 border-b border-slate-100">
@@ -464,6 +500,16 @@ export default function TechnicianKpiPage() {
                           <span className={`badge text-[11px] ${KPI_RATING_BADGE[r.adjustedTechnicianRating]}`}>
                             {KPI_RATING_LABEL[r.adjustedTechnicianRating]}
                           </span>
+                        ) : r.pendingBenchmarkReview ? (
+                          /* Amber, not the neutral grey the other ineligible states get:
+                             this one is an action someone can take, and it should not
+                             sit quietly among the settled ones. */
+                          <span
+                            className="badge bg-amber-100 text-amber-800 text-[10px]"
+                            title={r.eligibilityReason ?? ''}
+                          >
+                            awaiting benchmark setup
+                          </span>
                         ) : (
                           <span className="badge bg-slate-100 text-slate-500 text-[10px]" title={r.eligibilityReason ?? ''}>
                             {r.eligibilityStatus.split('_').join(' ').toLowerCase()}
@@ -480,6 +526,11 @@ export default function TechnicianKpiPage() {
                           <span className={`badge text-[11px] ${KPI_RATING_BADGE[r.absoluteCompletionRating]}`}>
                             {KPI_RATING_LABEL[r.absoluteCompletionRating]}
                           </span>
+                        ) : r.pendingBenchmarkReview ? (
+                          /* Deliberately withheld, not missing. The absolute band needs
+                             no benchmark, so it would otherwise show a result here for a
+                             job whose unaccounted work is the likely reason it ran long. */
+                          <span className="text-[10px] text-slate-400">not rated</span>
                         ) : (
                           '--'
                         )}

@@ -100,6 +100,10 @@ export class KpiReportingService {
         onTarget: r.onTarget,
         eligibilityStatus: r.eligibilityStatus,
         eligibilityReason: r.eligibilityReason,
+        // CR-2026-091 — unrated because configuration is missing, not because the
+        // technician did badly. Carried on the row so a CSV keeps the distinction.
+        pendingBenchmarkReview: r.pendingBenchmarkReview,
+        benchmarkResolvedAt: r.benchmarkResolvedAt,
         isSharedOrReassigned: r.isSharedOrReassigned,
         hadRework: r.hadRework,
         // Every row carries the policy it was rated under, so a CSV can be
@@ -317,9 +321,18 @@ export class KpiReportingService {
         isSharedOrReassigned: true,
         hadRework: true,
         primaryTechnicianId: true,
+        pendingBenchmarkReview: true,
       },
     });
 
+    // CR-2026-091 — the denominator rule, stated once.
+    //
+    // A job counts towards a technician's numbers only when it is formally ELIGIBLE.
+    // That excludes, among others, jobs held for benchmark review: the technician did
+    // the work, but nobody had said what to measure it against, so counting it either
+    // way would charge them for an administrative gap. It previously lived only as a
+    // filter in the dashboard page, which meant every other consumer — CSV export, any
+    // future report — had to remember to repeat it.
     const eligible = snapshots.filter((s) => s.eligibilityStatus === 'ELIGIBLE');
     const minutes = eligible
       .map((s) => s.kpiCompletionMinutes)
@@ -334,6 +347,56 @@ export class KpiReportingService {
     const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
 
     const reworked = snapshots.filter((s) => s.hadRework).length;
+
+    // Per-technician roll-up, computed here rather than in the page, so the exclusion
+    // rule above is the one that applies — and so the numbers cover every job in range
+    // rather than the first N rows the job table happened to fetch.
+    //
+    // Shared and reassigned jobs come out too: attributing a whole elapsed time to
+    // whoever happened to finish it would be a lie.
+    const individuallyComparable = eligible.filter(
+      (s) => !s.isSharedOrReassigned && s.primaryTechnicianId,
+    );
+
+    const techIds = [
+      ...new Set(individuallyComparable.map((s) => s.primaryTechnicianId as string)),
+    ];
+    const techs = techIds.length
+      ? await this.prisma.technician.findMany({
+          where: { id: { in: techIds } },
+          select: { id: true, employeeCode: true, userAccount: { select: { fullName: true } } },
+        })
+      : [];
+    const techById = new Map(techs.map((t) => [t.id, t]));
+
+    const byTechnician = techIds
+      .map((id) => {
+        const theirs = individuallyComparable.filter((s) => s.primaryTechnicianId === id);
+        const vs = theirs
+          .map((s) => s.varianceMinutes)
+          .filter((v): v is number => v != null);
+        const t = techById.get(id);
+        return {
+          technicianId: id,
+          technicianCode: t?.employeeCode ?? null,
+          technicianName: t?.userAccount?.fullName ?? null,
+          // Never a rating without the sample it rests on.
+          jobs: theirs.length,
+          onTarget: theirs.filter((s) => s.onTarget).length,
+          onTargetPercent: pct(theirs.filter((s) => s.onTarget).length, theirs.length),
+          medianVarianceMinutes: percentile(vs, 50),
+          p75VarianceMinutes: percentile(vs, 75),
+          // Reported so a manager can see WHY someone's job count is lower than
+          // expected, instead of reading it as a quiet month.
+          excludedPendingReview: snapshots.filter(
+            (s) => s.primaryTechnicianId === id && s.pendingBenchmarkReview,
+          ).length,
+          excludedSharedOrReassigned: snapshots.filter(
+            (s) => s.primaryTechnicianId === id && s.isSharedOrReassigned,
+          ).length,
+        };
+      })
+      .sort((a, b) => b.onTargetPercent - a.onTargetPercent);
 
     const exclusionByReason = await this.prisma.kpiDelayEvent.groupBy({
       by: ['reasonCode'],
@@ -377,6 +440,14 @@ export class KpiReportingService {
       unbenchmarkedJobs: snapshots.filter((s) => s.packageType === 'CUSTOM_UNBENCHMARKED')
         .length,
       sharedOrReassignedJobs: snapshots.filter((s) => s.isSharedOrReassigned).length,
+
+      // CR-2026-091 — jobs held because configuration is missing, reported separately
+      // from jobs that genuinely have no standard. Both are unrated; only this one is
+      // somebody's outstanding task, and a count nobody sees is a gap that never gets
+      // closed. Excluded from every denominator above by the `eligible` filter.
+      pendingBenchmarkReviewJobs: snapshots.filter((s) => s.pendingBenchmarkReview).length,
+
+      byTechnician,
 
       approvedExclusionMinutesByReason: exclusionByReason.map((r) => ({
         reasonCode: r.reasonCode,

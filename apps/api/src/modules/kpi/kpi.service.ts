@@ -199,6 +199,10 @@ export class KpiService {
         primaryTechnicianId: terms.primaryTechnicianId,
         // Times and ratings are filled in at submit-to-QC.
         eligibilityStatus: 'ELIGIBLE' as never,
+        // CR-2026-091 — recorded now, while the mapping that produced it is the one in
+        // force. Deciding this at the finish line would classify the job against a
+        // mapping that may have changed while the work was under way.
+        pendingBenchmarkReview: terms.detection.requiresBenchmarkReview,
       },
     });
 
@@ -279,7 +283,12 @@ export class KpiService {
 
     const packageChanged = terms.packageType !== snapshot.packageType;
     const standardChanged = terms.standardMinutes !== snapshot.standardMinutes;
-    if (!packageChanged && !standardChanged) return;
+    // CR-2026-091 — recording an axle or mapping a service closes the gap without
+    // necessarily moving the package, so this has to be checked in its own right or a
+    // job would stay flagged for review after the thing it was waiting for arrived.
+    const reviewChanged =
+      terms.detection.requiresBenchmarkReview !== snapshot.pendingBenchmarkReview;
+    if (!packageChanged && !standardChanged && !reviewChanged) return;
 
     await this.prisma.workOrderKpiSnapshot.update({
       where: { serviceOrderId },
@@ -287,6 +296,7 @@ export class KpiService {
         packageType: terms.packageType as never,
         // A manager-approved custom standard survives a re-detection.
         standardMinutes: snapshot.customStandardMinutes ?? terms.standardMinutes,
+        pendingBenchmarkReview: terms.detection.requiresBenchmarkReview,
       },
     });
 
@@ -312,6 +322,200 @@ export class KpiService {
         `${snapshot.packageType} (${snapshot.standardMinutes ?? 'n/a'}m) -> ` +
         `${terms.packageType} (${terms.standardMinutes ?? 'n/a'}m)`,
     );
+  }
+
+  /**
+   * CR-2026-091 — rate a finished job that was held for benchmark review.
+   *
+   * Why this is allowed when revising a finalised snapshot generally is not: those two
+   * things look alike but are opposites. The immutability rule exists so a KNOWN result
+   * cannot be rewritten after the fact. A job pending benchmark review has no result to
+   * protect — it was never rated, because nobody had said what to measure it against.
+   * This produces its first rating rather than replacing one.
+   *
+   * Without it, "leave the service unmapped for now" would quietly mean "this job is
+   * never rated", and a temporary administrative gap would become permanent data loss.
+   *
+   * The safeguards that keep this from becoming a way to tune results:
+   *  - It refuses any job that already carries a rating.
+   *  - It re-detects rather than accepting a supplied answer, so the rating comes from
+   *    the mapping the manager configured for ALL jobs, not one chosen for this one.
+   *  - The times are the stored ones. Only the standard was ever missing.
+   *  - Who resolved it and when are recorded on the snapshot and audited.
+   */
+  async resolveBenchmarkReview(serviceOrderId: string, actorUserId: string) {
+    const snapshot = await this.prisma.workOrderKpiSnapshot.findUnique({
+      where: { serviceOrderId },
+    });
+    if (!snapshot) {
+      throw new NotFoundException(`No KPI snapshot for order ${serviceOrderId}`);
+    }
+    if (!snapshot.pendingBenchmarkReview) {
+      throw new BadRequestException(
+        'This job is not awaiting benchmark review. A job that already carries a rating is never re-rated.',
+      );
+    }
+
+    const terms = await this.resolveTerms(serviceOrderId);
+    if (!terms) {
+      throw new BadRequestException('The job’s terms could not be resolved.');
+    }
+
+    if (terms.detection.requiresBenchmarkReview) {
+      throw new BadRequestException(
+        `Still awaiting configuration: ${terms.detection.reason ?? 'a service on this job is not mapped.'}`,
+      );
+    }
+
+    const policy = await this.prisma.kpiPolicy.findUnique({
+      where: { id: snapshot.policyId },
+    });
+    if (!policy) throw new BadRequestException('The policy this job was opened under is missing.');
+
+    const standardMinutes = snapshot.customStandardMinutes ?? terms.standardMinutes;
+
+    const delays = await this.prisma.kpiDelayEvent.findMany({
+      where: { serviceOrderId },
+      select: {
+        startedAt: true,
+        endedAt: true,
+        approvalStatus: true,
+        requestedForExclusion: true,
+      },
+    });
+
+    const result = calculateKpi({
+      firstWorkStartedAt: snapshot.firstWorkStartedAt,
+      firstSubmittedToQcAt: snapshot.firstSubmittedToQcAt,
+      delays: delays as DelaySpan[],
+      standardMinutes,
+      absoluteBands: {
+        excellentMaxMinutes: policy.absoluteExcellentMaxMinutes,
+        meetsTargetMaxMinutes: policy.absoluteMeetsTargetMaxMinutes,
+        needsImprovementMaxMinutes: policy.absoluteNeedsImprovementMaxMinutes,
+      },
+      adjustedTolerances: {
+        meetsToleranceMinutes: policy.meetsToleranceMinutes,
+        needsImprovementToleranceMinutes: policy.needsImprovementToleranceMinutes,
+      },
+    });
+
+    const { eligibilityStatus, eligibilityReason } = this.evaluateEligibility({
+      vehicleClass: snapshot.vehicleClass,
+      packageType: terms.packageType as KpiPackageType,
+      standardMinutes,
+      hasPrimaryTechnician: !!snapshot.primaryTechnicianId,
+      firstWorkStartedAt: snapshot.firstWorkStartedAt,
+      firstSubmittedToQcAt: snapshot.firstSubmittedToQcAt,
+      computedMinutes: result.kpiCompletionMinutes,
+      detectionReason: terms.detection.reason,
+      requiresBenchmarkReview: false,
+    });
+
+    const updated = await this.prisma.workOrderKpiSnapshot.update({
+      where: { serviceOrderId },
+      data: {
+        packageType: terms.packageType as never,
+        standardMinutes,
+        varianceMinutes: result.varianceMinutes,
+        variancePercent: result.variancePercent,
+        absoluteCompletionRating: result.absoluteCompletionRating as never,
+        adjustedTechnicianRating:
+          eligibilityStatus === 'ELIGIBLE' ? (result.adjustedTechnicianRating as never) : null,
+        onTarget: eligibilityStatus === 'ELIGIBLE' ? result.onTarget : false,
+        eligibilityStatus: eligibilityStatus as never,
+        eligibilityReason,
+        pendingBenchmarkReview: false,
+        benchmarkResolvedAt: new Date(),
+        benchmarkResolvedByUserId: actorUserId,
+      },
+    });
+
+    await this.audit.log({
+      actorUserId,
+      action: 'KPI_BENCHMARK_REVIEW_RESOLVED',
+      entityType: 'WorkOrderKpiSnapshot',
+      entityId: snapshot.id,
+      beforeJson: {
+        eligibilityStatus: snapshot.eligibilityStatus,
+        packageType: snapshot.packageType,
+        standardMinutes: snapshot.standardMinutes,
+      },
+      afterJson: {
+        eligibilityStatus,
+        packageType: terms.packageType,
+        standardMinutes,
+        adjustedTechnicianRating: updated.adjustedTechnicianRating,
+      },
+      reasonCode: 'BENCHMARK_REVIEW',
+      notes: `Benchmark configuration supplied; order ${serviceOrderId} rated for the first time.`,
+    });
+
+    this.logger.log(
+      `Benchmark review resolved for order ${serviceOrderId}: ${terms.packageType}, ` +
+        `standard ${standardMinutes ?? 'n/a'}m, ${eligibilityStatus}`,
+    );
+    return updated;
+  }
+
+  /**
+   * Jobs held for benchmark review — the queue that stops a temporary gap becoming a
+   * permanent one.
+   *
+   * These carry no rating and sit outside every technician denominator, so nothing
+   * about them is wrong; but nothing surfaces them either unless something lists them.
+   */
+  async listPendingBenchmarkReview(limit = 200) {
+    const rows = await this.prisma.workOrderKpiSnapshot.findMany({
+      where: { pendingBenchmarkReview: true },
+      orderBy: { firstSubmittedToQcAt: 'desc' },
+      take: Math.min(limit, 1000),
+      include: {
+        serviceOrder: {
+          select: {
+            items: {
+              select: {
+                axlePosition: true,
+                serviceType: { select: { id: true, code: true, name: true } },
+              },
+            },
+            serviceVisit: {
+              select: {
+                queueTicket: { select: { ticketNumber: true } },
+                vehicle: { select: { plateNumber: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const componentMap = await this.getComponentMap();
+
+    return rows.map((r) => ({
+      serviceOrderId: r.serviceOrderId,
+      ticketNumber: r.serviceOrder?.serviceVisit?.queueTicket?.ticketNumber ?? null,
+      plate: r.serviceOrder?.serviceVisit?.vehicle?.plateNumber ?? null,
+      vehicleClass: r.vehicleClass,
+      firstSubmittedToQcAt: r.firstSubmittedToQcAt,
+      rawElapsedMinutes: r.rawElapsedMinutes,
+      eligibilityReason: r.eligibilityReason,
+      // Exactly what is missing, so the queue is actionable rather than a list of
+      // complaints. A service with no active mapping is the usual culprit.
+      blockingServices: (r.serviceOrder?.items ?? [])
+        .filter((i) => {
+          const m = componentMap.get(i.serviceType.id);
+          if (!m) return true;
+          return m.requiresAxleQualifier && i.axlePosition == null;
+        })
+        .map((i) => ({
+          code: i.serviceType.code,
+          name: i.serviceType.name,
+          problem: componentMap.get(i.serviceType.id)
+            ? 'Axle not recorded'
+            : 'Not mapped to a benchmark component',
+        })),
+    }));
   }
 
   /**
@@ -466,7 +670,15 @@ export class KpiService {
       firstSubmittedToQcAt: order.completedAt,
       computedMinutes: result.kpiCompletionMinutes,
       detectionReason: terms?.detection.reason ?? null,
+      // Read from the snapshot where one was opened at start, so the classification
+      // reflects the mapping in force when the job ran rather than whatever the
+      // mapping says now.
+      requiresBenchmarkReview: existing
+        ? existing.pendingBenchmarkReview
+        : (terms?.detection.requiresBenchmarkReview ?? false),
     });
+
+    const pendingReview = eligibilityStatus === 'PENDING_BENCHMARK_REVIEW';
 
     const data = {
       policyId: policy.id,
@@ -481,7 +693,18 @@ export class KpiService {
       kpiCompletionMinutes: result.kpiCompletionMinutes,
       varianceMinutes: result.varianceMinutes,
       variancePercent: result.variancePercent,
-      absoluteCompletionRating: result.absoluteCompletionRating as never,
+      // CR-2026-091 — a job awaiting benchmark configuration carries NO rating of any
+      // kind, not even the absolute band.
+      //
+      // The absolute band needs no benchmark, which is why CR-2026-088 applied it
+      // wherever a time existed. But a job is in this state precisely because it
+      // included work nobody has accounted for, and that unaccounted work is the most
+      // likely reason it ran long. Showing "Below Standard" against it charges the
+      // technician for an administrative gap — an implicitly negative result from a
+      // missing mapping. Left null until the gap is closed.
+      absoluteCompletionRating: pendingReview
+        ? null
+        : (result.absoluteCompletionRating as never),
       // A job that is not formally eligible gets NO adjusted rating, even where the
       // arithmetic produced one — a misleading rating is worse than none.
       adjustedTechnicianRating:
@@ -489,6 +712,7 @@ export class KpiService {
       onTarget: eligibilityStatus === 'ELIGIBLE' ? result.onTarget : false,
       eligibilityStatus: eligibilityStatus as never,
       eligibilityReason,
+      pendingBenchmarkReview: pendingReview,
       primaryTechnicianId: primary?.technicianId ?? null,
       isSharedOrReassigned,
       finalisedAt: new Date(),
@@ -517,6 +741,7 @@ export class KpiService {
     firstSubmittedToQcAt: Date | null;
     computedMinutes: number | null;
     detectionReason: string | null;
+    requiresBenchmarkReview: boolean;
   }): { eligibilityStatus: string; eligibilityReason: string | null } {
     if (!input.firstWorkStartedAt || !input.firstSubmittedToQcAt) {
       return {
@@ -538,6 +763,21 @@ export class KpiService {
       };
     }
     if (input.standardMinutes == null) {
+      // CR-2026-091 — two very different situations reach this line, and conflating
+      // them is what let an admin gap read as a technician's poor result.
+      //
+      // A configuration gap is an outstanding task: someone has not mapped a service,
+      // or an axle was never recorded. The technician did the work; nobody has yet
+      // said what it should be measured against. That job carries NO rating at all
+      // until the gap is closed — see the absolute-rating suppression at the call site.
+      if (input.requiresBenchmarkReview) {
+        return {
+          eligibilityStatus: 'PENDING_BENCHMARK_REVIEW',
+          eligibilityReason:
+            input.detectionReason ??
+            'A service on this job is not mapped to a benchmark component yet.',
+        };
+      }
       return {
         eligibilityStatus: 'NOT_BENCHMARKED',
         eligibilityReason:
