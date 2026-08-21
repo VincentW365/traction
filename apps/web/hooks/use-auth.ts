@@ -1,7 +1,16 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { api, setToken } from '../lib/api-client';
+import { api, setToken, ApiError } from '../lib/api-client';
+import {
+  clearSandboxMarkers,
+  clearSession,
+  getSandboxMarkers,
+  getStoredAccessToken,
+  onSessionEnded,
+  storeSandboxMarkers,
+  storeTokens,
+} from '../lib/session';
 
 interface User {
   id: string;
@@ -20,11 +29,9 @@ interface AuthState {
   sandboxRole: string | null;
 }
 
-// sessionStorage keys (survive page reload within the tab session)
-const TOKEN_KEY = 'bsop_token';
-const REFRESH_KEY = 'bsop_refresh';
-const SANDBOX_RUN_KEY = 'bsop_sandbox_run_id';
-const SANDBOX_ROLE_KEY = 'bsop_sandbox_role';
+// Where the session lives is owned by lib/session, because the API client needs the
+// same keys to refresh an expired token. Two copies of them is how a refresh writes a
+// token nothing else reads.
 
 /**
  * CR-2026-047 — dev sandbox sessions get FULL feature access for testing. The
@@ -39,12 +46,6 @@ function withSandboxAccess(user: User, sandboxRunId: string | null): User {
   return sandboxRunId ? { ...user, roleCode: 'ADMIN' } : user;
 }
 
-/** Forget any dev-sandbox session markers (normal login + logout). */
-function clearSandbox() {
-  if (typeof window === 'undefined') return;
-  sessionStorage.removeItem(SANDBOX_RUN_KEY);
-  sessionStorage.removeItem(SANDBOX_ROLE_KEY);
-}
 
 export function useAuth() {
   const [state, setState] = useState<AuthState>({
@@ -56,26 +57,48 @@ export function useAuth() {
   });
 
   useEffect(() => {
-    const stored = typeof window !== 'undefined'
-      ? sessionStorage.getItem(TOKEN_KEY)
-      : null;
+    const stored = getStoredAccessToken();
     if (stored) {
       setToken(stored);
       // CR-2026-023 — restore the dev-sandbox markers across reloads (the JWT still
       // carries the sandboxRunId claim; sessionStorage mirrors it for the UI).
-      const sandboxRunId = sessionStorage.getItem(SANDBOX_RUN_KEY);
-      const sandboxRole = sessionStorage.getItem(SANDBOX_ROLE_KEY);
+      const { runId: sandboxRunId, role: sandboxRole } = getSandboxMarkers();
       api.get<User>('/auth/me')
         .then((user) => setState({ user: withSandboxAccess(user, sandboxRunId), loading: false, error: null, sandboxRunId, sandboxRole }))
-        .catch(() => {
-          sessionStorage.removeItem(TOKEN_KEY);
-          clearSandbox();
+        .catch((err) => {
+          // Only an actual rejection ends the session. This used to clear the tokens on
+          // ANY failure, so a dropped connection or a restarting API signed the user
+          // out — and, because the access token lasts 15 minutes, so did simply leaving
+          // the tab alone. Expiry is now handled by the client's refresh; anything that
+          // still reaches here and is not a 401/403 is a transport problem, and the
+          // stored session must survive it.
+          const status = err instanceof ApiError ? err.status : 0;
+          if (status !== 401 && status !== 403) {
+            setState({
+              user: null,
+              loading: false,
+              error: 'Could not reach the server. Your session is still active — retry in a moment.',
+              sandboxRunId,
+              sandboxRole,
+            });
+            return;
+          }
+          clearSession();
           setToken(null);
           setState({ user: null, loading: false, error: null, sandboxRunId: null, sandboxRole: null });
         });
     } else {
       setState({ user: null, loading: false, error: null, sandboxRunId: null, sandboxRole: null });
     }
+  }, []);
+
+  // The API client ends the session when a refresh token is finally rejected, which can
+  // happen in the middle of any request. Without this the UI would keep rendering as
+  // though signed in while every call failed.
+  useEffect(() => {
+    return onSessionEnded(() => {
+      setState({ user: null, loading: false, error: null, sandboxRunId: null, sandboxRole: null });
+    });
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
@@ -87,10 +110,9 @@ export function useAuth() {
         user: User;
       }>('/auth/login', { email, password });
       setToken(res.accessToken);
-      sessionStorage.setItem(TOKEN_KEY, res.accessToken);
-      sessionStorage.setItem(REFRESH_KEY, res.refreshToken);
+      storeTokens(res.accessToken, res.refreshToken);
       // Normal login is NOT a sandbox session — never set sandboxRunId.
-      clearSandbox();
+      clearSandboxMarkers();
       setState({ user: res.user, loading: false, error: null, sandboxRunId: null, sandboxRole: null });
     } catch (e) {
       setState({
@@ -115,15 +137,13 @@ export function useAuth() {
         sandboxRunId?: string;
       }>('/auth/dev-login', { role });
       setToken(res.accessToken);
-      sessionStorage.setItem(TOKEN_KEY, res.accessToken);
-      sessionStorage.setItem(REFRESH_KEY, res.refreshToken);
+      storeTokens(res.accessToken, res.refreshToken);
       const sandboxRunId = res.sandboxRunId ?? null;
       const sandboxRole = res.user?.roleCode ?? null;
       if (sandboxRunId) {
-        sessionStorage.setItem(SANDBOX_RUN_KEY, sandboxRunId);
-        if (sandboxRole) sessionStorage.setItem(SANDBOX_ROLE_KEY, sandboxRole);
+        if (sandboxRole) storeSandboxMarkers(sandboxRunId, sandboxRole);
       } else {
-        clearSandbox();
+        clearSandboxMarkers();
       }
       setState({ user: withSandboxAccess(res.user, sandboxRunId), loading: false, error: null, sandboxRunId, sandboxRole });
     } catch (e) {
@@ -139,9 +159,7 @@ export function useAuth() {
 
   const logout = useCallback(() => {
     setToken(null);
-    sessionStorage.removeItem(TOKEN_KEY);
-    sessionStorage.removeItem(REFRESH_KEY);
-    clearSandbox();
+    clearSession();
     setState({ user: null, loading: false, error: null, sandboxRunId: null, sandboxRole: null });
   }, []);
 

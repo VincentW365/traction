@@ -1,3 +1,11 @@
+import {
+  clearSession,
+  getStoredAccessToken,
+  getStoredRefreshToken,
+  notifySessionEnded,
+  storeTokens,
+} from './session';
+
 /**
  * Resolve the API base URL at call time (browser-safe):
  *  1. explicit NEXT_PUBLIC_API_URL (prod / override) — unchanged behavior;
@@ -25,27 +33,122 @@ export function getToken(): string | null {
   return accessToken;
 }
 
-async function request<T>(
+/**
+ * Carries the HTTP status, so callers can tell "you are not signed in" from "the
+ * network dropped". Losing that distinction is what previously turned a momentary
+ * blip into a full sign-out.
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+/** Endpoints that must never trigger a refresh — refreshing them would loop. */
+function isAuthEndpoint(path: string): boolean {
+  return path.startsWith('/auth/login') || path.startsWith('/auth/refresh') || path.startsWith('/auth/dev-login');
+}
+
+/**
+ * One refresh at a time.
+ *
+ * A screen with six queries open hits six simultaneous 401s the moment the token
+ * expires. Without this they would fire six refreshes, five of which race to overwrite
+ * each other — and on a rotating refresh token, five of them would be rejected and end
+ * the session that the first one just saved.
+ */
+let refreshInFlight: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    const refreshToken = getStoredRefreshToken();
+    if (!refreshToken) return null;
+
+    try {
+      const res = await fetch(`${resolveApiBaseUrl()}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
+
+      if (!res.ok) {
+        // The refresh token itself is expired or rejected. This is the only point at
+        // which the session is genuinely over.
+        if (res.status === 401 || res.status === 403) {
+          clearSession();
+          setToken(null);
+          notifySessionEnded();
+        }
+        return null;
+      }
+
+      const data = (await res.json()) as {
+        accessToken: string;
+        refreshToken?: string | null;
+      };
+      setToken(data.accessToken);
+      storeTokens(data.accessToken, data.refreshToken ?? null);
+      return data.accessToken;
+    } catch {
+      // A network failure is not an expired session — leave the tokens alone so the
+      // next attempt can succeed once connectivity returns.
+      return null;
+    }
+  })();
+
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
+  }
+}
+
+async function send(
   method: string,
   path: string,
-  body?: unknown,
-): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (accessToken) {
-    headers.Authorization = `Bearer ${accessToken}`;
-  }
+  body: unknown,
+  token: string | null,
+): Promise<Response> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${resolveApiBaseUrl()}${path}`, {
+  return fetch(`${resolveApiBaseUrl()}${path}`, {
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  // The in-memory token is lost on a full page load, so fall back to the stored one
+  // rather than firing the first request of every page unauthenticated.
+  if (!accessToken) {
+    const stored = getStoredAccessToken();
+    if (stored) accessToken = stored;
+  }
+
+  let res = await send(method, path, body, accessToken);
+
+  // A 15-minute access token expires while a tab sits idle. Refreshing here means the
+  // user never sees it: the request that would have failed simply takes slightly
+  // longer. Retried once — a second 401 with a fresh token means genuinely forbidden,
+  // not expired.
+  if (res.status === 401 && !isAuthEndpoint(path)) {
+    const renewed = await refreshAccessToken();
+    if (renewed) {
+      res = await send(method, path, body, renewed);
+    }
+  }
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(error.message || `API error: ${res.status}`);
+    throw new ApiError(error.message || `API error: ${res.status}`, res.status);
   }
 
   if (res.status === 204) return {} as T;
