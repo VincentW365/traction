@@ -1,6 +1,7 @@
 # CR-2026-089 — Queue ticket numbering v2
 
-**Status:** Implemented (backend). Front-desk/display copy tweaks noted in §8.
+**Status:** Implemented — backend, public display, customer status page and the
+check-in confirmation screen.
 **Local commits only, not pushed**, per the directive.
 
 ---
@@ -103,6 +104,7 @@ wrong trade.
 | Lobby display | `B01-002` (emphasis on `002`) |
 | Customer status page | `B01-002` |
 | Staff queue board / ticket detail | `B01-260821-002` |
+| Check-in confirmation | `B01-002` large, `Reference B01-260821-002` beneath |
 | Reporting | Full reference, plus location, business date and sequence as separate fields |
 
 Queue **position** stays entirely separate from the ticket number. Moving from

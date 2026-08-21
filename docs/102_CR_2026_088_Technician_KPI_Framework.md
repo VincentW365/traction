@@ -1,7 +1,7 @@
 # CR-2026-088 — Technician KPI framework
 
-**Status:** Implemented (backend + engine). Technician/dispatch UI and the manager
-dashboard screen are the remaining surface — see §9.
+**Status:** Implemented — engine, backend, technician strip and manager dashboard.
+Remaining gaps are listed in §9.
 **Local commits only, not pushed**, per the directive.
 
 ---
@@ -204,15 +204,26 @@ progress only.
 
 ## 9. Not yet built
 
-- Technician card / dispatch-board KPI strip (badge, standard, elapsed, remaining,
-  projected rating). The `GET /kpi/orders/:id/live` endpoint that feeds it is done.
-- Manager dashboard *screen* (the `GET /kpi/dashboard` endpoint is done and verified).
-- CSV download button (`GET /kpi/dashboard/jobs` returns the underlying rows).
-- Package re-evaluation on mid-job scope change (§9 of the directive).
-- Per-technician work segments for shared jobs — the current schema has one
-  assignment row per technician and the pause ledger is per **order**, so a per-tech
-  split cannot be computed exactly when two technicians overlap. Jobs are flagged
-  `isSharedOrReassigned` and excluded from individual comparison instead.
+- **Per-technician work segments for shared jobs.** The schema has one assignment
+  row per technician and the pause ledger is per **order**, so an exact per-technician
+  split is not computable when two people overlap on one job. Rather than guess, such
+  jobs are flagged `isSharedOrReassigned`, excluded from individual comparison, and
+  kept in the detailed job table. Doing this properly needs a per-assignment segment
+  model — a follow-up CR.
+- **Dispatch-board KPI column.** The technician card carries the live strip; the
+  dispatch board does not yet. `GET /kpi/orders/:id/live` already serves it.
+- **A UI for the package-component mapping.** It is seeded and editable in the
+  database; there is no admin screen yet.
+
+### Built since first draft
+
+- Snapshot now OPENS at start of work (fixing the terms before the outcome is known)
+  and is finalised at submit-to-QC.
+- Scope changes re-evaluate the package and record the revision.
+- Manager-approved custom standards, refused once a job is finalised.
+- Live technician strip with countdown to the next tolerance boundary.
+- Manager dashboard at **Reports → Technician KPI**, with CSV/PDF export including
+  the job-level calculation and the policy version each row was rated under.
 
 ---
 
@@ -228,3 +239,4 @@ progress only.
 | POST | `/kpi/delays/:id/decision` | `report:view` (supervisor) |
 | GET | `/kpi/dashboard` | `report:view` |
 | GET | `/kpi/dashboard/jobs` | `report:view` |
+| POST | `/kpi/orders/:id/custom-standard` | `report:view` (manager) |

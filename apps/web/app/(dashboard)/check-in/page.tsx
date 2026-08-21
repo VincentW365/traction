@@ -52,7 +52,8 @@ interface ServiceType {
 
 interface CheckInResponse {
   serviceVisit: { id: string; status: string };
-  queueTicket: { ticketNumber: string; displayStatus: string };
+  // CR-2026-089 — displayTicketNumber is the short customer number (e.g. B01-003).
+  queueTicket: { ticketNumber: string; displayTicketNumber?: string | null; displayStatus: string };
   priorityClass: string;
   etaStartAt: string | null;
   customerStatusUrl?: string;
@@ -83,6 +84,8 @@ export default function CheckInPage() {
   const [notifyOptInEmail, setNotifyOptInEmail] = useState(false);
   const [successResult, setSuccessResult] = useState<{
     ticketNumber: string;
+    // CR-2026-089 — the short customer number; null for legacy tickets.
+    displayTicketNumber: string | null;
     priorityClass: string;
     etaStartAt: string | null;
     customerStatusUrl: string | null;
@@ -167,6 +170,7 @@ export default function CheckInPage() {
     onSuccess: (data) => {
       setSuccessResult({
         ticketNumber: data.queueTicket.ticketNumber,
+        displayTicketNumber: data.queueTicket.displayTicketNumber ?? null,
         priorityClass: data.priorityClass,
         etaStartAt: data.etaStartAt,
         customerStatusUrl: data.customerStatusUrl ?? null,
@@ -194,6 +198,7 @@ export default function CheckInPage() {
     onSuccess: (data) => {
       setSuccessResult({
         ticketNumber: data.queueTicket.ticketNumber,
+        displayTicketNumber: data.queueTicket.displayTicketNumber ?? null,
         priorityClass: data.priorityClass,
         etaStartAt: data.etaStartAt,
         customerStatusUrl: data.customerStatusUrl ?? null,
@@ -289,8 +294,20 @@ export default function CheckInPage() {
           </h2>
           <div className="mt-6 space-y-3">
             <div>
+              {/*
+                CR-2026-089 — the customer number is what staff read out and the
+                customer writes down; the full reference sits small underneath for
+                later enquiries. Legacy tickets have only the one number.
+              */}
               <p className="text-xs text-slate-500 uppercase tracking-wider">Ticket Number</p>
-              <p className="text-2xl font-mono font-bold text-slate-900 mt-0.5">{successResult.ticketNumber}</p>
+              <p className="text-3xl font-mono font-bold text-slate-900 mt-0.5">
+                {successResult.displayTicketNumber ?? successResult.ticketNumber}
+              </p>
+              {successResult.displayTicketNumber && (
+                <p className="text-[11px] font-mono text-slate-400 mt-0.5">
+                  Reference {successResult.ticketNumber}
+                </p>
+              )}
             </div>
             <div>
               <p className="text-xs text-slate-500 uppercase tracking-wider">Priority</p>
