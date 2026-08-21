@@ -692,6 +692,8 @@ export class QueueService {
           },
           select: {
             ticketNumber: true,
+            // CR-2026-089 — the short customer-facing number, e.g. B01-003.
+            displayTicketNumber: true,
             queueRank: true,
             displayStatus: true,
             serviceVisitId: true,
@@ -706,7 +708,10 @@ export class QueueService {
         // historical visits.
         this.prisma.serviceVisit.findMany({
           where: { siteId, status: 'READY_FOR_PICKUP' },
-          select: { queueTicket: { select: { ticketNumber: true } }, updatedAt: true },
+          select: {
+            queueTicket: { select: { ticketNumber: true, displayTicketNumber: true } },
+            updatedAt: true,
+          },
           orderBy: { updatedAt: 'desc' },
           take: 20,
         }),
@@ -723,7 +728,9 @@ export class QueueService {
     const inService = tickets
       .filter((t) => t.displayStatus === 'CALLED' || t.displayStatus === 'IN_SERVICE')
       .map((t) => ({
-        ticketNumber: t.ticketNumber,
+        // CR-2026-089 — customers read the short number (B01-003); a legacy ticket
+        // falls back to the only number it has.
+        ticketNumber: t.displayTicketNumber ?? t.ticketNumber,
         bay: bayByVisit.get(t.serviceVisitId) ?? null,
       }));
 
@@ -732,13 +739,15 @@ export class QueueService {
         ['WAITING', 'PENDING_RANK', 'BLOCKED'].includes(t.displayStatus),
       )
       .map((t) => ({
-        ticketNumber: t.ticketNumber,
+        ticketNumber: t.displayTicketNumber ?? t.ticketNumber,
         position: t.queueRank,
       }));
 
     const ready = readyVisits
       .filter((v) => v.queueTicket?.ticketNumber)
-      .map((v) => ({ ticketNumber: v.queueTicket!.ticketNumber }));
+      .map((v) => ({
+        ticketNumber: v.queueTicket!.displayTicketNumber ?? v.queueTicket!.ticketNumber,
+      }));
 
     return {
       siteId,

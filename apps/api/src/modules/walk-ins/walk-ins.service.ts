@@ -11,6 +11,7 @@ import { StatusHistoryService } from '../audit/status-history.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { CreateWalkInDto } from './dto/create-walk-in.dto';
 import { generateTicketNumber } from '../../common/helpers/ticket-generator';
+import { allocateTicketIdentifiers } from '../../common/helpers/ticket-allocator';
 import { assertMileageGate } from '../../common/helpers/mileage-gate';
 
 /**
@@ -50,7 +51,7 @@ export class WalkInsService {
     const [site, customer, vehicle] = await Promise.all([
       this.prisma.site.findUnique({
         where: { id: data.siteId },
-        select: { id: true, code: true, timezone: true, isActive: true },
+        select: { id: true, code: true, timezone: true, isActive: true, ticketCode: true },
       }),
       this.prisma.customer.findUnique({
         where: { id: data.customerId },
@@ -221,20 +222,38 @@ export class WalkInsService {
           },
         });
 
-        // 4. Generate ticket number + sequence
-        const { ticketNumber, checkinSequence } =
-          await generateTicketNumber(
-            tx as any,
-            data.siteId,
-            siteCode,
-            siteTimezone,
-          );
+        // 4. Allocate the ticket identifiers (CR-2026-089).
+        //
+        // checkinSequence is still generated because the FIFO scheduler orders the
+        // queue by it; the v2 identifiers are what people actually read. The two
+        // are separate on purpose — arrival order is a scheduling input, the ticket
+        // number is an immutable label, and conflating them is what would force a
+        // renumber every time the queue changed.
+        const { checkinSequence } = await generateTicketNumber(
+          tx as any,
+          data.siteId,
+          siteCode,
+          siteTimezone,
+        );
+        const ids = await allocateTicketIdentifiers(tx as any, {
+          id: data.siteId,
+          code: siteCode,
+          timezone: siteTimezone,
+          ticketCode: site.ticketCode ?? null,
+        });
 
         // 5. Create QueueTicket
         const queueTicket = await tx.queueTicket.create({
           data: {
             serviceVisitId: serviceVisit.id,
-            ticketNumber,
+            // ticketNumber carries the full v2 reference so every existing consumer
+            // shows the new format immediately; legacy rows keep their QTK-... value.
+            ticketNumber: ids.ticketReference,
+            ticketReference: ids.ticketReference,
+            displayTicketNumber: ids.displayTicketNumber,
+            locationCodeSnapshot: ids.locationCodeSnapshot,
+            businessDate: ids.businessDate,
+            dailySequence: ids.dailySequence,
             checkinSequence,
             displayStatus: 'PENDING_RANK',
           },

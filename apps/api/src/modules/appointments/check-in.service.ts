@@ -10,6 +10,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { generateTicketNumber } from '../../common/helpers/ticket-generator';
+import { allocateTicketIdentifiers } from '../../common/helpers/ticket-allocator';
 import { assertMileageGate } from '../../common/helpers/mileage-gate';
 
 /**
@@ -201,20 +202,38 @@ export class CheckInService {
           },
         });
 
-        // 5. Generate ticket number + sequence
-        const { ticketNumber, checkinSequence } =
-          await generateTicketNumber(
-            tx as any,
-            appointment.siteId,
-            siteCode,
-            siteTimezone,
-          );
+                // 5. Allocate the ticket identifiers (CR-2026-089).
+        //
+        // checkinSequence is still generated because the FIFO scheduler orders the
+        // queue by it; the v2 identifiers are what people actually read. The two
+        // are separate on purpose — arrival order is a scheduling input, the ticket
+        // number is an immutable label, and conflating them is what made the old
+        // format need a rewrite whenever the queue changed.
+        const { checkinSequence } = await generateTicketNumber(
+          tx as any,
+          appointment.site.id,
+          siteCode,
+          siteTimezone,
+        );
+        const ids = await allocateTicketIdentifiers(tx as any, {
+          id: appointment.site.id,
+          code: siteCode,
+          timezone: siteTimezone,
+          ticketCode: appointment.site.ticketCode ?? null,
+        });
 
         // 6. Create QueueTicket
         const queueTicket = await tx.queueTicket.create({
           data: {
             serviceVisitId: serviceVisit.id,
-            ticketNumber,
+            // ticketNumber carries the full v2 reference so every existing consumer
+            // shows the new format immediately; legacy rows keep their QTK-... value.
+            ticketNumber: ids.ticketReference,
+            ticketReference: ids.ticketReference,
+            displayTicketNumber: ids.displayTicketNumber,
+            locationCodeSnapshot: ids.locationCodeSnapshot,
+            businessDate: ids.businessDate,
+            dailySequence: ids.dailySequence,
             checkinSequence,
             displayStatus: 'PENDING_RANK',
           },

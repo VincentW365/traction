@@ -269,13 +269,17 @@ enum PartsReadinessState {
 // =========================
 
 model Site {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code      String   @unique
-  name      String
-  timezone  String   @default("America/Jamaica")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String   @unique
+  name       String
+  timezone   String   @default("America/Jamaica")
+  /// CR-2026-089 — short, stable code used in queue ticket references (e.g. B01).
+  /// Uppercase, 2-4 alphanumerics. Changing it never alters tickets already issued,
+  /// because each ticket snapshots the code it was created under.
+  ticketCode String?  @unique @map("ticket_code")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   userAccounts         UserAccount[]
   appointments         Appointment[]
@@ -288,6 +292,9 @@ model Site {
   scheduleHolds        ScheduleHold[] // CR-2026-026 — advisory schedule holds
   complaints           Complaint[] // CR-2026-032 — customer complaints
   inspections          VehicleInspection[] // CR-2026-034 — visual inspections
+
+  // CR-2026-089 — per-day ticket sequence allocation.
+  ticketCounters DailyTicketCounter[]
 
   @@map("sites")
 }
@@ -859,9 +866,25 @@ model ServiceVisit {
 }
 
 model QueueTicket {
-  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  serviceVisitId       String             @unique @map("service_visit_id") @db.Uuid
-  ticketNumber         String             @unique @map("ticket_number")
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceVisitId String @unique @map("service_visit_id") @db.Uuid
+  ticketNumber   String @unique @map("ticket_number")
+
+  // CR-2026-089 — v2 identifiers. All immutable once issued: a ticket number must
+  // not change because priority changed, a bay changed, a technician was swapped,
+  // work paused, services were added, or the visit completed. Legacy rows leave
+  // these null and keep their original ticketNumber.
+  /// Full operational reference, e.g. B01-260820-003.
+  ticketReference      String?            @unique @map("ticket_reference")
+  /// Customer-facing number, e.g. B01-003.
+  displayTicketNumber  String?            @map("display_ticket_number")
+  /// The location code AS AT ISSUE, so renaming a branch code later cannot
+  /// retroactively change what was printed on a customer ticket.
+  locationCodeSnapshot String?            @map("location_code_snapshot")
+  /// Jamaica business date the ticket belongs to.
+  businessDate         DateTime?          @map("business_date") @db.Date
+  /// Per-location sequence within that business date. Never reused.
+  dailySequence        Int?               @map("daily_sequence")
   checkinSequence      Int                @map("checkin_sequence")
   queueRank            Int?               @map("queue_rank")
   displayStatus        QueueDisplayStatus @default(PENDING_RANK) @map("display_status")
@@ -886,6 +909,8 @@ model QueueTicket {
   overrideClearedByUser UserAccount? @relation("OverrideClearedBy", fields: [overrideClearedBy], references: [id])
   queueEvents           QueueEvent[]
 
+  // CR-2026-089 — a sequence can never be issued twice for a location and day.
+  @@unique([businessDate, dailySequence, locationCodeSnapshot])
   @@index([queueRank])
   @@index([displayStatus])
   @@map("queue_tickets")
@@ -1986,4 +2011,46 @@ model KpiDelayEvent {
   @@index([serviceOrderId])
   @@index([approvalStatus])
   @@map("kpi_delay_events")
+}
+
+// ===========================================================================
+// CR-2026-089 — Queue ticket numbering v2
+//
+//   Full reference   B01-260820-003    {LOCATION}-{YYMMDD}-{SEQUENCE}
+//   Customer number  B01-003           {LOCATION}-{SEQUENCE}
+//   Display emphasis 003
+//
+// Replaces QTK-BERT-01-20260820-0003. "QTK" and "BERT" told nobody anything —
+// the application already knows the record is a queue ticket and whose it is —
+// and the four-digit year and extra padding cost width on a lobby screen and on
+// a technician's phone for no identification benefit.
+//
+// Legacy tickets are NOT rewritten. They keep their original number for
+// auditability, and every read path continues to work because nothing anywhere
+// parses the string; it has always been an opaque display token.
+// ===========================================================================
+
+/// Atomic per-location, per-business-day sequence allocator.
+///
+/// The previous generator read MAX(sequence)+1 and relied entirely on the caller
+/// running under SERIALIZABLE. That is technically safe but practically poor:
+/// Prisma does not retry, so two front-desk staff checking in at the same moment
+/// gave one of them a raw 500. A single-row upsert-and-increment is atomic on its
+/// own, so concurrency is handled where it arises rather than by isolation level.
+model DailyTicketCounter {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
+
+  /// The Jamaica business date, not the server's UTC date. Stored as a plain DATE
+  /// so the reset boundary is unambiguous.
+  businessDate DateTime @map("business_date") @db.Date
+
+  lastSequence Int      @default(0) @map("last_sequence")
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, businessDate])
+  @@map("daily_ticket_counters")
 }

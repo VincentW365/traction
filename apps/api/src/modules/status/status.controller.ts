@@ -29,7 +29,15 @@ export class StatusController {
       },
       include: {
         vehicle: { select: { plateNumber: true } },
-        queueTicket: { select: { ticketNumber: true, queueRank: true, displayStatus: true } },
+        queueTicket: {
+          select: {
+            ticketNumber: true,
+            // CR-2026-089 — the customer reads the short number, e.g. B01-003.
+            displayTicketNumber: true,
+            queueRank: true,
+            displayStatus: true,
+          },
+        },
         appointment: {
           include: { services: { include: { serviceType: { select: { name: true } } } } },
         },
@@ -84,7 +92,8 @@ export class StatusController {
     const currentStep = this.getCurrentStep(displayStatus, visit.status);
 
     return {
-      ticketNumber: ticket?.ticketNumber ?? null,
+      // CR-2026-089 — short number for the customer; legacy tickets keep theirs.
+      ticketNumber: ticket?.displayTicketNumber ?? ticket?.ticketNumber ?? null,
       position,
       totalInQueue,
       aheadCount,

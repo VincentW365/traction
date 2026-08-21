@@ -11,11 +11,13 @@ async function main() {
   // --- Site ---
   const site = await prisma.site.upsert({
     where: { code: 'BERT-01' },
-    update: {},
+    update: { ticketCode: 'B01' },
     create: {
       code: 'BERT-01',
       name: "Bert's Auto Parts Service Centre — Main",
       timezone: 'America/Jamaica',
+      // CR-2026-089 — short code used in queue ticket references, e.g. B01-260820-003.
+      ticketCode: 'B01',
     },
   });
   console.warn(`Site: ${site.code} (${site.id})`);
