@@ -13,6 +13,9 @@ import { HISTORICAL_VISIT_SOURCE_TYPE } from '../../../common/helpers/operationa
  */
 function buildService() {
   const prisma: any = {
+    // CR-2026-086 - getTechnicianEfficiency reads the KPI rating bands from
+    // BusinessRuleConfig; absent rule falls back to the seeded benchmark.
+    businessRuleConfig: { findFirst: vi.fn(async () => null) },
     technician: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => null) },
     technicianAssignment: { findMany: vi.fn(async () => []) },
   };

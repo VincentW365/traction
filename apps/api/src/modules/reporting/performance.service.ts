@@ -1,6 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { serviceVisitIsLive } from '../../common/helpers/operational-scope';
+import {
+  rateCompletionMinutes,
+  parseKpiBands,
+  DEFAULT_KPI_BANDS,
+  type KpiBand,
+  type KpiRating,
+} from '../../common/helpers/kpi-rating';
 
 export interface TechnicianEfficiencyRow {
   technicianId: string;
@@ -17,6 +24,9 @@ export interface TechnicianEfficiencyRow {
   // and the resulting first-time-fix rate. null when they had no primary jobs.
   reworkedJobs: number;
   firstTimeFixRate: number | null;
+  // CR-2026-086 - the manager KPI benchmark, rated on average completion time.
+  // null when the technician completed no jobs in the range (no time to rate).
+  kpiRating: KpiRating | null;
 }
 
 export interface AssignmentHistoryRow {
@@ -38,6 +48,18 @@ export interface AssignmentHistoryRow {
 export class PerformanceService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * CR-2026-086 — the manager's KPI rating bands, from BusinessRuleConfig.
+   * Falls back to the supplied benchmark if the rule is absent or malformed;
+   * Settings is a raw JSON editor, so this must never throw.
+   */
+  private async getKpiBands(): Promise<KpiBand[]> {
+    const rule = await this.prisma.businessRuleConfig.findFirst({
+      where: { ruleKey: 'kpi_rating_bands', effectiveTo: null },
+    });
+    return rule ? parseKpiBands(rule.valueJson) : DEFAULT_KPI_BANDS;
+  }
+
   async getTechnicianEfficiency(
     siteId: string,
     startDate: string,
@@ -46,6 +68,10 @@ export class PerformanceService {
     const start = new Date(startDate);
     const end = new Date(endDate);
     end.setHours(23, 59, 59, 999);
+
+    // CR-2026-086 — rating thresholds are a manager-tunable business rule, not a
+    // constant, so they are read per call rather than baked in.
+    const bands = await this.getKpiBands();
 
     const technicians = await this.prisma.technician.findMany({
       where: { homeSiteId: siteId, status: 'ACTIVE' },
@@ -123,6 +149,7 @@ export class PerformanceService {
         efficiencyPercent,
         reworkedJobs,
         firstTimeFixRate,
+        kpiRating: rateCompletionMinutes(avgJobMinutes || null, bands),
       };
     });
   }

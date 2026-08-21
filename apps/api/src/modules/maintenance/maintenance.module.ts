@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { MaintenanceService } from './maintenance.service';
 import { MaintenanceReminderService } from './maintenance-reminder.service';
+import { MaintenanceCronService } from './maintenance-cron.service';
 import { MaintenanceReminderController } from './maintenance-reminder.controller';
 import {
   MaintenanceVehicleController,
@@ -35,6 +36,9 @@ const VinProvider =
   providers: [
     MaintenanceService,
     MaintenanceReminderService,
+    // CR-2026-086 — hourly sweep that actually sends due-service reminders.
+    // Gated off by default via the `maintenance_reminder_enabled` business rule.
+    MaintenanceCronService,
     {
       provide: VEHICLE_IDENTITY_PROVIDER,
       useClass: VinProvider,

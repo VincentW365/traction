@@ -18,6 +18,22 @@ import { EmptyState } from '../../../../components/ui/empty-state';
 import { ExportMenu } from '../../../../components/ui/export-menu';
 import type { ExportDocument } from '../../../../lib/export';
 
+// CR-2026-086 - the service manager's KPI benchmark. Thresholds live in the
+// business rules (kpi_rating_bands); these are just the display labels.
+type KpiRating = 'EXCELLENT' | 'MEETS_TARGET' | 'NEEDS_IMPROVEMENT' | 'BELOW_STANDARD';
+const KPI_LABEL: Record<KpiRating, string> = {
+  EXCELLENT: 'Excellent',
+  MEETS_TARGET: 'Meets Target',
+  NEEDS_IMPROVEMENT: 'Needs Improvement',
+  BELOW_STANDARD: 'Below Standard',
+};
+const KPI_BADGE: Record<KpiRating, string> = {
+  EXCELLENT: 'bg-emerald-50 text-emerald-700',
+  MEETS_TARGET: 'bg-blue-50 text-blue-700',
+  NEEDS_IMPROVEMENT: 'bg-amber-50 text-amber-700',
+  BELOW_STANDARD: 'bg-red-50 text-red-700',
+};
+
 interface EfficiencyRow {
   technicianId: string;
   employeeCode: string;
@@ -31,6 +47,8 @@ interface EfficiencyRow {
   efficiencyPercent: number;
   reworkedJobs: number;
   firstTimeFixRate: number | null;
+  // CR-2026-086 - manager KPI band from average completion time.
+  kpiRating: KpiRating | null;
 }
 
 function localISO(d: Date) {
@@ -123,10 +141,10 @@ export default function PerformanceDashboardPage() {
       ],
       sections: [
         {
-          columns: ['Technician', 'Code', 'Primary', 'Helper', 'Completed', 'Avg job (min)', 'Efficiency %', 'First-time-fix %', 'Came back'],
+          columns: ['Technician', 'Code', 'Primary', 'Helper', 'Completed', 'Avg job (min)', 'Efficiency %', 'First-time-fix %', 'KPI rating', 'Came back'],
           rows: sorted.map((r) => [
             r.fullName, r.employeeCode, r.primaryJobs, r.helperJobs, r.jobsCompleted,
-            r.avgJobMinutes, r.efficiencyPercent, r.firstTimeFixRate ?? '—', r.reworkedJobs,
+            r.avgJobMinutes, r.efficiencyPercent, r.firstTimeFixRate ?? '—', r.kpiRating ? KPI_LABEL[r.kpiRating] : '—', r.reworkedJobs,
           ]),
         },
       ],
@@ -172,6 +190,8 @@ export default function PerformanceDashboardPage() {
 
       <p className="text-xs text-slate-400 mb-5">
         Efficiency = estimated ÷ actual time worked (100% = on estimate). First-time-fix = share of primary jobs that did not return as rework.
+        {' '}KPI rates average completion time: Excellent ≤ 2.0h · Meets Target 2.01–2.5h · Needs Improvement 2.51–3.0h · Below Standard &gt; 3.0h.
+        {' '}Thresholds are editable in Settings under <span className="font-mono">kpi_rating_bands</span>.
       </p>
 
       {effQuery.isLoading && <LoadingState message="Loading performance data..." />}
@@ -197,6 +217,7 @@ export default function PerformanceDashboardPage() {
                 <Th k="avgJobMinutes" label="Avg job" className="text-center" />
                 <Th k="efficiencyPercent" label="Efficiency" className="text-center" />
                 <Th k="firstTimeFixRate" label="First-time-fix" className="text-center" />
+                <th className="text-center">KPI</th>
                 <th></th>
               </tr>
             </thead>
@@ -216,6 +237,14 @@ export default function PerformanceDashboardPage() {
                   <td className="text-center">
                     <span className={`badge ${ftfBadge(row.firstTimeFixRate)}`}>{row.firstTimeFixRate !== null ? `${row.firstTimeFixRate}%` : '—'}</span>
                     {row.reworkedJobs > 0 && <span className="block text-[10px] text-red-500 mt-0.5">{row.reworkedJobs} came back</span>}
+                  </td>
+                  {/* CR-2026-086 — the manager's KPI band, rated on average completion time. */}
+                  <td className="text-center">
+                    {row.kpiRating ? (
+                      <span className={`badge ${KPI_BADGE[row.kpiRating]}`}>{KPI_LABEL[row.kpiRating]}</span>
+                    ) : (
+                      <span className="badge bg-slate-100 text-slate-500">—</span>
+                    )}
                   </td>
                   <td className="text-right">
                     <Link href={`/admin/performance/${row.technicianId}`} className="text-xs text-blue-600 hover:underline font-medium">

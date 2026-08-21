@@ -680,7 +680,11 @@ export class QueueService {
           where: {
             serviceVisit: {
               siteId,
-              status: { in: ['CHECKED_IN', 'QUEUED', 'CALLED', 'IN_SERVICE'] },
+              // CR-2026-086 — 'QC' included. A car being quality-checked is not
+              // waiting, not (by visit status) in service, and not yet ready, so it
+              // vanished from the lobby screen entirely for the whole QC window and
+              // the customer watching the board saw their ticket simply disappear.
+              status: { in: ['CHECKED_IN', 'QUEUED', 'CALLED', 'IN_SERVICE', 'QC'] },
             },
             displayStatus: {
               in: ['PENDING_RANK', 'WAITING', 'CALLED', 'IN_SERVICE', 'BLOCKED'],

@@ -307,6 +307,35 @@ async function main() {
     { ruleKey: 'notification_provider_email', valueJson: 'stub', notes: 'Email provider: stub | sendgrid | smtp' },
     { ruleKey: 'appointment_reminder_enabled', valueJson: true, notes: 'CR-2026-056: whether the automatic appointment reminder (sent ~24h before) is active' },
     { ruleKey: 'appointment_reminder_hours', valueJson: 24, notes: 'CR-2026-056: how many hours before scheduledStartAt the reminder fires (hourly cron sweep)' },
+    // CR-2026-086 — "tell the customer their next service is due". Everything for this
+    // was already built (auto-created reminders, send-date maths, opt-in, quiet hours,
+    // SMS/email dispatch) except anything that CALLED it, so reminders sat in SCHEDULED
+    // forever. An hourly cron now sweeps them. DEFAULT OFF on purpose: switching it on
+    // messages every opted-in customer holding a scheduled reminder, so that should be
+    // a decision someone takes having looked at the backlog, not a deploy side effect.
+    { ruleKey: 'maintenance_reminder_enabled', valueJson: false, notes: 'CR-2026-086: master switch for the hourly due-for-service reminder sweep. OFF by default — check the SCHEDULED reminder backlog before enabling, as they all send on the next sweep.' },
+    // CR-2026-086 — technician KPI benchmark, supplied by the service manager.
+    // Bands are inclusive upper bounds in hours, fastest first; the final band has
+    // maxHours: null and catches everything above.
+    {
+      ruleKey: 'kpi_rating_bands',
+      valueJson: [
+        { maxHours: 2.0, rating: 'EXCELLENT' },
+        { maxHours: 2.5, rating: 'MEETS_TARGET' },
+        { maxHours: 3.0, rating: 'NEEDS_IMPROVEMENT' },
+        { maxHours: null, rating: 'BELOW_STANDARD' },
+      ],
+      notes: 'CR-2026-086: technician performance rating by completion time. <=2.0h Excellent, 2.01-2.5h Meets Target, 2.51-3.0h Needs Improvement, >3.0h Below Standard.',
+    },
+    {
+      ruleKey: 'kpi_package_standard_hours',
+      valueJson: {
+        GENERAL_SERVICE: 1.5,
+        GENERAL_SERVICE_FRONT_BRAKES: 2.0,
+        GENERAL_SERVICE_FRONT_BRAKES_SPARK_PLUGS: 2.5,
+      },
+      notes: 'CR-2026-086: standard time in hours for each service package benchmark.',
+    },
     // CR-2026-061 — config keys the code reads with a hardcoded fallback; seed them (= the code defaults) so they are visible/tunable.
     { ruleKey: 'eta_avg_live_window_days', valueJson: 30, notes: 'CR-2026-061: days of live history used for the ETA average window (queue.service ETA calc)' },
     { ruleKey: 'eta_avg_min_live_sample', valueJson: 20, notes: 'CR-2026-061: minimum live service-order sample before using the live average vs historical' },

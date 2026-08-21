@@ -291,7 +291,7 @@ export default function DisplayBoardPage() {
         </Lane>
       </main>
 
-      {/* Footer — rotating service tip over the persistent listen message */}
+      {/* Footer — rotating service tip over the persistent "watch the board" message */}
       <footer className="relative px-[clamp(1.5rem,3vw,3.5rem)] py-[clamp(0.6rem,1.1vw,1.25rem)] text-center border-t border-white/10 shrink-0">
         <div className="flex items-center justify-center gap-2.5 min-h-[clamp(1.5rem,2.2vw,2.5rem)]">
           <span className="text-blue-300/80 shrink-0">
@@ -305,9 +305,14 @@ export default function DisplayBoardPage() {
             {SERVICE_TIPS[tipIndex]}
           </p>
         </div>
+        {/*
+          CR-2026-086 — "Please listen for your ticket number" described a workflow
+          this shop does not run: nobody calls numbers out loud. The board is the
+          notification, so the copy now tells the customer to watch it.
+        */}
         <p className="mt-1 text-[clamp(0.75rem,1vw,1.1rem)] font-medium text-slate-500">
-          Please listen for your <span className="text-slate-300">ticket number</span> — given to you at
-          check-in. This board updates automatically.
+          Find your <span className="text-slate-300">ticket number</span> on this board — it was given to
+          you at check-in. The board updates by itself as your vehicle moves through service.
         </p>
       </footer>
 

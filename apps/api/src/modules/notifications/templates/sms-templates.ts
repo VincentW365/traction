@@ -49,6 +49,17 @@ export function renderSmsBody(templateKey: string, data: Data = {}): string {
       return `Good news! ${vehicleDesc(data)} is ready for pickup at ${site}.`;
     case 'midday_followup':
       return str(data.message) || `Thank you for visiting ${site} today!`;
+    // CR-2026-086 — due-for-service reminder. The reminder service pre-renders a
+    // confidence-tiered `message` (it knows whether the due point came from a
+    // confirmed interval or a mileage estimate), so that wording wins when present.
+    // Previously this key had no case at all and only worked by falling through to
+    // `default`, which meant one missing field would have sent "Update from Bert's."
+    case 'maintenance_oil_change_reminder':
+      return (
+        str(data.message) ||
+        `Reminder from ${site}: ${vehicleDesc(data)} is due for its next service. ` +
+          `Call us to book a time that suits you.`
+      );
     default:
       return str(data.message) || `Update from ${site}.`;
   }

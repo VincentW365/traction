@@ -13,6 +13,9 @@ function min(n: number) {
 
 function techWith(assignments: unknown[]) {
   const prisma: any = {
+    // CR-2026-086 - getTechnicianEfficiency reads the KPI rating bands from
+    // BusinessRuleConfig; absent rule falls back to the seeded benchmark.
+    businessRuleConfig: { findFirst: vi.fn(async () => null) },
     technician: {
       findMany: vi.fn(async () => [
         { id: 'tech-1', employeeCode: 'T1', userAccount: { fullName: 'Tech One' }, assignments },
