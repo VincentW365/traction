@@ -35,6 +35,10 @@ function build(opts: { callerTech?: any; timingOrder?: any; pauses?: any[]; othe
         finalStandardMinutes: 90,
         benchmarkSource: 'MANAGER_PACKAGE',
       })),
+      getCalculationBreakdown: vi.fn(async () => ({
+        vehicleClass: 'SEDAN_CLASS',
+        breakdown: { finalStandardMinutes: 90, lines: [] },
+      })),
     } as any,
     // CR-2026-090 - work-segment hooks. Stubbed for the same reason: these tests
     // exercise the order state machine, and segments have their own suite.

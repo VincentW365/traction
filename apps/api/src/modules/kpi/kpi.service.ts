@@ -215,6 +215,24 @@ export class KpiService {
   }
 
   /**
+   * The display-shaped calculation breakdown for a job, with its vehicle class.
+   *
+   * One shape, produced in one place. The live endpoint and the readiness endpoint both
+   * serve it, so a screen showing the strip and the calculation panel together never
+   * has to reconcile two renderings of the same arithmetic.
+   */
+  async getCalculationBreakdown(serviceOrderId: string, at: Date = new Date()) {
+    const [job, calc] = await Promise.all([
+      this.loadJobForCalculation(serviceOrderId),
+      this.calculateStandardForOrder(serviceOrderId, at),
+    ]);
+    return {
+      vehicleClass: job?.vehicleClass ?? null,
+      breakdown: this.breakdownJson(calc),
+    };
+  }
+
+  /**
    * Whether management has approved front-and-rear brake jobs to use the Front
    * Brakes standard. Configuration, not a constant: a job covering both axles is
    * more work than that standard was built for, so the default is no.

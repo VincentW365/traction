@@ -157,8 +157,10 @@ export function KpiCalculationPanel({
             </div>
           )}
 
-          {breakdown.lines.map((line) => (
-            <div key={line.serviceCode} className="flex items-baseline justify-between gap-4 py-1.5">
+          {/* A front-and-rear brake line resolves into two contributions carrying the
+              same service code, so the code alone cannot identify a row. */}
+          {breakdown.lines.map((line, i) => (
+            <div key={`${line.serviceCode}-${i}`} className="flex items-baseline justify-between gap-4 py-1.5">
               <dt className="min-w-0">
                 <span
                   className={`text-sm ${

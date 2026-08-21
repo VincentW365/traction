@@ -33,6 +33,16 @@ export interface UpsertMappingInput {
   notes?: string;
   /** When the new mapping takes effect. Defaults to now; never backdated before the row it supersedes. */
   effectiveFrom?: Date;
+
+  // CR-2026-092 — the contribution policy.
+  contributionMode?: string;
+  durationSource?: string;
+  allowanceBasis?: string;
+  requiredQualifier?: string;
+  fixedSedanMinutes?: number | null;
+  fixedSuvMinutes?: number | null;
+  provisionalDuration?: boolean;
+  isSupersededCode?: boolean;
 }
 
 const ROLE_LABELS: Record<KpiComponentRole, string> = {
@@ -44,6 +54,102 @@ const ROLE_LABELS: Record<KpiComponentRole, string> = {
 };
 
 const VALID_ROLES = Object.keys(ROLE_LABELS) as KpiComponentRole[];
+
+/** CR-2026-092 — the vocabulary the admin screen offers, with readable labels. */
+const CONTRIBUTION_MODE_LABELS: Record<string, string> = {
+  PACKAGE_COMPONENT: 'Identifies a manager package',
+  INCLUDED_IN_BASE: 'Included — adds no time',
+  ADDITIVE_STANDARD: 'Additional work — adds its time',
+  SEPARATE_SLA: 'Separate SLA — not technician time',
+  CONDITIONAL: 'Conditional on a qualifier',
+  CUSTOM_ONLY: 'Bespoke — no catalogue standard',
+};
+
+const DURATION_SOURCE_LABELS: Record<string, string> = {
+  MANAGER_PACKAGE: "Manager's package matrix",
+  SERVICE_CATALOG_DURATION: 'Service catalogue duration',
+  FIXED_CONFIGURED_DURATION: 'Fixed configured duration',
+  NO_DURATION: 'No duration',
+};
+
+const ALLOWANCE_BASIS_LABELS: Record<string, string> = {
+  PER_JOB: 'Once per job',
+  PER_SERVICE_LINE: 'Once per booked line',
+  PER_UNIT: 'Per unit (catalogue prices it per unit)',
+};
+
+const REQUIRED_QUALIFIER_LABELS: Record<string, string> = {
+  NONE: 'None',
+  BRAKE: 'Brake — axle and work type',
+  TIRE_OPERATION: 'Tyre — which operation',
+};
+
+/**
+ * What a service actually contributes today, for one vehicle class.
+ *
+ * Resolved here rather than left to the client, because working it out means knowing
+ * which of three sources applies — and a screen that makes a manager derive the number
+ * they are trying to check is a screen they will stop trusting.
+ */
+function resolveMinutes(
+  policy: {
+    contributionMode: string;
+    durationSource: string;
+    fixedSedanMinutes: number | null;
+    fixedSuvMinutes: number | null;
+  },
+  catalogueMinutes: number | null,
+  cls: 'SEDAN' | 'SUV',
+): number | null {
+  if (policy.contributionMode === 'INCLUDED_IN_BASE') return 0;
+  if (policy.contributionMode === 'SEPARATE_SLA') return 0;
+  switch (policy.durationSource) {
+    case 'SERVICE_CATALOG_DURATION':
+      return catalogueMinutes ?? null;
+    case 'FIXED_CONFIGURED_DURATION':
+      return cls === 'SUV'
+        ? (policy.fixedSuvMinutes ?? policy.fixedSedanMinutes)
+        : policy.fixedSedanMinutes;
+    case 'MANAGER_PACKAGE':
+      // The package matrix supplies the base; the service itself adds nothing.
+      return null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * A policy that cannot produce the number it claims to.
+ *
+ * Surfaced as its own filter because it is silent otherwise: the service looks mapped,
+ * and every job carrying it quietly understates the standard.
+ */
+function isIncomplete(
+  policy: {
+    contributionMode: string;
+    durationSource: string;
+    requiredQualifier: string;
+    fixedSedanMinutes: number | null;
+  },
+  catalogueMinutes: number | null,
+): boolean {
+  if (
+    policy.durationSource === 'SERVICE_CATALOG_DURATION' &&
+    (catalogueMinutes == null || catalogueMinutes <= 0)
+  ) {
+    return true;
+  }
+  if (
+    policy.durationSource === 'FIXED_CONFIGURED_DURATION' &&
+    (policy.fixedSedanMinutes == null || policy.fixedSedanMinutes <= 0)
+  ) {
+    return true;
+  }
+  if (policy.contributionMode === 'CONDITIONAL' && policy.requiredQualifier === 'NONE') {
+    return true;
+  }
+  return false;
+}
 
 /** Roles that define a benchmark component, as opposed to describing other work. */
 const BENCHMARK_ROLES: KpiComponentRole[] = [
@@ -73,7 +179,7 @@ export class KpiMappingService {
 
     const [services, mappings, usageCounts] = await Promise.all([
       this.prisma.serviceType.findMany({
-        select: { id: true, code: true, name: true, family: true, isActive: true },
+        select: { id: true, code: true, name: true, family: true, isActive: true, baseDurationMinutes: true },
         orderBy: { code: 'asc' },
       }),
       this.prisma.kpiServiceComponent.findMany({
@@ -131,6 +237,24 @@ export class KpiMappingService {
         componentRole: role,
         componentRoleLabel: role ? ROLE_LABELS[role] : null,
         requiresAxleQualifier: active?.requiresAxleQualifier ?? false,
+
+        // CR-2026-092 — the contribution policy. `currentStandardMinutes` is what the
+        // service actually contributes today, resolved from its duration source, so
+        // the screen never asks a manager to work that out from three other columns.
+        contributionMode: active?.contributionMode ?? null,
+        durationSource: active?.durationSource ?? null,
+        allowanceBasis: active?.allowanceBasis ?? null,
+        requiredQualifier: active?.requiredQualifier ?? null,
+        provisionalDuration: active?.provisionalDuration ?? false,
+        isSupersededCode: active?.isSupersededCode ?? false,
+        sedanMinutes: active
+          ? resolveMinutes(active, s.baseDurationMinutes, 'SEDAN')
+          : null,
+        suvMinutes: active ? resolveMinutes(active, s.baseDurationMinutes, 'SUV') : null,
+        catalogueMinutes: s.baseDurationMinutes,
+        /** Configured but unusable — a catalogue source with no catalogue duration. */
+        incompleteConfiguration: !!active && isIncomplete(active, s.baseDurationMinutes),
+
         effectiveFrom: active?.effectiveFrom ?? null,
         notes: active?.notes ?? null,
         updatedByUserId: active?.updatedByUserId ?? null,
@@ -174,7 +298,28 @@ export class KpiMappingService {
           }))
         : undefined,
       roles: VALID_ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] })),
+      contributionModes: Object.entries(CONTRIBUTION_MODE_LABELS).map(([value, label]) => ({
+        value,
+        label,
+      })),
+      durationSources: Object.entries(DURATION_SOURCE_LABELS).map(([value, label]) => ({
+        value,
+        label,
+      })),
+      // Served alongside the other two so the screen never hard-codes a vocabulary that
+      // then drifts from the server's.
+      allowanceBases: Object.entries(ALLOWANCE_BASIS_LABELS).map(([value, label]) => ({
+        value,
+        label,
+      })),
+      requiredQualifiers: Object.entries(REQUIRED_QUALIFIER_LABELS).map(([value, label]) => ({
+        value,
+        label,
+      })),
       unmappedCount: rows.filter((r) => r.needsReview && r.serviceIsActive).length,
+      provisionalCount: rows.filter((r) => r.provisionalDuration && r.serviceIsActive).length,
+      incompleteCount: rows.filter((r) => r.incompleteConfiguration && r.serviceIsActive)
+        .length,
     };
   }
 
@@ -201,6 +346,18 @@ export class KpiMappingService {
       componentRole: m.componentRole,
       componentRoleLabel: ROLE_LABELS[m.componentRole as KpiComponentRole],
       requiresAxleQualifier: m.requiresAxleQualifier,
+      // CR-2026-092 — the full policy, so reinstating a superseded row actually
+      // restores what it said rather than keeping whatever is in force now.
+      contributionMode: m.contributionMode,
+      contributionModeLabel: CONTRIBUTION_MODE_LABELS[m.contributionMode] ?? null,
+      durationSource: m.durationSource,
+      durationSourceLabel: DURATION_SOURCE_LABELS[m.durationSource] ?? null,
+      allowanceBasis: m.allowanceBasis,
+      requiredQualifier: m.requiredQualifier,
+      fixedSedanMinutes: m.fixedSedanMinutes,
+      fixedSuvMinutes: m.fixedSuvMinutes,
+      provisionalDuration: m.provisionalDuration,
+      isSupersededCode: m.isSupersededCode,
       isActive: m.isActive,
       effectiveFrom: m.effectiveFrom,
       effectiveTo: m.effectiveTo,
@@ -273,10 +430,33 @@ export class KpiMappingService {
       orderBy: { effectiveFrom: 'desc' },
     });
 
+    // CR-2026-092 — the contribution policy is part of the classification. Changing a
+    // service from "included" to "adds 30 minutes" moves every future job's standard,
+    // so it supersedes exactly like a component change rather than editing in place.
     const classificationUnchanged =
       current &&
       current.componentRole === (input.componentRole as never) &&
-      current.requiresAxleQualifier === (input.requiresAxleQualifier ?? false);
+      current.requiresAxleQualifier === (input.requiresAxleQualifier ?? false) &&
+      (input.contributionMode === undefined ||
+        current.contributionMode === (input.contributionMode as never)) &&
+      (input.durationSource === undefined ||
+        current.durationSource === (input.durationSource as never)) &&
+      (input.allowanceBasis === undefined ||
+        current.allowanceBasis === (input.allowanceBasis as never)) &&
+      (input.requiredQualifier === undefined ||
+        current.requiredQualifier === (input.requiredQualifier as never)) &&
+      (input.fixedSedanMinutes === undefined ||
+        current.fixedSedanMinutes === input.fixedSedanMinutes) &&
+      (input.fixedSuvMinutes === undefined ||
+        current.fixedSuvMinutes === input.fixedSuvMinutes) &&
+      // Confirming a provisional figure, or taking a code out of use, changes nothing
+      // about the minutes but is exactly the edit a manager makes on purpose. Omitting
+      // these two turned "confirm this stand-in" into a save that reported success and
+      // did nothing.
+      (input.provisionalDuration === undefined ||
+        current.provisionalDuration === input.provisionalDuration) &&
+      (input.isSupersededCode === undefined ||
+        current.isSupersededCode === input.isSupersededCode);
 
     if (classificationUnchanged) {
       // The classification is the same, so there is nothing to supersede — nothing a
@@ -321,6 +501,36 @@ export class KpiMappingService {
           effectiveFrom,
           isActive: true,
           updatedByUserId: actorUserId,
+          // Carried forward from the superseded row where the caller did not say,
+          // so changing one field never silently resets the rest.
+          contributionMode: (input.contributionMode ??
+            current?.contributionMode ??
+            'CUSTOM_ONLY') as never,
+          durationSource: (input.durationSource ??
+            current?.durationSource ??
+            'NO_DURATION') as never,
+          allowanceBasis: (input.allowanceBasis ??
+            current?.allowanceBasis ??
+            'PER_JOB') as never,
+          requiredQualifier: (input.requiredQualifier ??
+            current?.requiredQualifier ??
+            'NONE') as never,
+          fixedSedanMinutes:
+            input.fixedSedanMinutes !== undefined
+              ? input.fixedSedanMinutes
+              : (current?.fixedSedanMinutes ?? null),
+          fixedSuvMinutes:
+            input.fixedSuvMinutes !== undefined
+              ? input.fixedSuvMinutes
+              : (current?.fixedSuvMinutes ?? null),
+          // A manager supplying a real figure is the act that clears the provisional
+          // flag — that is what "confirm the stand-in" means.
+          provisionalDuration:
+            input.provisionalDuration ??
+            (input.fixedSedanMinutes !== undefined
+              ? false
+              : (current?.provisionalDuration ?? false)),
+          isSupersededCode: input.isSupersededCode ?? current?.isSupersededCode ?? false,
         },
       });
     });

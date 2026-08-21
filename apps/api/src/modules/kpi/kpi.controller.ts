@@ -215,6 +215,19 @@ export class KpiController {
     return this.kpi.resolveBenchmarkReview(serviceOrderId, user.sub);
   }
 
+  /**
+   * CR-2026-092 — observed times for additive services, so a manager can judge whether
+   * a configured standard still matches reality. Never applied automatically.
+   */
+  @Get('reports/additive-evidence')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'Observed vs configured times for additive services (decision support)' })
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  additiveEvidence(@Query() query: Record<string, string>) {
+    return this.reporting.getAdditiveServiceEvidence(query);
+  }
+
   // -------------------------------------------------------------------------
   // Work segments (CR-2026-090)
   // -------------------------------------------------------------------------
@@ -290,6 +303,14 @@ export class KpiController {
         requiresAxleQualifier: dto.requiresAxleQualifier,
         notes: dto.notes,
         effectiveFrom: dto.effectiveFrom ? new Date(dto.effectiveFrom) : undefined,
+        contributionMode: dto.contributionMode,
+        durationSource: dto.durationSource,
+        allowanceBasis: dto.allowanceBasis,
+        requiredQualifier: dto.requiredQualifier,
+        fixedSedanMinutes: dto.fixedSedanMinutes,
+        fixedSuvMinutes: dto.fixedSuvMinutes,
+        provisionalDuration: dto.provisionalDuration,
+        isSupersededCode: dto.isSupersededCode,
       },
       user.sub,
     );

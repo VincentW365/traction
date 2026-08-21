@@ -3,10 +3,12 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsInt,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 
@@ -22,6 +24,26 @@ export const KPI_COMPONENT_ROLES = [
   'INCLUDED_NO_ADDITIONAL_BENCHMARK',
   'FORCES_CUSTOM_BENCHMARK',
 ] as const;
+
+export const KPI_CONTRIBUTION_MODES = [
+  'PACKAGE_COMPONENT',
+  'INCLUDED_IN_BASE',
+  'ADDITIVE_STANDARD',
+  'SEPARATE_SLA',
+  'CONDITIONAL',
+  'CUSTOM_ONLY',
+] as const;
+
+export const KPI_DURATION_SOURCES = [
+  'MANAGER_PACKAGE',
+  'SERVICE_CATALOG_DURATION',
+  'FIXED_CONFIGURED_DURATION',
+  'NO_DURATION',
+] as const;
+
+export const KPI_ALLOWANCE_BASES = ['PER_JOB', 'PER_SERVICE_LINE', 'PER_UNIT'] as const;
+
+export const KPI_REQUIRED_QUALIFIERS = ['NONE', 'BRAKE', 'TIRE_OPERATION'] as const;
 
 export class UpsertKpiMappingDto {
   @ApiProperty({ description: 'Service type this mapping applies to' })
@@ -61,7 +83,64 @@ export class UpsertKpiMappingDto {
   @IsOptional()
   @IsDateString()
   effectiveFrom?: string;
+
+  // CR-2026-092 — the contribution policy. Omitted fields carry forward from the row
+  // being superseded, so changing one never silently resets the others.
+
+  @ApiPropertyOptional({ enum: KPI_CONTRIBUTION_MODES })
+  @IsOptional()
+  @IsEnum(KPI_CONTRIBUTION_MODES as unknown as object)
+  contributionMode?: (typeof KPI_CONTRIBUTION_MODES)[number];
+
+  @ApiPropertyOptional({ enum: KPI_DURATION_SOURCES })
+  @IsOptional()
+  @IsEnum(KPI_DURATION_SOURCES as unknown as object)
+  durationSource?: (typeof KPI_DURATION_SOURCES)[number];
+
+  @ApiPropertyOptional({ enum: KPI_ALLOWANCE_BASES })
+  @IsOptional()
+  @IsEnum(KPI_ALLOWANCE_BASES as unknown as object)
+  allowanceBasis?: (typeof KPI_ALLOWANCE_BASES)[number];
+
+  @ApiPropertyOptional({ enum: KPI_REQUIRED_QUALIFIERS })
+  @IsOptional()
+  @IsEnum(KPI_REQUIRED_QUALIFIERS as unknown as object)
+  requiredQualifier?: (typeof KPI_REQUIRED_QUALIFIERS)[number];
+
+  @ApiPropertyOptional({
+    description: 'Minutes when the duration source is FIXED_CONFIGURED_DURATION.',
+    minimum: 1,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  fixedSedanMinutes?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'SUV minutes, only where management has approved a class split. Falls back to the sedan figure.',
+    minimum: 1,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  fixedSuvMinutes?: number;
+
+  @ApiPropertyOptional({
+    description: 'Mark the duration as a stand-in awaiting management confirmation.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  provisionalDuration?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Keep this code out of new bookings while historical lines stay resolvable.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isSupersededCode?: boolean;
 }
+
 
 export class DeactivateKpiMappingDto {
   @ApiPropertyOptional({ description: 'Why this mapping no longer applies' })

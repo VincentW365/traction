@@ -460,13 +460,21 @@ export class ServiceOrdersService {
    * being punished for a form they never saw.
    */
   async getBenchmarkReadiness(orderId: string) {
-    const calc = await this.kpi.calculateStandardForOrder(orderId);
+    const [calc, display] = await Promise.all([
+      this.kpi.calculateStandardForOrder(orderId),
+      // The same display-shaped breakdown the live endpoint emits, so a screen showing
+      // both never has to reconcile two shapes of the same arithmetic.
+      this.kpi.getCalculationBreakdown(orderId),
+    ]);
+
     return {
       ready: calc.missingQualifiers.length === 0 && calc.unmappedServiceTypeIds.length === 0,
       missingQualifiers: calc.missingQualifiers,
       unmappedServiceTypeIds: calc.unmappedServiceTypeIds,
       finalStandardMinutes: calc.finalStandardMinutes,
       benchmarkSource: calc.benchmarkSource,
+      vehicleClass: display.vehicleClass,
+      calculationBreakdown: display.breakdown,
       calculation: calc,
     };
   }

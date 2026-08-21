@@ -73,6 +73,10 @@ function buildService(overrides: Record<string, any> = {}) {
       finalStandardMinutes: 90,
       benchmarkSource: 'MANAGER_PACKAGE',
     })),
+    getCalculationBreakdown: vi.fn(async () => ({
+      vehicleClass: 'SEDAN_CLASS',
+      breakdown: { finalStandardMinutes: 90, lines: [] },
+    })),
   };
   const auditService = { log: vi.fn(async () => ({})) };
 

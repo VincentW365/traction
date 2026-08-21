@@ -10,7 +10,7 @@ import { LoadingState } from '../../../components/ui/loading-state';
 import { StatusBadge } from '../../../components/status-badge';
 import { PAUSE_REASONS } from '../../../lib/service-order-actions';
 import { KpiStrip, type LiveKpi } from '../../../components/kpi-strip';
-import { AxleQualifier, type AxleQualifierItem } from '../../../components/axle-qualifier';
+import { ServiceQualifiers } from '../../../components/service-qualifiers';
 
 // CR-2026-073 — H:MM:SS for the live work timers.
 function fmtClock(ms: number): string {
@@ -116,16 +116,6 @@ export default function TechnicianWorkView() {
     refetchInterval: 30000,
   });
 
-  // CR-2026-090 — the order's line items, needed to record which axle brake work
-  // covers. The assignment list carries service NAMES only, and the axle is recorded
-  // against a line. The technician is the person who actually knows the answer, so
-  // this is the right screen to ask on.
-  const orderQuery = useQuery<{ items: AxleQualifierItem[] }>({
-    queryKey: ['tech-order', currentJob?.orderId],
-    queryFn: () => api.get(`/service-orders/${currentJob!.orderId}`),
-    enabled: !!currentJob,
-  });
-
   const inspectionsQuery = useQuery<{ items: Array<{ id: string; inspectionNumber: string; status: string }> }>({
     queryKey: ['tech-inspections', currentJob?.serviceVisitId],
     queryFn: () => api.get(`/inspections?serviceVisitId=${currentJob!.serviceVisitId}`),
@@ -203,11 +193,12 @@ export default function TechnicianWorkView() {
                   {currentJob.services.length > 0 ? currentJob.services.join(', ') : 'No services recorded'}
                 </p>
 
-                {/* CR-2026-090 — axle qualifier, shown only on lines that need one */}
-                <AxleQualifier
+                {/* CR-2026-092 — the technician is the person who actually knows
+                    which axle and which brake work, so this is the right screen to
+                    ask on, and the right place to show what the answer is worth. */}
+                <ServiceQualifiers
                   orderId={currentJob.orderId}
-                  items={orderQuery.data?.items ?? []}
-                  invalidateKeys={[['kpi-live', currentJob.orderId], ['tech-order', currentJob.orderId]]}
+                  invalidateKeys={[['kpi-live', currentJob.orderId]]}
                 />
               </div>
 
@@ -309,6 +300,11 @@ export default function TechnicianWorkView() {
                   </div>
                   <p className="text-sm text-slate-700">{a.customerName} · {a.vehicle} ({a.plate})</p>
                   <p className="text-xs text-slate-500">{a.services.join(', ')}</p>
+                  {/* CR-2026-092 — the API refuses to start a job whose qualifiers
+                      are outstanding, so the question has to be answerable here
+                      rather than arriving as a refusal on START WORK. The breakdown
+                      stays off this list; it belongs on the job in hand. */}
+                  <ServiceQualifiers orderId={a.orderId} showCalculation={false} />
                   {startMutation.isError && startMutation.variables?.assignmentId === a.assignmentId && (
                     <p className="text-xs text-red-600">{startMutation.error instanceof Error ? startMutation.error.message : 'Failed to start'}</p>
                   )}

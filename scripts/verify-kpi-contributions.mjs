@@ -89,6 +89,51 @@ for (const s of services) {
   }
 }
 
+// The four codes carry named expectations, because "has a policy" is not the same as
+// "has the right policy" — a lazy CUSTOM_ONLY would satisfy the check above while
+// reproducing the exact problem it exists to prevent.
+const EXPECTED = {
+  'FUEL-FLT-01': { contributionMode: 'ADDITIVE_STANDARD', durationSource: 'SERVICE_CATALOG_DURATION' },
+  'BRK-01': { contributionMode: 'CONDITIONAL', requiredQualifier: 'BRAKE' },
+  'EST-01': { contributionMode: 'ADDITIVE_STANDARD', durationSource: 'SERVICE_CATALOG_DURATION' },
+  'TIR-01': { contributionMode: 'CONDITIONAL', requiredQualifier: 'TIRE_OPERATION' },
+};
+
+for (const [code, expected] of Object.entries(EXPECTED)) {
+  const svc = services.find((s) => s.code === code);
+  const policy = svc && byService.get(svc.id);
+  if (!policy) continue; // already reported above
+  for (const [field, want] of Object.entries(expected)) {
+    if (policy[field] !== want) {
+      problems.push(`${code}: ${field} is ${policy[field]}, expected ${want}`);
+    }
+  }
+}
+
+// CUSTOM_ONLY leaves a job unrated, so it is for genuinely bespoke work only — never
+// for "this is not one of the manager's three packages".
+const customOnly = services.filter((s) => byService.get(s.id)?.contributionMode === 'CUSTOM_ONLY');
+if (customOnly.length > 2) {
+  problems.push(
+    `${customOnly.length} services are CUSTOM_ONLY (${customOnly.map((s) => s.code).join(', ')}). ` +
+      'That mode leaves jobs unrated and should be rare — check none of these is really additive work.',
+  );
+}
+
+// A non-contributing mode with a duration source claims minutes it will never supply.
+for (const s of services) {
+  const p = byService.get(s.id);
+  if (!p) continue;
+  if (
+    ['INCLUDED_IN_BASE', 'SEPARATE_SLA', 'CUSTOM_ONLY'].includes(p.contributionMode) &&
+    p.durationSource !== 'NO_DURATION'
+  ) {
+    problems.push(
+      `${s.code}: ${p.contributionMode} should carry NO_DURATION, not ${p.durationSource}`,
+    );
+  }
+}
+
 const provisional = policies.filter((p) => p.provisionalDuration);
 const modes = policies.reduce((acc, p) => {
   acc[p.contributionMode] = (acc[p.contributionMode] ?? 0) + 1;

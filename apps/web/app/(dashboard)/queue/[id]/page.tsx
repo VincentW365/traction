@@ -12,7 +12,8 @@ import { useSiteId } from '../../../../hooks/use-site';
 import { useAuth } from '../../../../hooks/use-auth';
 import { PAUSE_REASONS, REWORK_REASONS } from '../../../../lib/service-order-actions';
 import { SearchableSelect } from '../../../../components/ui/searchable-select';
-import { AxleQualifier, AXLE_LABEL, type AxlePosition } from '../../../../components/axle-qualifier';
+import { ServiceQualifiers } from '../../../../components/service-qualifiers';
+import { qualifierSummary, type QualifierItem } from '../../../../lib/service-qualifiers';
 
 /* ---------- Types ---------- */
 
@@ -70,16 +71,15 @@ interface ServiceOrder {
   promisedCompletionAt: string | null;
   startedAt: string | null;
   completedAt: string | null;
-  items: Array<{
-    id: string;
-    serviceType: { id: string; name: string; code: string };
-    estimateMinutes: number | null;
-    actualMinutes: number | null;
-    status: string;
-    // CR-2026-090 — brake lines carry no axle in the service code, so it is recorded
-    // on the line itself.
-    axlePosition: AxlePosition | null;
-  }>;
+  // CR-2026-092 — the line carries its own qualifiers: no service code says which
+  // axle it covers, nor whether brake work is pads, shoes, a rotor or a bleed.
+  items: Array<
+    QualifierItem & {
+      estimateMinutes: number | null;
+      actualMinutes: number | null;
+      status: string;
+    }
+  >;
   assignments: Array<{
     id: string;
     isPrimary: boolean;
@@ -1104,29 +1104,33 @@ export default function QueueTicketDetailPage() {
 
                   {/* Line items */}
                   <div className="space-y-1">
-                    {order.items.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between text-xs">
-                        <span className="text-slate-700">
-                          {item.serviceType.name}
-                          {item.axlePosition && (
-                            <span className="ml-1.5 badge bg-slate-100 text-slate-600 text-[10px]">
-                              {AXLE_LABEL[item.axlePosition]}
-                            </span>
-                          )}
-                        </span>
-                        <span className="text-slate-400">
-                          {item.estimateMinutes != null ? `~${item.estimateMinutes} min` : ''}
-                          {item.actualMinutes != null ? ` (actual: ${item.actualMinutes} min)` : ''}
-                        </span>
-                      </div>
-                    ))}
+                    {order.items.map((item) => {
+                      const qualifier = qualifierSummary(item);
+                      return (
+                        <div key={item.id} className="flex items-center justify-between text-xs">
+                          <span className="text-slate-700">
+                            {item.serviceType.name}
+                            {qualifier && (
+                              <span className="ml-1.5 badge bg-slate-100 text-slate-600 text-[10px]">
+                                {qualifier}
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-slate-400">
+                            {item.estimateMinutes != null ? `~${item.estimateMinutes} min` : ''}
+                            {item.actualMinutes != null ? ` (actual: ${item.actualMinutes} min)` : ''}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
 
-                  {/* CR-2026-090 — axle qualifier, shown only on lines that need one */}
-                  <AxleQualifier
+                  {/* CR-2026-092 — qualifiers on the lines that need them, and the
+                      standard those answers produce */}
+                  <ServiceQualifiers
                     orderId={order.id}
                     items={order.items}
-                    invalidateKeys={[['service-orders', ticket?.serviceVisit?.id]]}
+                    invalidateKeys={[['service-orders', ticket.serviceVisit.id]]}
                   />
 
                   {/* Assignments */}

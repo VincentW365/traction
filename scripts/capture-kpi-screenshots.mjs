@@ -160,6 +160,106 @@ async function resolveDriver() {
 
 /* --------------------------------- capturing ---------------------------------- */
 
+/**
+ * Sign in through the real login form.
+ *
+ * Needed because the app holds its token in memory rather than a cookie, so a fresh
+ * context starts logged out. Without this, capturing a staff route silently produces a
+ * perfectly valid screenshot of the login page — evidence that proves nothing while
+ * looking like it proves something.
+ *
+ * Credentials come from the environment so this script never carries any.
+ */
+async function signIn(page) {
+  const email = process.env.CAPTURE_EMAIL;
+  const password = process.env.CAPTURE_PASSWORD;
+  if (!email || !password) {
+    throw new FatalError(
+      'Authenticated routes were requested but no credentials were supplied.\n' +
+        'Set CAPTURE_EMAIL and CAPTURE_PASSWORD, or capture only public routes.',
+    );
+  }
+
+  await page.goto(`${BASE_URL}/login`, { waitUntil: 'networkidle', timeout: 45_000 });
+  await page.fill('input[type="email"]', email);
+  await page.fill('input[type="password"]', password);
+  await page.click('button[type="submit"]');
+
+  try {
+    await page.waitForURL((url) => !url.toString().includes('/login'), { timeout: 20_000 });
+  } catch {
+    throw new FatalError(
+      `Sign-in did not leave /login for ${email}. Check the credentials and that the API is up.`,
+    );
+  }
+
+  // Leaving /login is not the same as having a session. The app keeps its token in
+  // sessionStorage and the redirect can win the race against the write, so the next
+  // full page load would find no token and bounce straight back to /login.
+  try {
+    await page.waitForFunction(() => !!window.sessionStorage.getItem('bsop_token'), null, {
+      timeout: 10_000,
+    });
+  } catch {
+    throw new FatalError(
+      'Signed in but no session token was stored — the capture would show the login page.',
+    );
+  }
+}
+
+/** Routes that need a signed-in session. Anything under /dev or /display does not. */
+function needsAuth(route) {
+  return !route.startsWith('/dev/') && !route.startsWith('/display/') && route !== '/login';
+}
+
+/**
+ * Move to a route the way a user does — by clicking the navigation link.
+ *
+ * A full document load races session rehydration against the layout's auth guard and
+ * lands on /login. Driving `history.pushState` instead is worse: it updates the address
+ * bar and the sidebar's active state while the App Router carries on rendering the
+ * previous page, which produces a screenshot that is labelled correctly and shows the
+ * wrong screen. Only a real link click makes the router navigate, so the heading is
+ * checked afterwards to prove it did.
+ */
+async function navigateInApp(page, path) {
+  const headingBefore = await page
+    .locator('h1')
+    .first()
+    .textContent({ timeout: 5_000 })
+    .catch(() => null);
+
+  // Waited for rather than counted: the dashboard shell renders after the session
+  // resolves, so an immediate check runs before the navigation exists.
+  const link = page.locator(`a[href="${path}"]`).first();
+  try {
+    await link.waitFor({ state: 'visible', timeout: 20_000 });
+  } catch {
+    throw new FatalError(
+      `No navigation link to ${path} appeared, so the route cannot be reached the way a user reaches it. ` +
+        `Check the signed-in role can see it.`,
+    );
+  }
+  await link.click();
+
+  await page.waitForURL(`**${path}`, { timeout: 20_000 }).catch(() => {});
+
+  // The router has actually rendered when the heading changes. Without this the
+  // capture can catch the outgoing page.
+  await page
+    .waitForFunction(
+      (before) => {
+        const h = document.querySelector('h1');
+        return !!h && h.textContent?.trim() !== before;
+      },
+      headingBefore?.trim() ?? '',
+      { timeout: 20_000 },
+    )
+    .catch(() => {});
+
+  await page.waitForLoadState('networkidle', { timeout: 45_000 }).catch(() => {});
+}
+
 async function captureWithPlaywright(driver, jobs) {
   const browser = await driver.chromium.launch({
     headless: true,
@@ -175,10 +275,24 @@ async function captureWithPlaywright(driver, jobs) {
       });
       const page = await context.newPage();
       try {
-        const res = await page.goto(job.url, { waitUntil: 'networkidle', timeout: 45_000 });
-        if (res && res.status() >= 400) {
-          throw new FatalError(`${job.url} returned HTTP ${res.status()} in the browser.`);
+        if (job.requiresAuth) {
+          await signIn(page);
+          await navigateInApp(page, job.path);
+        } else {
+          const res = await page.goto(job.url, { waitUntil: 'networkidle', timeout: 45_000 });
+          if (res && res.status() >= 400) {
+            throw new FatalError(`${job.url} returned HTTP ${res.status()} in the browser.`);
+          }
         }
+
+        // A staff route that bounced back to the login form is a failed capture, not a
+        // screenshot of the login form.
+        if (job.requiresAuth && page.url().includes('/login')) {
+          throw new FatalError(
+            `${job.url} redirected to /login — the session was not established.`,
+          );
+        }
+
         await page.screenshot({ path: job.outPath, fullPage: true });
       } finally {
         await context.close();
@@ -239,7 +353,7 @@ async function main() {
   console.log('Probing routes…');
   for (const route of targets) {
     await probeRoute(route);
-    console.log(`  ok  ${BASE_URL}${route}`);
+    console.log(`  ok  ${BASE_URL}${route}${needsAuth(route) ? '  (needs sign-in)' : ''}`);
   }
   console.log('');
 
@@ -256,7 +370,7 @@ async function main() {
       const name = `${slugify(route)}-${viewport.name}-${viewport.width}x${viewport.height}.png`;
       const outPath = join(OUT_DIR, name);
       await rm(outPath, { force: true }); // a stale file must never pass the size check
-      jobs.push({ url: `${BASE_URL}${route}`, viewport, outPath, name });
+      jobs.push({ url: `${BASE_URL}${route}`, viewport, outPath, name, path: route, requiresAuth: needsAuth(route) });
     }
   }
 

@@ -304,6 +304,117 @@ export class KpiReportingService {
     };
   }
 
+  /**
+   * CR-2026-092 — what additive services actually take, against what they are
+   * configured to take.
+   *
+   * Decision support, not automation. The configured standard is deliberately NOT
+   * replaced from this data: a median drawn from eleven jobs is a number about eleven
+   * jobs, and quietly retuning a benchmark from observed times would make the standard
+   * chase the performance it is supposed to measure. Management reads this and decides.
+   */
+  async getAdditiveServiceEvidence(q: Record<string, string>) {
+    const now = new Date();
+
+    const policies = await this.prisma.kpiServiceComponent.findMany({
+      where: {
+        isActive: true,
+        contributionMode: { in: ['ADDITIVE_STANDARD', 'CONDITIONAL'] },
+        effectiveFrom: { lte: now },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+      },
+      include: {
+        serviceType: {
+          select: { id: true, code: true, name: true, baseDurationMinutes: true },
+        },
+      },
+    });
+
+    const where: Prisma.WorkOrderKpiSnapshotWhereInput = {};
+    if (q.from || q.to) {
+      where.firstSubmittedToQcAt = {};
+      if (q.from) where.firstSubmittedToQcAt.gte = new Date(`${q.from}T00:00:00.000Z`);
+      if (q.to) where.firstSubmittedToQcAt.lte = new Date(`${q.to}T23:59:59.999Z`);
+    }
+
+    const snapshots = await this.prisma.workOrderKpiSnapshot.findMany({
+      where,
+      select: {
+        serviceOrderId: true,
+        vehicleClass: true,
+        kpiCompletionMinutes: true,
+        hadRework: true,
+        firstSubmittedToQcAt: true,
+        serviceOrder: { select: { items: { select: { serviceTypeId: true } } } },
+      },
+    });
+
+    // Active minutes come from the work segments where they exist, because on a shared
+    // job the elapsed clock is not what any one technician spent.
+    const segments = await this.prisma.technicianWorkSegment.findMany({
+      where: { serviceOrderId: { in: snapshots.map((s) => s.serviceOrderId) } },
+      select: { serviceOrderId: true, technicianId: true, startedAt: true, endedAt: true },
+    });
+    const segmentsByOrder = new Map<string, typeof segments>();
+    for (const s of segments) {
+      const list = segmentsByOrder.get(s.serviceOrderId);
+      if (list) list.push(s);
+      else segmentsByOrder.set(s.serviceOrderId, [s]);
+    }
+
+    const rows = policies.map((p) => {
+      const jobs = snapshots.filter((s) =>
+        s.serviceOrder?.items.some((i) => i.serviceTypeId === p.serviceType.id),
+      );
+
+      const activeMinutes = (cls?: string) =>
+        jobs
+          .filter((j) => (cls ? j.vehicleClass === cls : true))
+          .map((j) => {
+            const own = segmentsByOrder.get(j.serviceOrderId);
+            if (own?.length) {
+              return Math.round(
+                computeLabourMeasures(own, [], j.firstSubmittedToQcAt ?? now)
+                  .activeCoverageMinutes,
+              );
+            }
+            return j.kpiCompletionMinutes;
+          })
+          .filter((m): m is number => m != null);
+
+      const all = activeMinutes();
+      const reworked = jobs.filter((j) => j.hadRework).length;
+
+      return {
+        serviceTypeId: p.serviceType.id,
+        code: p.serviceType.code,
+        name: p.serviceType.name,
+        contributionMode: p.contributionMode,
+        configuredMinutes:
+          p.durationSource === 'SERVICE_CATALOG_DURATION'
+            ? p.serviceType.baseDurationMinutes
+            : p.fixedSedanMinutes,
+        provisionalDuration: p.provisionalDuration,
+
+        completedJobs: jobs.length,
+        medianActiveMinutes: percentile(all, 50),
+        p75ActiveMinutes: percentile(all, 75),
+        sedanMedianMinutes: percentile(activeMinutes('SEDAN_CLASS'), 50),
+        suvMedianMinutes: percentile(activeMinutes('SUV_CLASS'), 50),
+        reworkRate: pctOf(reworked, jobs.length),
+        firstPassQcRate: pctOf(jobs.length - reworked, jobs.length),
+      };
+    });
+
+    return {
+      rows: rows.sort((a, b) => b.completedJobs - a.completedJobs),
+      note:
+        'Observed times, for management to consider. Configured standards are never ' +
+        'replaced automatically — a standard that chases observed performance stops ' +
+        'measuring it.',
+    };
+  }
+
   async getDashboard(q: Record<string, string>) {
     const where = this.buildWhere(q);
     const snapshots = await this.prisma.workOrderKpiSnapshot.findMany({
@@ -478,4 +589,9 @@ function groupCount<T>(rows: T[], key: (r: T) => string): Record<string, number>
     out[k] = (out[k] ?? 0) + 1;
   }
   return out;
+}
+
+/** Percentage, rounded to one place, safe on an empty sample. */
+function pctOf(n: number, d: number): number {
+  return d > 0 ? Math.round((n / d) * 1000) / 10 : 0;
 }
