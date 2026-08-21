@@ -9,6 +9,7 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { SchedulingService } from '../scheduling/scheduling.service';
+import { KpiService } from '../kpi/kpi.service';
 import { CreateServiceOrderDto } from './dto/create-service-order.dto';
 import { AssignTechnicianDto } from './dto/assign-technician.dto';
 import { ChangeStatusDto } from './dto/change-status.dto';
@@ -95,6 +96,9 @@ export class ServiceOrdersService {
     private statusHistory: StatusHistoryService,
     private auditService: AuditService,
     private schedulingService: SchedulingService,
+    // CR-2026-088 — KPI hooks at the two moments that define the measurement:
+    // start of work, and the first submission to QC.
+    private kpi: KpiService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -1043,6 +1047,12 @@ export class ServiceOrdersService {
       );
     }
 
+    // CR-2026-088 — KPI-tracked work needs a confirmed Sedan/SUV class, because the
+    // class picks the standard the job will be measured against. Asking at the point
+    // of starting is the last honest moment: afterwards the clock is already running
+    // and any classification looks like it was chosen to suit the result.
+    await this.kpi.assertVehicleClassConfirmed(orderId);
+
     const updated = await this.prisma.technicianAssignment.update({
       where: { id: assignmentId },
       data: { startedAt: new Date(), status: 'IN_PROGRESS' },
@@ -1152,6 +1162,25 @@ export class ServiceOrdersService {
         where: { serviceVisitId: order.serviceVisitId, status: 'OCCUPIED' },
         data: { status: 'AVAILABLE', serviceVisitId: null, technicianId: null },
       });
+    }
+
+    // CR-2026-088 — freeze the KPI result NOW, at the first submission to QC.
+    //
+    // This cannot be derived on demand later: a failed QC sends the order back to
+    // APPROVED and nulls startedAt/completedAt so the next attempt times only
+    // itself. Without a snapshot taken here, reworking a job would quietly erase
+    // the first attempt's completion result — which is precisely the number the
+    // manager wants preserved when quality fails.
+    //
+    // Never allowed to break the technician's action: a KPI failure is a reporting
+    // problem, not a reason to reject work that is genuinely finished.
+    try {
+      await this.kpi.captureSnapshotOnQc(orderId);
+    } catch (err) {
+      this.logger.error(
+        `KPI snapshot failed for order ${orderId}: ${(err as Error).message}`,
+        (err as Error).stack,
+      );
     }
 
     this.logger.log(`ServiceOrder ${orderId} sent to QC by technician (${userId})`);

@@ -19,6 +19,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 import { TechniciansModule } from './modules/technicians/technicians.module';
 import { ServiceOrdersModule } from './modules/service-orders/service-orders.module';
+import { KpiModule } from './modules/kpi/kpi.module';
 import { PartsModule } from './modules/parts/parts.module';
 // CR-2026-040 — Transport (customer drop-off / request pick-up) archived: feature
 // unregistered (not deleted). Module files kept under ./modules/transport for easy
@@ -54,6 +55,8 @@ import { AvailabilityModule } from './modules/availability/availability.module';
     ReportingModule,
     TechniciansModule,
     ServiceOrdersModule,
+    // CR-2026-088 — technician KPI framework.
+    KpiModule,
     PartsModule,
     // TransportModule,  // CR-2026-040 — archived (see import note above)
     MaintenanceModule,

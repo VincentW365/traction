@@ -18,7 +18,11 @@ function build(opts: { assignment?: any; callerTech?: any; order?: any; myAssign
   const statusHistory = { record: vi.fn(async () => ({})) };
   const auditService = { log: vi.fn(async () => ({})) };
   const schedulingService = { recomputeQueue: vi.fn(async () => ({})) };
-  const service = new ServiceOrdersService(prisma as any, statusHistory as any, auditService as any, schedulingService as any);
+  const service = new ServiceOrdersService(prisma as any, statusHistory as any, auditService as any, schedulingService as any,
+    // CR-2026-088 - KPI hooks. Stubbed: these tests exercise the order state
+    // machine, not the KPI framework, which has its own suite.
+    { assertVehicleClassConfirmed: vi.fn(async () => undefined), captureSnapshotOnQc: vi.fn(async () => undefined) } as any,
+  );
   vi.spyOn(service as any, 'changeStatus').mockResolvedValue({});
   return { service, prisma };
 }
