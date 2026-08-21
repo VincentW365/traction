@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../../lib/api-client';
 import { useAuth } from '../../../../hooks/use-auth';
@@ -378,6 +379,26 @@ export default function TechnicianKpiPage() {
                 </tbody>
               </table>
             )}
+          </div>
+
+          {/* CR-2026-090 — the jobs left out of the ranking above, named on the page
+              that excludes them. Their absence is otherwise only inferable from a
+              technician's job count being lower than the floor thinks it should be. */}
+          <div className="card border-amber-200 bg-amber-50 p-4 mb-6 flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-amber-900">Shared and reassigned jobs</h2>
+              <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                {d.sharedOrReassignedJobs} job{d.sharedOrReassignedJobs === 1 ? '' : 's'} in this
+                range had more than one technician on them. Informational only — not included in
+                individual KPI comparison. Job time is wall-clock and there is one of it; labour
+                time is per person, so a shared job carries more labour than it lasted. No
+                per-technician rating is shown for them, because a job&apos;s elapsed time cannot
+                be split between the people who worked it.
+              </p>
+            </div>
+            <Link href="/reports/shared-jobs" className="btn-secondary shrink-0">
+              View shared jobs report
+            </Link>
           </div>
 
           {/* Job level */}

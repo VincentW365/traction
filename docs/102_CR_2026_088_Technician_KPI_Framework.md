@@ -97,10 +97,13 @@ An administrator maps service types to one of three components — `GENERAL_SERV
 | `DISC-01` Disc Pad Change | FRONT_BRAKES |
 | `SPK-01` Spark Plug Replacement | SPARK_PLUGS |
 
+> **Superseded by [CR-2026-090](104_CR_2026_090_KPI_Operational_Integration.md) §1.**
 > The catalogue contains two plausible front-brake services (`DISC-01` and `BRK-02`
-> Brake Pad Replacement). `DISC-01` is seeded because the directive named it. **If the
-> shop actually books BRK-02 for front brakes, move the mapping** — it is
-> configuration, not a rule.
+> Brake Pad Replacement), and `DISC-01` was seeded here only because the directive
+> named it. The investigation found the shop's price list distinguishes axles by
+> choosing a different line, while neither code encodes an axle — so *both* are
+> ambiguous. Both are now mapped as aliases of one Front Brakes component, counted
+> once, and both require an axle qualifier.
 
 Matching on the displayed name would break silently the first time someone renamed a
 service in the catalogue admin screen.
@@ -204,16 +207,21 @@ progress only.
 
 ## 9. Not yet built
 
-- **Per-technician work segments for shared jobs.** The schema has one assignment
-  row per technician and the pause ledger is per **order**, so an exact per-technician
-  split is not computable when two people overlap on one job. Rather than guess, such
-  jobs are flagged `isSharedOrReassigned`, excluded from individual comparison, and
-  kept in the detailed job table. Doing this properly needs a per-assignment segment
-  model — a follow-up CR.
-- **Dispatch-board KPI column.** The technician card carries the live strip; the
-  dispatch board does not yet. `GET /kpi/orders/:id/live` already serves it.
-- **A UI for the package-component mapping.** It is seeded and editable in the
-  database; there is no admin screen yet.
+**All three items below were delivered by
+[CR-2026-090](104_CR_2026_090_KPI_Operational_Integration.md).** They are kept here
+because the reasoning for deferring them is still the reasoning for how they were
+eventually built.
+
+- ~~**Per-technician work segments for shared jobs.**~~ The schema had one assignment
+  row per technician and the pause ledger was per **order**, so an exact per-technician
+  split was not computable when two people overlapped on one job. Rather than guess,
+  such jobs were flagged `isSharedOrReassigned` and excluded from individual
+  comparison. `TechnicianWorkSegment` now records who was working when. It still does
+  **not** split a shared job's elapsed time between technicians — it reports measured
+  labour alongside job time instead.
+- ~~**Dispatch-board KPI column.**~~ Now carried on every occupied bay and every
+  technician with an active job, driven by the board's existing 5-second poll.
+- ~~**A UI for the package-component mapping.**~~ Now at **Admin → KPI Mapping**.
 
 ### Built since first draft
 

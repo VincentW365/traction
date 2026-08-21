@@ -151,6 +151,9 @@ export class ServiceOrdersService {
                 estimateMinutes:
                   item.estimateMinutes ?? serviceType.baseDurationMinutes,
                 notes: item.notes,
+                // CR-2026-090 — see ServiceOrderItemDto: brake lines carry no axle
+                // in the service code, so it is captured on the line itself.
+                axlePosition: (item.axlePosition ?? null) as never,
               };
             }),
           },
@@ -241,7 +244,15 @@ export class ServiceOrdersService {
 
   async updateOrder(
     id: string,
-    dto: { items?: Array<{ serviceTypeCode: string; estimateMinutes?: number; notes?: string }>; notes?: string },
+    dto: {
+      items?: Array<{
+        serviceTypeCode: string;
+        estimateMinutes?: number;
+        notes?: string;
+        axlePosition?: string;
+      }>;
+      notes?: string;
+    },
     userId: string,
   ) {
     const order = await this.findById(id);
@@ -266,6 +277,7 @@ export class ServiceOrdersService {
               serviceTypeId: serviceType.id,
               estimateMinutes: item.estimateMinutes ?? serviceType.baseDurationMinutes,
               notes: item.notes,
+              axlePosition: (item.axlePosition ?? null) as never,
             };
           }),
         });
@@ -305,6 +317,65 @@ export class ServiceOrdersService {
     // Line items drive duration estimates — refresh the queue.
     await this.triggerQueueRecompute(order.serviceVisit.siteId);
     this.logger.log(`ServiceOrder ${id} edited by ${userId}`);
+    return updated;
+  }
+
+  /**
+   * CR-2026-090 — record which axle a service line covers.
+   *
+   * Allowed at any point before the KPI result is frozen, because the axle is a fact
+   * about the work rather than a judgement about it, and the alternative — a job
+   * permanently unbenchmarked because a dropdown was missed at booking — helps
+   * nobody.
+   *
+   * Re-evaluating the package afterwards is the point: a job blocked only by a
+   * missing axle becomes benchmarked the moment the axle is known. That runs through
+   * the same audited path as any other scope change, and `reevaluatePackage` refuses
+   * once the snapshot is finalised, so a completed job's terms cannot be revised
+   * after its result is known.
+   */
+  async setItemAxle(
+    orderId: string,
+    itemId: string,
+    axlePosition: string,
+    userId: string,
+  ) {
+    const item = await this.prisma.serviceOrderItem.findFirst({
+      where: { id: itemId, serviceOrderId: orderId },
+      include: { serviceType: { select: { code: true, name: true } } },
+    });
+    if (!item) {
+      throw new NotFoundException(`Service line ${itemId} not found on order ${orderId}`);
+    }
+
+    if (item.axlePosition === (axlePosition as never)) return item;
+
+    const updated = await this.prisma.serviceOrderItem.update({
+      where: { id: itemId },
+      data: { axlePosition: axlePosition as never },
+      include: { serviceType: { select: { code: true, name: true } } },
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: 'SERVICE_LINE_AXLE_SET',
+      entityType: 'ServiceOrderItem',
+      entityId: itemId,
+      beforeJson: { axlePosition: item.axlePosition },
+      afterJson: { axlePosition, serviceCode: updated.serviceType.code },
+    });
+
+    try {
+      await this.kpi.reevaluatePackage(orderId, userId);
+    } catch (err) {
+      this.logger.error(
+        `KPI package re-evaluation failed for order ${orderId}: ${(err as Error).message}`,
+      );
+    }
+
+    this.logger.log(
+      `Axle set to ${axlePosition} on ${updated.serviceType.code} (order ${orderId}) by ${userId}`,
+    );
     return updated;
   }
 

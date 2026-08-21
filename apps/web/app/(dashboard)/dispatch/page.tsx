@@ -1,14 +1,15 @@
 'use client';
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../../lib/api-client';
 import { useSiteId } from '../../../hooks/use-site';
 import { useAuth } from '../../../hooks/use-auth';
 import { PickupNotificationPanel } from '../../../components/pickup-notification-panel';
 import { PageHeader } from '../../../components/ui/page-header';
 import { LoadingState } from '../../../components/ui/loading-state';
+import { KpiStrip, type LiveKpi } from '../../../components/kpi-strip';
 
 /* ---------- Read-model types (mirror GET /resources/overview, CR-2026-080) ---------- */
 
@@ -146,6 +147,18 @@ interface DispatchOverview {
   overdue: OverdueItem[];
 }
 
+/**
+ * CR-2026-103 — the live KPI position for one in-progress job.
+ *
+ * `technicianCount` comes from the labour measures rather than the live KPI, which
+ * measures a single job clock and cannot see that two people were on it. Without it a
+ * shared or reassigned job would be rated as though one technician had done all of it.
+ */
+interface JobKpi {
+  kpi: LiveKpi;
+  technicianCount: number;
+}
+
 /* ---------- Helpers ---------- */
 
 function fmtMins(m: number | null | undefined): string {
@@ -232,6 +245,54 @@ export default function DispatchBoardPage() {
   });
 
   const s = data?.summary;
+
+  // CR-2026-103 — live KPI for every job under way, on bays and on technicians alike.
+  //
+  // These ride the overview poll above instead of starting a timer of their own, so a
+  // bay's KPI can never disagree with the elapsed time printed beside it. The figures
+  // move by the minute at most, so they are refetched when that poll's clock crosses a
+  // minute rather than on every five-second tick.
+  const liveJobOrderIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of data?.resources ?? []) {
+      if (r.status === 'OCCUPIED' && r.currentJob?.serviceOrderId) ids.add(r.currentJob.serviceOrderId);
+    }
+    for (const t of data?.technicianLoad ?? []) {
+      if (t.currentJob?.serviceOrderId) ids.add(t.currentJob.serviceOrderId);
+    }
+    return Array.from(ids).sort();
+  }, [data?.resources, data?.technicianLoad]);
+
+  const overviewMinute = data?.generatedAt
+    ? Math.floor(new Date(data.generatedAt).getTime() / 60_000)
+    : null;
+
+  useEffect(() => {
+    if (overviewMinute == null) return;
+    queryClient.invalidateQueries({ queryKey: ['dispatch-kpi'] });
+  }, [overviewMinute, queryClient]);
+
+  const kpiResults = useQueries({
+    queries: liveJobOrderIds.map((orderId) => ({
+      queryKey: ['dispatch-kpi', orderId],
+      queryFn: async (): Promise<JobKpi> => {
+        const [kpi, labour] = await Promise.all([
+          api.get<LiveKpi>(`/kpi/orders/${orderId}/live`),
+          api.get<{ technicianCount: number }>(`/kpi/orders/${orderId}/labour`),
+        ]);
+        return { kpi, technicianCount: labour.technicianCount };
+      },
+      staleTime: 60_000,
+    })),
+  });
+
+  // A failed fetch leaves the job with no strip at all: an unknown technician count
+  // cannot rule out shared work, and a rating that might misattribute is worse than none.
+  const kpiByOrder = new Map<string, JobKpi>();
+  liveJobOrderIds.forEach((orderId, i) => {
+    const result = kpiResults[i]?.data;
+    if (result) kpiByOrder.set(orderId, result);
+  });
 
   const categories = useMemo(() => {
     const set = new Set((data?.resources ?? []).map((r) => r.resourceCategory));
@@ -336,7 +397,11 @@ export default function DispatchBoardPage() {
             <Panel title="Technician Load" count={technicianLoad.length} accent="bg-slate-500" empty="No active technicians">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {technicianLoad.map((t) => (
-                  <TechCard key={t.technicianId} tech={t} />
+                  <TechCard
+                    key={t.technicianId}
+                    tech={t}
+                    jobKpi={t.currentJob ? kpiByOrder.get(t.currentJob.serviceOrderId) : undefined}
+                  />
                 ))}
               </div>
             </Panel>
@@ -349,6 +414,7 @@ export default function DispatchBoardPage() {
                 <ResourceCard
                   key={r.resourceId}
                   resource={r}
+                  jobKpi={r.currentJob?.serviceOrderId ? kpiByOrder.get(r.currentJob.serviceOrderId) : undefined}
                   canToggleOperational={canToggleOperational}
                   busy={setOperationalMutation.isPending}
                   onRelease={() => releaseMutation.mutate(r.resourceId)}
@@ -491,7 +557,7 @@ function NeedsDispatchRow({ item }: { item: NeedsDispatchItem }) {
   );
 }
 
-function TechCard({ tech }: { tech: TechLoad }) {
+function TechCard({ tech, jobKpi }: { tech: TechLoad; jobKpi?: JobKpi }) {
   const stateStyle: Record<string, string> = {
     BUSY: 'bg-amber-100 text-amber-700',
     ASSIGNED: 'bg-blue-100 text-blue-700',
@@ -509,9 +575,16 @@ function TechCard({ tech }: { tech: TechLoad }) {
         <span className="text-[11px] text-slate-400">· {tech.openAssignments} open</span>
       </div>
       {tech.currentJob ? (
-        <div className="text-[11px] text-slate-500 mt-1 truncate">
-          {tech.currentJob.ticketNumber} · {tech.currentJob.vehiclePlate} · {fmtMins(tech.currentJob.elapsedMinutes)}
-        </div>
+        <>
+          <div className="text-[11px] text-slate-500 mt-1 truncate">
+            {tech.currentJob.ticketNumber} · {tech.currentJob.vehiclePlate} · {fmtMins(tech.currentJob.elapsedMinutes)}
+          </div>
+          {jobKpi && (
+            <div className="mt-1.5">
+              <KpiStrip kpi={jobKpi.kpi} variant="dense" technicianCount={jobKpi.technicianCount} />
+            </div>
+          )}
+        </>
       ) : (
         <div className="text-[11px] text-slate-300 mt-1">No active job</div>
       )}
@@ -565,12 +638,14 @@ function AwarenessRow({
 
 function ResourceCard({
   resource: r,
+  jobKpi,
   canToggleOperational,
   busy,
   onRelease,
   onSetOperational,
 }: {
   resource: ResourceItem;
+  jobKpi?: JobKpi;
   canToggleOperational: boolean;
   busy: boolean;
   onRelease: () => void;
@@ -642,6 +717,9 @@ function ResourceCard({
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700">Parts not ready</span>
               )}
             </div>
+            {jobKpi && (
+              <KpiStrip kpi={jobKpi.kpi} variant="dense" technicianCount={jobKpi.technicianCount} />
+            )}
             <div className="flex gap-2 pt-1">
               {r.currentJob.queueTicketId && (
                 <Link

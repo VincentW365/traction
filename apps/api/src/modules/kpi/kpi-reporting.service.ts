@@ -132,7 +132,21 @@ export class KpiReportingService {
     // technicianId filters on the PRIMARY technician for the main dashboard, but a
     // shared-jobs report is exactly where "jobs Marcus helped on" matters, so the
     // filter is applied against the segments instead.
+    //
+    // Resolved into the query rather than applied to the results, because the row cap
+    // would otherwise bite BEFORE the filter: a wide date range would return the most
+    // recent 300 shared jobs and then show only the handful this technician appears
+    // in, which reads as "they worked on 4 shared jobs" when they worked on forty.
     delete where.primaryTechnicianId;
+
+    if (q.technicianId) {
+      const theirOrders = await this.prisma.technicianWorkSegment.findMany({
+        where: { technicianId: q.technicianId },
+        select: { serviceOrderId: true },
+        distinct: ['serviceOrderId'],
+      });
+      where.serviceOrderId = { in: theirOrders.map((s) => s.serviceOrderId) };
+    }
 
     const snapshots = await this.prisma.workOrderKpiSnapshot.findMany({
       where,
@@ -157,7 +171,14 @@ export class KpiReportingService {
       return {
         rows: [],
         note: SHARED_JOBS_NOTE,
-        totals: { jobs: 0, teamLabourMinutes: 0, concurrentAssistMinutes: 0 },
+        // Same shape as the populated path — a client should not have to handle two.
+        totals: {
+          jobs: 0,
+          teamLabourMinutes: 0,
+          activeCoverageMinutes: 0,
+          concurrentAssistMinutes: 0,
+          excludedCoverageMinutes: 0,
+        },
       };
     }
 
@@ -262,18 +283,19 @@ export class KpiReportingService {
           individualRating: null as null,
           note: SHARED_JOBS_NOTE,
         };
-      })
-      .filter((r) =>
-        q.technicianId ? r.technicians.some((t) => t.technicianId === q.technicianId) : true,
-      );
+      });
 
     return {
       rows,
       note: SHARED_JOBS_NOTE,
+      // All four measures, so a client never has to reconstruct one of them from the
+      // rows and end up with a total that disagrees in kind with the others.
       totals: {
         jobs: rows.length,
         teamLabourMinutes: rows.reduce((a, r) => a + r.teamLabourMinutes, 0),
+        activeCoverageMinutes: rows.reduce((a, r) => a + r.activeCoverageMinutes, 0),
         concurrentAssistMinutes: rows.reduce((a, r) => a + r.concurrentAssistMinutes, 0),
+        excludedCoverageMinutes: rows.reduce((a, r) => a + r.excludedCoverageMinutes, 0),
       },
     };
   }

@@ -68,7 +68,7 @@ export class KpiMappingService {
    * itself: which services share a component (aliases), which are unmapped, and
    * whether a mapping can still be changed freely.
    */
-  async list(includeInactive = false) {
+  async list(includeHistory = false) {
     const now = new Date();
 
     const [services, mappings, usageCounts] = await Promise.all([
@@ -112,6 +112,10 @@ export class KpiMappingService {
       aliasGroups.set(m.componentRole, list);
     }
 
+    // Resolved across every mapping, not just the active ones, so the history block
+    // below carries names too.
+    const authors = await this.resolveAuthors(mappings.map((m) => m.updatedByUserId));
+
     const rows = services.map((s) => {
       const active = activeByService.get(s.id);
       const role = (active?.componentRole ?? null) as KpiComponentRole | null;
@@ -130,6 +134,10 @@ export class KpiMappingService {
         effectiveFrom: active?.effectiveFrom ?? null,
         notes: active?.notes ?? null,
         updatedByUserId: active?.updatedByUserId ?? null,
+        // Null means seeded, not anonymous — the screen says so rather than showing a UUID.
+        updatedByName: active?.updatedByUserId
+          ? (authors.get(active.updatedByUserId) ?? null)
+          : null,
         /** Other services that resolve to the same benchmark component. */
         aliasOf: siblings
           .map((id) => services.find((x) => x.id === id)?.code)
@@ -143,18 +151,26 @@ export class KpiMappingService {
 
     return {
       rows,
-      history: includeInactive
+      // Every historical row for every service, so opt-in only. A screen showing one
+      // service's history at a time should use the dedicated endpoint instead — this
+      // payload grows without bound as mappings accumulate.
+      history: includeHistory
         ? mappings.map((m) => ({
             id: m.id,
             serviceTypeId: m.serviceTypeId,
             code: m.serviceType.code,
+            name: m.serviceType.name,
             componentRole: m.componentRole,
+            componentRoleLabel: ROLE_LABELS[m.componentRole as KpiComponentRole],
             requiresAxleQualifier: m.requiresAxleQualifier,
             isActive: m.isActive,
             effectiveFrom: m.effectiveFrom,
             effectiveTo: m.effectiveTo,
             notes: m.notes,
             updatedByUserId: m.updatedByUserId,
+            updatedByName: m.updatedByUserId
+              ? (authors.get(m.updatedByUserId) ?? null)
+              : null,
           }))
         : undefined,
       roles: VALID_ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] })),
@@ -162,12 +178,54 @@ export class KpiMappingService {
     };
   }
 
-  /** The mapping history for one service, newest first. */
+  /**
+   * The mapping history for one service, newest first.
+   *
+   * Shaped like the rows in `list()` — same field names, same role label, same
+   * resolved author — so a client can render either without a second code path.
+   */
   async history(serviceTypeId: string) {
-    return this.prisma.kpiServiceComponent.findMany({
+    const rows = await this.prisma.kpiServiceComponent.findMany({
       where: { serviceTypeId },
       orderBy: { effectiveFrom: 'desc' },
+      include: { serviceType: { select: { code: true, name: true } } },
     });
+
+    const authors = await this.resolveAuthors(rows.map((r) => r.updatedByUserId));
+
+    return rows.map((m) => ({
+      id: m.id,
+      serviceTypeId: m.serviceTypeId,
+      code: m.serviceType.code,
+      name: m.serviceType.name,
+      componentRole: m.componentRole,
+      componentRoleLabel: ROLE_LABELS[m.componentRole as KpiComponentRole],
+      requiresAxleQualifier: m.requiresAxleQualifier,
+      isActive: m.isActive,
+      effectiveFrom: m.effectiveFrom,
+      effectiveTo: m.effectiveTo,
+      notes: m.notes,
+      updatedByUserId: m.updatedByUserId,
+      updatedByName: m.updatedByUserId ? (authors.get(m.updatedByUserId) ?? null) : null,
+    }));
+  }
+
+  /**
+   * Resolve author IDs to names.
+   *
+   * Done here rather than left to the client, which would otherwise have to fetch the
+   * whole staff list to put a name against a UUID. A mapping with no author is seeded
+   * rather than anonymous, and the caller distinguishes the two by the null.
+   */
+  private async resolveAuthors(ids: Array<string | null>): Promise<Map<string, string>> {
+    const unique = [...new Set(ids.filter((i): i is string => !!i))];
+    if (unique.length === 0) return new Map();
+
+    const users = await this.prisma.userAccount.findMany({
+      where: { id: { in: unique } },
+      select: { id: true, fullName: true },
+    });
+    return new Map(users.map((u) => [u.id, u.fullName]));
   }
 
   /**
@@ -215,11 +273,36 @@ export class KpiMappingService {
       orderBy: { effectiveFrom: 'desc' },
     });
 
-    const unchanged =
+    const classificationUnchanged =
       current &&
       current.componentRole === (input.componentRole as never) &&
       current.requiresAxleQualifier === (input.requiresAxleQualifier ?? false);
-    if (unchanged) return current;
+
+    if (classificationUnchanged) {
+      // The classification is the same, so there is nothing to supersede — nothing a
+      // past job was measured against has moved. But the rationale may still have
+      // been corrected, and silently discarding it would give the manager a success
+      // message for an edit that did not happen. Update the note in place and audit it.
+      const notesChanged =
+        input.notes !== undefined && (input.notes || null) !== (current.notes || null);
+      if (!notesChanged) return current;
+
+      const updated = await this.prisma.kpiServiceComponent.update({
+        where: { id: current.id },
+        data: { notes: input.notes, updatedByUserId: actorUserId },
+      });
+
+      await this.audit.log({
+        actorUserId,
+        action: 'KPI_MAPPING_NOTE_UPDATED',
+        entityType: 'KpiServiceComponent',
+        entityId: current.id,
+        beforeJson: { notes: current.notes },
+        afterJson: { serviceCode: service.code, notes: input.notes },
+      });
+
+      return updated;
+    }
 
     const result = await this.prisma.$transaction(async (tx) => {
       if (current) {

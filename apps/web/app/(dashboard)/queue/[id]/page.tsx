@@ -12,6 +12,7 @@ import { useSiteId } from '../../../../hooks/use-site';
 import { useAuth } from '../../../../hooks/use-auth';
 import { PAUSE_REASONS, REWORK_REASONS } from '../../../../lib/service-order-actions';
 import { SearchableSelect } from '../../../../components/ui/searchable-select';
+import { AxleQualifier, AXLE_LABEL, type AxlePosition } from '../../../../components/axle-qualifier';
 
 /* ---------- Types ---------- */
 
@@ -71,10 +72,13 @@ interface ServiceOrder {
   completedAt: string | null;
   items: Array<{
     id: string;
-    serviceType: { name: string; code: string };
+    serviceType: { id: string; name: string; code: string };
     estimateMinutes: number | null;
     actualMinutes: number | null;
     status: string;
+    // CR-2026-090 — brake lines carry no axle in the service code, so it is recorded
+    // on the line itself.
+    axlePosition: AxlePosition | null;
   }>;
   assignments: Array<{
     id: string;
@@ -1102,7 +1106,14 @@ export default function QueueTicketDetailPage() {
                   <div className="space-y-1">
                     {order.items.map((item) => (
                       <div key={item.id} className="flex items-center justify-between text-xs">
-                        <span className="text-slate-700">{item.serviceType.name}</span>
+                        <span className="text-slate-700">
+                          {item.serviceType.name}
+                          {item.axlePosition && (
+                            <span className="ml-1.5 badge bg-slate-100 text-slate-600 text-[10px]">
+                              {AXLE_LABEL[item.axlePosition]}
+                            </span>
+                          )}
+                        </span>
                         <span className="text-slate-400">
                           {item.estimateMinutes != null ? `~${item.estimateMinutes} min` : ''}
                           {item.actualMinutes != null ? ` (actual: ${item.actualMinutes} min)` : ''}
@@ -1110,6 +1121,13 @@ export default function QueueTicketDetailPage() {
                       </div>
                     ))}
                   </div>
+
+                  {/* CR-2026-090 — axle qualifier, shown only on lines that need one */}
+                  <AxleQualifier
+                    orderId={order.id}
+                    items={order.items}
+                    invalidateKeys={[['service-orders', ticket?.serviceVisit?.id]]}
+                  />
 
                   {/* Assignments */}
                   {order.assignments.length > 0 && (

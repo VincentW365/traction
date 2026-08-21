@@ -13,6 +13,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ServiceOrdersService } from './service-orders.service';
 import { CreateServiceOrderDto } from './dto/create-service-order.dto';
+import { SetItemAxleDto } from './dto/set-item-axle.dto';
 import { UpdateServiceOrderDto } from './dto/update-service-order.dto';
 import { AssignTechnicianDto } from './dto/assign-technician.dto';
 import { AssignAllDto } from './dto/assign-all.dto';
@@ -216,6 +217,26 @@ export class ServiceOrdersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.serviceOrdersService.removeAssignment(id, assignmentId, user.sub);
+  }
+
+  /**
+   * CR-2026-090 — record which axle a service line covers.
+   *
+   * Its own endpoint rather than part of the order edit, because the edit is limited
+   * to DRAFT/APPROVED and the axle is often only settled once the vehicle is on the
+   * ramp. Without this, a job whose only defect is a missing dropdown value would
+   * stay unbenchmarked for good.
+   */
+  @Patch(':id/items/:itemId/axle')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: 'Record which axle a service line covers (front/rear brake work)' })
+  async setItemAxle(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() dto: SetItemAxleDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.setItemAxle(id, itemId, dto.axlePosition, user.sub);
   }
 
   @Patch(':id/assignments/:assignmentId')
