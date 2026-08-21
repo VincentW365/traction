@@ -22,6 +22,8 @@ interface StaffDetail {
     id: string;
     employeeCode: string;
     status: string;
+    // CR-2026-087 — senior technicians may be assigned a quality check.
+    isSenior: boolean;
     homeSiteId: string | null;
     skills: Array<{
       id: string;
@@ -96,6 +98,13 @@ export default function StaffDetailPage() {
       setNewSkillCode('');
       setNewSkillLevel(1);
     },
+  });
+
+  // CR-2026-087 — mark this technician senior (eligible to be assigned a quality check).
+  const seniorityMutation = useMutation({
+    mutationFn: (isSenior: boolean) =>
+      api.patch(`/staff/${staffId}/technician/seniority`, { isSenior }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['staff-detail', staffId] }),
   });
 
   // CR-2026-067 — add every missing skill at once (so a technician can do everything).
@@ -248,6 +257,36 @@ export default function StaffDetailPage() {
                       <div className="input-label">Status</div>
                       <div className="mt-0.5"><StatusBadge status={staff.technician.status} /></div>
                     </div>
+                  </div>
+
+                  {/*
+                    CR-2026-087 — seniority. Until now "senior technician sign-off"
+                    was really just the manager role, so an actual senior technician
+                    could not sign anything. This is the attribute that decides who
+                    may be assigned a quality check.
+                  */}
+                  <div className="mt-4 pt-4 border-t border-slate-100">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={staff.technician.isSenior}
+                        disabled={seniorityMutation.isPending}
+                        onChange={(e) => seniorityMutation.mutate(e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>
+                        <span className="text-sm font-medium text-slate-900">Senior technician</span>
+                        <span className="block text-xs text-slate-500 mt-0.5">
+                          Can be assigned a quality check and can sign off an inspection.
+                          A technician can never pass the quality check on their own work.
+                        </span>
+                      </span>
+                    </label>
+                    {seniorityMutation.isError && (
+                      <p className="text-xs text-red-600 mt-2">
+                        {seniorityMutation.error instanceof Error ? seniorityMutation.error.message : 'Could not update seniority'}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

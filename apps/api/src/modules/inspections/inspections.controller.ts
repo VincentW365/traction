@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiOkResponse, ApiCreatedResponse } from '@nestjs/swagger';
 import { InspectionsService } from './inspections.service';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { UpdateInspectionDto } from './dto/update-inspection.dto';
 import { AddRecommendationDto } from './dto/add-recommendation.dto';
+import { AddInspectionPhotoDto } from './dto/add-photo.dto';
 import { InspectionQueryDto } from './dto/inspection-query.dto';
 import { SignoffInspectionDto } from './dto/signoff-inspection.dto';
 import { DecideRecommendationDto } from './dto/decide-recommendation.dto';
@@ -63,6 +64,21 @@ export class InspectionsController {
   @ApiOperation({ summary: 'Add a finding/recommendation to a DRAFT inspection' })
   addRecommendation(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddRecommendationDto, @CurrentUser() user: JwtPayload) {
     return this.service.addRecommendation(id, dto, user);
+  }
+
+  // CR-2026-087 — pre-inspection photos from the technician's tablet.
+  @Post(':id/photos')
+  @RequirePermission(PERMISSIONS.INSPECTION_EDIT)
+  @ApiOperation({ summary: 'Attach a pre-inspection photo (base64 data URL) before sign-off' })
+  addPhoto(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddInspectionPhotoDto, @CurrentUser() user: JwtPayload) {
+    return this.service.addPhoto(id, dto, user);
+  }
+
+  @Delete(':id/photos/:photoId')
+  @RequirePermission(PERMISSIONS.INSPECTION_EDIT)
+  @ApiOperation({ summary: 'Remove a pre-inspection photo taken in error' })
+  deletePhoto(@Param('id', ParseUUIDPipe) id: string, @Param('photoId', ParseUUIDPipe) photoId: string, @CurrentUser() user: JwtPayload) {
+    return this.service.deletePhoto(id, photoId, user);
   }
 
   @Post(':id/complete')

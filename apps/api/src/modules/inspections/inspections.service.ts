@@ -8,6 +8,7 @@ import { ToWorkOrderDto } from './dto/to-work-order.dto';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { UpdateInspectionDto } from './dto/update-inspection.dto';
 import { AddRecommendationDto } from './dto/add-recommendation.dto';
+import { AddInspectionPhotoDto } from './dto/add-photo.dto';
 import { InspectionQueryDto } from './dto/inspection-query.dto';
 import { SignoffInspectionDto } from './dto/signoff-inspection.dto';
 import { DecideRecommendationDto } from './dto/decide-recommendation.dto';
@@ -27,6 +28,8 @@ const DETAIL_INCLUDE = {
   wheelMeasurements: true,
   recommendations: { orderBy: { createdAt: 'asc' as const } },
   signatures: true,
+  // CR-2026-087 — pre-inspection photos.
+  photos: { orderBy: { createdAt: 'asc' as const } },
   customer: { select: { id: true, firstName: true, lastName: true, phone: true } },
   vehicle: { select: { id: true, plateNumber: true, make: true, model: true, modelYear: true } },
   serviceVisit: { select: { id: true, status: true } },
@@ -259,6 +262,64 @@ export class InspectionsService {
     });
 
     return this.findById(id, actor);
+  }
+
+  /**
+   * CR-2026-087 — attach a pre-inspection photo.
+   *
+   * Allowed while the inspection is DRAFT or COMPLETED, deliberately wider than the
+   * DRAFT-only rule for results: the point of these is to record the vehicle's
+   * condition on arrival, and a technician may well take them after filling the
+   * checklist but before the senior tech signs off. Once SIGNED_OFF the record is
+   * immutable, so photos stop there like everything else.
+   */
+  async addPhoto(id: string, dto: AddInspectionPhotoDto, actor: InspectionActor) {
+    const existing = await this.prisma.vehicleInspection.findUnique({
+      where: { id },
+      select: { id: true, siteId: true, status: true },
+    });
+    if (!existing) throw new NotFoundException('Inspection not found');
+    this.assertSameSite(existing.siteId, actor);
+    if (!['DRAFT', 'COMPLETED'].includes(existing.status)) {
+      throw new BadRequestException(
+        'Photos can only be added before the inspection is signed off',
+      );
+    }
+
+    return this.prisma.inspectionPhoto.create({
+      data: {
+        inspectionId: id,
+        imageData: dto.imageData,
+        caption: dto.caption ?? null,
+        takenByUserId: actor.sub,
+      },
+      // Never echo the image back — the caller already has it, and it is large.
+      select: { id: true, caption: true, takenByUserId: true, createdAt: true },
+    });
+  }
+
+  /** CR-2026-087 — remove a photo taken in error. Same lifecycle rule as adding. */
+  async deletePhoto(id: string, photoId: string, actor: InspectionActor) {
+    const existing = await this.prisma.vehicleInspection.findUnique({
+      where: { id },
+      select: { id: true, siteId: true, status: true },
+    });
+    if (!existing) throw new NotFoundException('Inspection not found');
+    this.assertSameSite(existing.siteId, actor);
+    if (!['DRAFT', 'COMPLETED'].includes(existing.status)) {
+      throw new BadRequestException(
+        'Photos can only be changed before the inspection is signed off',
+      );
+    }
+
+    const photo = await this.prisma.inspectionPhoto.findFirst({
+      where: { id: photoId, inspectionId: id },
+      select: { id: true },
+    });
+    if (!photo) throw new NotFoundException('Photo not found on this inspection');
+
+    await this.prisma.inspectionPhoto.delete({ where: { id: photoId } });
+    return { deleted: true, photoId };
   }
 
   async addRecommendation(id: string, dto: AddRecommendationDto, actor: InspectionActor) {

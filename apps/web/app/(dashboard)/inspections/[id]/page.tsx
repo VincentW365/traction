@@ -10,6 +10,7 @@ import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../components/status-badge';
 import { SignaturePad } from '../../../../components/signature-pad';
+import { PhotoCapture } from '../../../../components/photo-capture';
 
 interface InspItem { id: string; category: string; label: string; orderIndex: number; result: string; note: string | null }
 interface Wheel { id: string; position: string; brakeLiningMm: number | null; tireTread32nds: number | null; wearPattern: string | null; tirePressureBeforePsi: number | null; tirePressureAfterPsi: number | null; rotorOrDrum: string | null }
@@ -25,7 +26,11 @@ interface Inspection {
   vehicle: { id: string; plateNumber: string; make: string | null; model: string | null; modelYear: number | null } | null;
   serviceVisit: { id: string; status: string } | null;
   items: InspItem[]; wheelMeasurements: Wheel[]; recommendations: Rec[]; signatures: Sig[]; timeline: TimelineRow[];
+  photos: Photo[];
 }
+
+// CR-2026-087 - pre-inspection vehicle photo (base64 data URL in a TEXT column).
+interface Photo { id: string; imageData: string; caption: string | null; createdAt: string }
 
 interface ItemEdit { result: string; note: string }
 interface WheelEdit { brakeLiningMm: string; tireTread32nds: string; wearPattern: string; tirePressureBeforePsi: string; tirePressureAfterPsi: string; rotorOrDrum: string }
@@ -134,6 +139,17 @@ export default function InspectionDetailPage() {
   });
   const complete = useMutation({ mutationFn: () => api.post(`/inspections/${id}/complete`, {}), onSuccess: invalidate });
   const cancel = useMutation({ mutationFn: () => api.post(`/inspections/${id}/cancel`, {}), onSuccess: invalidate });
+  // CR-2026-087 - vehicle photos. Allowed until sign-off, deliberately wider than
+  // the DRAFT-only rule for results: a tech may photograph the car after filling in
+  // the checklist but before the senior tech signs.
+  const addPhoto = useMutation({
+    mutationFn: (imageData: string) => api.post(`/inspections/${id}/photos`, { imageData }),
+    onSuccess: invalidate,
+  });
+  const deletePhoto = useMutation({
+    mutationFn: (photoId: string) => api.delete(`/inspections/${id}/photos/${photoId}`),
+    onSuccess: invalidate,
+  });
   const signoff = useMutation({
     mutationFn: () => api.post(`/inspections/${id}/signoff`, signoffMethod === 'DRAWN'
       ? { type: 'DRAWN', imageData: signoffImage }
@@ -163,6 +179,10 @@ export default function InspectionDetailPage() {
 
   const c = data;
   const isDraft = c.status === 'DRAFT';
+  // CR-2026-087 — photos stay addable until sign-off, unlike the checklist results
+  // which lock at DRAFT: a technician often photographs the car after filling the
+  // form but before the senior tech signs. Matches the API's own rule.
+  const canAddPhotos = canEdit && ['DRAFT', 'COMPLETED'].includes(c.status);
   const categories = [...new Set(c.items.map((i) => i.category))];
   const setItem = (itemId: string, patch: Partial<ItemEdit>) => setEdits((e) => e && ({ ...e, items: { ...e.items, [itemId]: { ...e.items[itemId], ...patch } } }));
   const setWheel = (pos: string, patch: Partial<WheelEdit>) => setEdits((e) => e && ({ ...e, wheels: { ...e.wheels, [pos]: { ...e.wheels[pos], ...patch } } }));
@@ -265,6 +285,66 @@ export default function InspectionDetailPage() {
           </div>
         </div>
       )}
+
+      {/*
+        ── Vehicle photos (CR-2026-087) ──
+        Taken by the assigned technician on their tablet to record the vehicle's
+        condition on arrival. Prior body damage used to be text-only.
+      */}
+      <div className="card mb-4">
+        <div className="card-header flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Vehicle Photos
+            {c.photos.length > 0 && <span className="ml-2 badge bg-slate-100 text-slate-600">{c.photos.length}</span>}
+          </h2>
+          {canAddPhotos && (
+            <PhotoCapture onCapture={(imageData) => addPhoto.mutateAsync(imageData)} label="Take photo" />
+          )}
+        </div>
+        <div className="card-body">
+          {c.photos.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {canAddPhotos
+                ? 'No photos yet. Photograph the vehicle before work starts to record its condition on arrival.'
+                : 'No photos were taken for this inspection.'}
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {c.photos.map((p) => (
+                <figure key={p.id} className="relative group">
+                  <a href={p.imageData} target="_blank" rel="noopener noreferrer">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={p.imageData}
+                      alt={p.caption ?? 'Vehicle photo taken at inspection'}
+                      className="w-full h-32 object-cover rounded-lg border border-slate-200"
+                    />
+                  </a>
+                  <figcaption className="text-[11px] text-slate-400 mt-1">
+                    {new Date(p.createdAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                  </figcaption>
+                  {canAddPhotos && (
+                    <button
+                      type="button"
+                      onClick={() => deletePhoto.mutate(p.id)}
+                      disabled={deletePhoto.isPending}
+                      className="absolute top-1.5 right-1.5 rounded-md bg-white/90 px-2 py-0.5 text-[11px] font-medium text-red-600 shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                      aria-label="Remove this photo"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </figure>
+              ))}
+            </div>
+          )}
+          {addPhoto.isError && (
+            <p className="text-xs text-red-600 mt-2">
+              {addPhoto.error instanceof Error ? addPhoto.error.message : 'Could not add the photo.'}
+            </p>
+          )}
+        </div>
+      </div>
 
       {/* ── Recommendations ── */}
       <div className="card mb-4">

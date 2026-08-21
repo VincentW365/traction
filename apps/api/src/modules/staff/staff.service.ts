@@ -51,6 +51,8 @@ export class StaffService {
             id: true,
             employeeCode: true,
             status: true,
+            // CR-2026-087 - senior technicians may be assigned a quality check.
+            isSenior: true,
           },
         },
       },
@@ -75,6 +77,8 @@ export class StaffService {
             id: true,
             employeeCode: true,
             status: true,
+            // CR-2026-087 - senior technicians may be assigned a quality check.
+            isSenior: true,
             homeSiteId: true,
             skills: {
               select: {
@@ -277,5 +281,40 @@ export class StaffService {
       throw new NotFoundException('No technician profile linked to this user');
     }
     return user.technician;
+  }
+
+  /**
+   * CR-2026-087 — mark a technician senior, or clear it.
+   *
+   * Audited because it changes who is allowed to sign off someone else's work,
+   * which is a control, not a preference.
+   */
+  async setSeniority(userId: string, isSenior: boolean, actorUserId: string) {
+    const user = await this.findById(userId);
+    if (!user.technician) {
+      throw new NotFoundException('No technician profile linked to this user');
+    }
+    if (user.technician.isSenior === isSenior) {
+      return user.technician; // No-op; nothing to record.
+    }
+
+    const updated = await this.prisma.technician.update({
+      where: { id: user.technician.id },
+      data: { isSenior },
+      select: { id: true, employeeCode: true, status: true, isSenior: true },
+    });
+
+    await this.audit.log({
+      actorUserId,
+      action: 'TECHNICIAN_SENIORITY_CHANGE',
+      entityType: 'Technician',
+      entityId: updated.id,
+      beforeJson: { isSenior: user.technician.isSenior },
+      afterJson: { isSenior },
+      reasonCode: 'TECHNICIAN_SENIORITY_CHANGE',
+      notes: `${user.fullName} ${isSenior ? 'marked as' : 'removed from'} senior technician`,
+    });
+
+    return updated;
   }
 }

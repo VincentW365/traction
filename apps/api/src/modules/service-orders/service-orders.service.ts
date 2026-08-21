@@ -662,8 +662,21 @@ export class ServiceOrdersService {
       );
     }
 
+    // CR-2026-087 — passing the quality check is now attributed and guarded.
+    // It used to be an ordinary status transition: nothing recorded who passed it,
+    // and nothing stopped the technician who did the work from signing off their
+    // own job. (A FAILED check was already attributed, via ServiceOrderRework.)
+    if (fromStatus === 'QC' && toStatus === 'READY_TO_INVOICE') {
+      await this.assertQcNotSelfApproved(id, userId);
+    }
+
     // Build update data with appropriate timestamp fields
     const updateData: Record<string, unknown> = { status: toStatus };
+
+    if (fromStatus === 'QC' && toStatus === 'READY_TO_INVOICE') {
+      updateData.qcByUserId = userId;
+      updateData.qcAt = new Date();
+    }
 
     if (toStatus === 'IN_PROGRESS' && !order.startedAt) {
       updateData.startedAt = new Date();
@@ -1194,6 +1207,40 @@ export class ServiceOrdersService {
    * the car is no longer waiting, and leaving a stale rank behind made it collide
    * with the positions handed to the tickets still in line.
    */
+  /**
+   * CR-2026-087 — a technician may not pass the quality check on work they did.
+   *
+   * A quality check exists to get a second pair of eyes on the job; letting the
+   * person who built it sign it off makes the control ceremonial. Managers and
+   * advisors are unaffected — they hold no technician record, so they fall
+   * straight through.
+   *
+   * This checks ALL assignments on the order, not just open ones: entry to QC ends
+   * the technician's assignment, so by the time anyone can pass the check their
+   * assignment is already closed.
+   */
+  private async assertQcNotSelfApproved(
+    serviceOrderId: string,
+    userId: string,
+  ): Promise<void> {
+    const tech = await this.prisma.technician.findUnique({
+      where: { userAccountId: userId },
+      select: { id: true },
+    });
+    if (!tech) return; // Not a technician (manager / advisor) — nothing to guard.
+
+    const ownWork = await this.prisma.technicianAssignment.findFirst({
+      where: { serviceOrderId, technicianId: tech.id },
+      select: { id: true },
+    });
+    if (ownWork) {
+      throw new ForbiddenException(
+        'You cannot pass the quality check on work you carried out. ' +
+          'A different technician, or a manager, must check this job.',
+      );
+    }
+  }
+
   private async syncQueueTicket(
     serviceVisitId: string,
     toStatus: ServiceOrderStatus,

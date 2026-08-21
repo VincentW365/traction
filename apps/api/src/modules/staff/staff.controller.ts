@@ -19,6 +19,7 @@ import { PERMISSIONS } from '../../common/constants/permissions';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { UpdateStaffDto } from './dto/update-staff.dto';
 import { LinkTechnicianDto } from './dto/link-technician.dto';
+import { SetSeniorityDto } from './dto/set-seniority.dto';
 
 @ApiTags('Staff')
 @Controller('staff')
@@ -107,5 +108,19 @@ export class StaffController {
   @ApiOperation({ summary: 'Get technician profile for staff member' })
   async getTechnicianProfile(@Param('id', ParseUUIDPipe) id: string) {
     return this.staffService.getTechnicianProfile(id);
+  }
+
+  // CR-2026-087 — mark a technician senior. Senior technicians are the ones who
+  // may be assigned a quality check, replacing the v1 shortcut where "senior tech
+  // sign-off" was really just the manager role.
+  @Patch(':id/technician/seniority')
+  @RequirePermission(PERMISSIONS.TECHNICIAN_MANAGE)
+  @ApiOperation({ summary: 'Set whether a technician is senior (may be assigned quality checks)' })
+  async setSeniority(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetSeniorityDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.staffService.setSeniority(id, dto.isSenior, user.sub);
   }
 }

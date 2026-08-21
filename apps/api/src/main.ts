@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { json, urlencoded } from 'express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { validateEnv } from '@bsop/config';
@@ -8,6 +9,15 @@ async function bootstrap() {
   const env = validateEnv(process.env);
 
   const app = await NestFactory.create(AppModule);
+
+  // CR-2026-087 — inspection photos and drawn signatures are posted as base64 data
+  // URLs in the JSON body (there is no object store in this deployment, and Render's
+  // free plan has no persistent disk). Express defaults to a 100 kB limit, which a
+  // tablet photo blows past long before any DTO validation runs, producing an opaque
+  // 413. The client downscales to roughly 150-300 kB; 8 MB leaves generous headroom
+  // without inviting genuinely large uploads.
+  app.use(json({ limit: '8mb' }));
+  app.use(urlencoded({ extended: true, limit: '8mb' }));
 
   app.setGlobalPrefix('api/v1');
 

@@ -512,6 +512,7 @@ model VehicleInspection {
   wheelMeasurements InspectionWheelMeasurement[]
   recommendations   InspectionRecommendation[]
   signatures        InspectionSignature[]
+  photos            InspectionPhoto[]
 
   @@index([siteId, status])
   @@index([serviceVisitId])
@@ -931,12 +932,47 @@ model QueueEvent {
 // TECHNICIANS / BAYS / SERVICE ORDERS
 // =========================
 
+/// CR-2026-087 — pre-inspection vehicle photos, taken by the assigned technician
+/// on their tablet.
+///
+/// Stored as a base64 data URL in a TEXT column, following the existing
+/// InspectionSignature.imageData precedent. That is a deliberate trade: there is no
+/// object store in this deployment and Render's free plan has NO persistent disk, so
+/// anything written to the container filesystem is lost on every redeploy and cold
+/// start. Keeping the bytes in Postgres is the only option that survives without
+/// adding a third-party dependency.
+///
+/// The cost is database and backup size, so the client downscales before upload
+/// (longest edge 1280px, JPEG) — a raw tablet photo is 1-5 MB and would both bloat
+/// every row read and exceed the request body limit. Revisit an object store before
+/// this becomes the shop's primary photographic record.
+model InspectionPhoto {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inspectionId String   @map("inspection_id") @db.Uuid
+  /// base64 data URL, e.g. "data:image/jpeg;base64,..."
+  imageData    String   @map("image_data")
+  /// Optional free-text note, e.g. "front bumper scuff on arrival".
+  caption      String?
+  takenByUserId String? @map("taken_by_user_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  inspection VehicleInspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@index([inspectionId])
+  @@map("inspection_photos")
+}
+
 model Technician {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userAccountId String   @unique @map("user_account_id") @db.Uuid
   employeeCode  String   @unique @map("employee_code")
   homeSiteId    String?  @map("home_site_id") @db.Uuid
   status        String   @default("ACTIVE")
+  // CR-2026-087 — senior technicians are the ones who may be assigned a quality
+  // check. Before this there was no seniority attribute at all: "senior tech
+  // sign-off" on an inspection was RBAC standing in for it, which meant only a
+  // manager could sign and an actual senior technician could not.
+  isSenior      Boolean  @default(false) @map("is_senior")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -990,6 +1026,16 @@ model ServiceOrder {
   completedAt           DateTime?          @map("completed_at") @db.Timestamptz
   closedAt              DateTime?          @map("closed_at") @db.Timestamptz
   notes                 String?
+  // CR-2026-087 — quality control. Previously a passed QC was an unattributed,
+  // unguarded status transition: nothing recorded who did it, and nothing stopped
+  // the technician who performed the work from passing their own. (A FAILED QC was
+  // attributed via ServiceOrderRework.openedByUserId; a passed one was not.)
+  //
+  // qcAssignedTechnicianId is set in advance, when the job is assigned, so the shop
+  // knows up front which senior technician owns the check.
+  qcAssignedTechnicianId String?           @map("qc_assigned_technician_id") @db.Uuid
+  qcByUserId             String?           @map("qc_by_user_id") @db.Uuid
+  qcAt                   DateTime?         @map("qc_at") @db.Timestamptz
   createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz
   updatedAt             DateTime           @updatedAt @map("updated_at") @db.Timestamptz
 
