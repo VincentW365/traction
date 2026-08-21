@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { seedInspectionTemplate } from './inspection-template-data';
+import { seedKpiFramework } from './kpi-seed-data';
 
 const prisma = new PrismaClient();
 
@@ -411,6 +412,17 @@ async function main() {
   // inspection fails with "No active inspection template is configured").
   const tpl = await seedInspectionTemplate(prisma);
   console.warn(`Inspection template v${tpl.version}: ${tpl.itemCount} items across ${tpl.categories} categories (active=${tpl.isActive})`);
+
+  // CR-2026-088 — KPI policy v1, the six benchmark combinations, and the default
+  // package-component mapping the manager is expected to confirm.
+  const kpi = await seedKpiFramework(prisma);
+  const skipped = kpi.componentsSkipped.length
+    ? ` (skipped: ${kpi.componentsSkipped.join(', ')})`
+    : '';
+  console.warn(
+    `KPI policy v${kpi.version}: ${kpi.benchmarks} benchmarks, ` +
+      `${kpi.componentsMapped} service component(s) mapped${skipped}`,
+  );
 
   console.warn('Seed complete.');
 }

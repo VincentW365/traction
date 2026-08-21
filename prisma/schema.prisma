@@ -610,18 +610,18 @@ model UserAccount {
 
   site Site? @relation(fields: [siteId], references: [id])
 
-  createdAppointments      Appointment[]              @relation("AppointmentCreatedBy")
-  createdBusinessRules     BusinessRuleConfig[]        @relation("RuleCreatedBy")
-  auditLogs                AuditLog[]
-  statusChanges            StatusHistory[]
-  transportDriverJobs      TransportRequest[]          @relation("TransportDriver")
-  overridesApplied         QueueTicket[]               @relation("OverrideAppliedBy")
-  overridesCleared         QueueTicket[]               @relation("OverrideClearedBy")
-  createdMaintenanceRecs   MaintenanceRecommendation[] @relation("MaintenanceRecCreatedBy")
-  technician               Technician?
-  queueEventActions        QueueEvent[]                @relation("QueueEventActor")
-  initiatedNotifications   NotificationLog[]           @relation("NotificationInitiatedBy")
-  reviewedClassifications  VehicleClassification[]     @relation("ClassificationReviewedBy") // CR-2026-008
+  createdAppointments     Appointment[]               @relation("AppointmentCreatedBy")
+  createdBusinessRules    BusinessRuleConfig[]        @relation("RuleCreatedBy")
+  auditLogs               AuditLog[]
+  statusChanges           StatusHistory[]
+  transportDriverJobs     TransportRequest[]          @relation("TransportDriver")
+  overridesApplied        QueueTicket[]               @relation("OverrideAppliedBy")
+  overridesCleared        QueueTicket[]               @relation("OverrideClearedBy")
+  createdMaintenanceRecs  MaintenanceRecommendation[] @relation("MaintenanceRecCreatedBy")
+  technician              Technician?
+  queueEventActions       QueueEvent[]                @relation("QueueEventActor")
+  initiatedNotifications  NotificationLog[]           @relation("NotificationInitiatedBy")
+  reviewedClassifications VehicleClassification[]     @relation("ClassificationReviewedBy") // CR-2026-008
 
   @@map("user_accounts")
 }
@@ -657,28 +657,28 @@ model Customer {
 }
 
 model Vehicle {
-  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  customerId  String              @map("customer_id") @db.Uuid
-  vehicleCode String              @unique @map("vehicle_code") // "SC-{PLATE}" business reference
-  plateNumber String              @map("plate_number")
-  vin         String?             @unique
-  make        String?
-  model       String?
-  modelYear   Int?                @map("model_year")
-  color       String?
-  odometer    Int?
-  weightClass VehicleWeightClass? @map("weight_class")
+  id           String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId   String               @map("customer_id") @db.Uuid
+  vehicleCode  String               @unique @map("vehicle_code") // "SC-{PLATE}" business reference
+  plateNumber  String               @map("plate_number")
+  vin          String?              @unique
+  make         String?
+  model        String?
+  modelYear    Int?                 @map("model_year")
+  color        String?
+  odometer     Int?
+  weightClass  VehicleWeightClass?  @map("weight_class")
   // DMAIC Rule 3: operational service class — drives mobile-jack eligibility (sedan only).
   serviceClass VehicleServiceClass? @map("service_class")
   // CR-2026-004: additive Contact-DB fields (nullable). engineNo is sensitive —
   // authenticated-only, never logged, never in public projections or dry-run reports.
-  fuelType     String?             @map("fuel_type")
+  fuelType     String?              @map("fuel_type")
   transmission String?
   drivetrain   String?
-  engineNo     String?             @map("engine_no")
-  driveSide    DriveSide?          @map("drive_side")
-  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz
+  engineNo     String?              @map("engine_no")
+  driveSide    DriveSide?           @map("drive_side")
+  createdAt    DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime             @updatedAt @map("updated_at") @db.Timestamptz
 
   customer Customer @relation(fields: [customerId], references: [id])
 
@@ -722,13 +722,16 @@ model ServiceType {
   isExternal               Boolean  @default(false) @map("is_external")
   requiresPowerWash        Boolean  @default(false) @map("requires_power_wash")
   standPreferred           Boolean  @default(false) @map("stand_preferred")
-  mobileJackAllowed        Boolean  @default(true)  @map("mobile_jack_allowed")
+  mobileJackAllowed        Boolean  @default(true) @map("mobile_jack_allowed")
   isActive                 Boolean  @default(true) @map("is_active")
   createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   appointmentServices AppointmentService[]
   serviceOrderItems   ServiceOrderItem[]
+
+  // CR-2026-088 — optional KPI package-component mapping.
+  kpiComponent KpiServiceComponent?
 
   @@map("service_types")
 }
@@ -846,8 +849,8 @@ model ServiceVisit {
   testDataRunId String?      @map("test_data_run_id") @db.Uuid
   testDataRun   TestDataRun? @relation(fields: [testDataRunId], references: [id], onDelete: Restrict)
 
-  complaints    Complaint[] // CR-2026-032 — customer complaints
-  inspections   VehicleInspection[] // CR-2026-034 — visual inspections
+  complaints  Complaint[] // CR-2026-032 — customer complaints
+  inspections VehicleInspection[] // CR-2026-034 — visual inspections
 
   @@index([siteId, status])
   @@index([customerId, vehicleId])
@@ -856,31 +859,31 @@ model ServiceVisit {
 }
 
 model QueueTicket {
-  id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  serviceVisitId        String             @unique @map("service_visit_id") @db.Uuid
-  ticketNumber          String             @unique @map("ticket_number")
-  checkinSequence       Int                @map("checkin_sequence")
-  queueRank             Int?               @map("queue_rank")
-  displayStatus         QueueDisplayStatus @default(PENDING_RANK) @map("display_status")
-  generatedAt           DateTime           @default(now()) @map("generated_at") @db.Timestamptz
-  lastRankedAt          DateTime?          @map("last_ranked_at") @db.Timestamptz
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceVisitId       String             @unique @map("service_visit_id") @db.Uuid
+  ticketNumber         String             @unique @map("ticket_number")
+  checkinSequence      Int                @map("checkin_sequence")
+  queueRank            Int?               @map("queue_rank")
+  displayStatus        QueueDisplayStatus @default(PENDING_RANK) @map("display_status")
+  generatedAt          DateTime           @default(now()) @map("generated_at") @db.Timestamptz
+  lastRankedAt         DateTime?          @map("last_ranked_at") @db.Timestamptz
   // Override lifecycle fields
-  overrideActive        Boolean            @default(false) @map("override_active")
-  overrideReasonCode    String?            @map("override_reason_code")
-  overrideAppliedBy     String?            @map("override_applied_by") @db.Uuid
-  overrideAppliedAt     DateTime?          @map("override_applied_at") @db.Timestamptz
-  overrideExpiresAt     DateTime?          @map("override_expires_at") @db.Timestamptz
-  overrideClearedAt     DateTime?          @map("override_cleared_at") @db.Timestamptz
-  overrideClearedBy     String?            @map("override_cleared_by") @db.Uuid
-  overridePriorityMode  String?            @map("override_priority_mode") // PIN_TO_RANK | PROMOTE_CLASS
-  overrideRankPosition  Int?               @map("override_rank_position")
+  overrideActive       Boolean            @default(false) @map("override_active")
+  overrideReasonCode   String?            @map("override_reason_code")
+  overrideAppliedBy    String?            @map("override_applied_by") @db.Uuid
+  overrideAppliedAt    DateTime?          @map("override_applied_at") @db.Timestamptz
+  overrideExpiresAt    DateTime?          @map("override_expires_at") @db.Timestamptz
+  overrideClearedAt    DateTime?          @map("override_cleared_at") @db.Timestamptz
+  overrideClearedBy    String?            @map("override_cleared_by") @db.Uuid
+  overridePriorityMode String?            @map("override_priority_mode") // PIN_TO_RANK | PROMOTE_CLASS
+  overrideRankPosition Int?               @map("override_rank_position")
   // --- v4.1 Dispatch readiness ---
-  blockedReason         String?            @map("blocked_reason")
-  readyForDispatch      Boolean            @default(false) @map("ready_for_dispatch")
+  blockedReason        String?            @map("blocked_reason")
+  readyForDispatch     Boolean            @default(false) @map("ready_for_dispatch")
 
-  serviceVisit          ServiceVisit  @relation(fields: [serviceVisitId], references: [id], onDelete: Cascade)
-  overrideAppliedByUser UserAccount?  @relation("OverrideAppliedBy", fields: [overrideAppliedBy], references: [id])
-  overrideClearedByUser UserAccount?  @relation("OverrideClearedBy", fields: [overrideClearedBy], references: [id])
+  serviceVisit          ServiceVisit @relation(fields: [serviceVisitId], references: [id], onDelete: Cascade)
+  overrideAppliedByUser UserAccount? @relation("OverrideAppliedBy", fields: [overrideAppliedBy], references: [id])
+  overrideClearedByUser UserAccount? @relation("OverrideClearedBy", fields: [overrideClearedBy], references: [id])
   queueEvents           QueueEvent[]
 
   @@index([queueRank])
@@ -908,16 +911,16 @@ model QueueDecision {
 }
 
 model QueueEvent {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  serviceVisitId  String   @map("service_visit_id") @db.Uuid
-  queueTicketId   String   @map("queue_ticket_id") @db.Uuid
-  eventType       String   @map("event_type")
-  positionBefore  Int?     @map("position_before")
-  positionAfter   Int?     @map("position_after")
-  reasonCode      String?  @map("reason_code")
-  actorUserId     String?  @map("actor_user_id") @db.Uuid
-  metadata        Json?
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceVisitId String   @map("service_visit_id") @db.Uuid
+  queueTicketId  String   @map("queue_ticket_id") @db.Uuid
+  eventType      String   @map("event_type")
+  positionBefore Int?     @map("position_before")
+  positionAfter  Int?     @map("position_after")
+  reasonCode     String?  @map("reason_code")
+  actorUserId    String?  @map("actor_user_id") @db.Uuid
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   serviceVisit ServiceVisit @relation(fields: [serviceVisitId], references: [id], onDelete: Cascade)
   queueTicket  QueueTicket  @relation(fields: [queueTicketId], references: [id], onDelete: Cascade)
@@ -947,14 +950,14 @@ model QueueEvent {
 /// every row read and exceed the request body limit. Revisit an object store before
 /// this becomes the shop's primary photographic record.
 model InspectionPhoto {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  inspectionId String   @map("inspection_id") @db.Uuid
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inspectionId  String   @map("inspection_id") @db.Uuid
   /// base64 data URL, e.g. "data:image/jpeg;base64,..."
-  imageData    String   @map("image_data")
+  imageData     String   @map("image_data")
   /// Optional free-text note, e.g. "front bumper scuff on arrival".
-  caption      String?
-  takenByUserId String? @map("taken_by_user_id") @db.Uuid
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  caption       String?
+  takenByUserId String?  @map("taken_by_user_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   inspection VehicleInspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
 
@@ -1016,16 +1019,16 @@ model WorkBay {
 }
 
 model ServiceOrder {
-  id                    String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  serviceVisitId        String             @map("service_visit_id") @db.Uuid
-  advisorUserId         String?            @map("advisor_user_id") @db.Uuid
-  status                ServiceOrderStatus @default(DRAFT)
-  promisedCompletionAt  DateTime?          @map("promised_completion_at") @db.Timestamptz
-  paymentStatus         PaymentStatus      @default(UNPAID) @map("payment_status")
-  startedAt             DateTime?          @map("started_at") @db.Timestamptz
-  completedAt           DateTime?          @map("completed_at") @db.Timestamptz
-  closedAt              DateTime?          @map("closed_at") @db.Timestamptz
-  notes                 String?
+  id                     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceVisitId         String             @map("service_visit_id") @db.Uuid
+  advisorUserId          String?            @map("advisor_user_id") @db.Uuid
+  status                 ServiceOrderStatus @default(DRAFT)
+  promisedCompletionAt   DateTime?          @map("promised_completion_at") @db.Timestamptz
+  paymentStatus          PaymentStatus      @default(UNPAID) @map("payment_status")
+  startedAt              DateTime?          @map("started_at") @db.Timestamptz
+  completedAt            DateTime?          @map("completed_at") @db.Timestamptz
+  closedAt               DateTime?          @map("closed_at") @db.Timestamptz
+  notes                  String?
   // CR-2026-087 — quality control. Previously a passed QC was an unattributed,
   // unguarded status transition: nothing recorded who did it, and nothing stopped
   // the technician who performed the work from passing their own. (A FAILED QC was
@@ -1033,13 +1036,13 @@ model ServiceOrder {
   //
   // qcAssignedTechnicianId is set in advance, when the job is assigned, so the shop
   // knows up front which senior technician owns the check.
-  qcAssignedTechnicianId String?           @map("qc_assigned_technician_id") @db.Uuid
-  qcByUserId             String?           @map("qc_by_user_id") @db.Uuid
-  qcAt                   DateTime?         @map("qc_at") @db.Timestamptz
-  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt             DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+  qcAssignedTechnicianId String?            @map("qc_assigned_technician_id") @db.Uuid
+  qcByUserId             String?            @map("qc_by_user_id") @db.Uuid
+  qcAt                   DateTime?          @map("qc_at") @db.Timestamptz
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz
 
-  serviceVisit               ServiceVisit              @relation(fields: [serviceVisitId], references: [id])
+  serviceVisit               ServiceVisit                @relation(fields: [serviceVisitId], references: [id])
   items                      ServiceOrderItem[]
   assignments                TechnicianAssignment[]
   partsRequests              PartsRequest[]
@@ -1048,6 +1051,9 @@ model ServiceOrder {
   pauses                     ServiceOrderPause[]
   reworks                    ServiceOrderRework[]
   complaints                 Complaint[] // CR-2026-032 — customer complaints
+  // CR-2026-088 — technician KPI
+  kpiSnapshot                WorkOrderKpiSnapshot?
+  kpiDelayEvents             KpiDelayEvent[]
 
   @@index([serviceVisitId])
   @@index([status])
@@ -1158,18 +1164,18 @@ model PartsRequest {
 }
 
 model PartsRequestItem {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  partsRequestId  String   @map("parts_request_id") @db.Uuid
-  sku             String
-  description     String?
-  qtyRequested    Decimal  @map("qty_requested") @db.Decimal(12, 2)
-  qtyReserved     Decimal  @default(0) @map("qty_reserved") @db.Decimal(12, 2)
-  criticalFlag    Boolean  @default(false) @map("critical_flag")
-  status          String   @default("OPEN")
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partsRequestId String   @map("parts_request_id") @db.Uuid
+  sku            String
+  description    String?
+  qtyRequested   Decimal  @map("qty_requested") @db.Decimal(12, 2)
+  qtyReserved    Decimal  @default(0) @map("qty_reserved") @db.Decimal(12, 2)
+  criticalFlag   Boolean  @default(false) @map("critical_flag")
+  status         String   @default("OPEN")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
-  partsRequest PartsRequest      @relation(fields: [partsRequestId], references: [id], onDelete: Cascade)
+  partsRequest PartsRequest       @relation(fields: [partsRequestId], references: [id], onDelete: Cascade)
   reservations PartsReservation[]
 
   @@map("parts_request_items")
@@ -1265,13 +1271,13 @@ model NotificationLog {
 }
 
 model PosReference {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  serviceOrderId String   @map("service_order_id") @db.Uuid
-  externalRef    String   @map("external_ref")
-  amount         Decimal? @db.Decimal(12, 2)
-  status         String   @default("PENDING")
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceOrderId String    @map("service_order_id") @db.Uuid
+  externalRef    String    @map("external_ref")
+  amount         Decimal?  @db.Decimal(12, 2)
+  status         String    @default("PENDING")
   syncedAt       DateTime? @map("synced_at") @db.Timestamptz
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id])
 
@@ -1346,24 +1352,24 @@ model VehicleSpecSnapshot {
 }
 
 model FluidSpecSnapshot {
-  id                     String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  vehicleId              String                   @map("vehicle_id") @db.Uuid
-  serviceTypeCode        String                   @map("service_type_code")
-  saeViscosityGrade      String?                  @map("sae_viscosity_grade")
-  apiCategory            String?                  @map("api_category")
-  ilsacCategory          String?                  @map("ilsac_category")
-  oemApprovalCode        String?                  @map("oem_approval_code")
-  capacityWithFilter     Decimal?                 @map("capacity_with_filter") @db.Decimal(6, 2)
-  capacityWithoutFilter  Decimal?                 @map("capacity_without_filter") @db.Decimal(6, 2)
-  normalIntervalMiles    Int?                     @map("normal_interval_miles")
-  severeIntervalMiles    Int?                     @map("severe_interval_miles")
-  normalIntervalMonths   Int?                     @map("normal_interval_months")
-  severeIntervalMonths   Int?                     @map("severe_interval_months")
-  sourceProvider         String                   @map("source_provider")
-  sourceReference        String?                  @map("source_reference")
-  effectiveAt            DateTime?                @map("effective_at") @db.Timestamptz
-  confidence             RecommendationConfidence
-  createdAt              DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+  id                    String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicleId             String                   @map("vehicle_id") @db.Uuid
+  serviceTypeCode       String                   @map("service_type_code")
+  saeViscosityGrade     String?                  @map("sae_viscosity_grade")
+  apiCategory           String?                  @map("api_category")
+  ilsacCategory         String?                  @map("ilsac_category")
+  oemApprovalCode       String?                  @map("oem_approval_code")
+  capacityWithFilter    Decimal?                 @map("capacity_with_filter") @db.Decimal(6, 2)
+  capacityWithoutFilter Decimal?                 @map("capacity_without_filter") @db.Decimal(6, 2)
+  normalIntervalMiles   Int?                     @map("normal_interval_miles")
+  severeIntervalMiles   Int?                     @map("severe_interval_miles")
+  normalIntervalMonths  Int?                     @map("normal_interval_months")
+  severeIntervalMonths  Int?                     @map("severe_interval_months")
+  sourceProvider        String                   @map("source_provider")
+  sourceReference       String?                  @map("source_reference")
+  effectiveAt           DateTime?                @map("effective_at") @db.Timestamptz
+  confidence            RecommendationConfidence
+  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz
 
   vehicle                    Vehicle                     @relation(fields: [vehicleId], references: [id])
   maintenanceRecommendations MaintenanceRecommendation[] @relation("RecFluidSpec")
@@ -1397,15 +1403,15 @@ model MaintenanceRecommendation {
   createdByUserId            String?                  @map("created_by_user_id") @db.Uuid
   createdAt                  DateTime                 @default(now()) @map("created_at") @db.Timestamptz
 
-  vehicle                    Vehicle                @relation(fields: [vehicleId], references: [id])
-  serviceVisit               ServiceVisit?          @relation(fields: [serviceVisitId], references: [id])
-  serviceOrder               ServiceOrder?          @relation(fields: [serviceOrderId], references: [id])
-  fluidSpec                  FluidSpecSnapshot?     @relation("RecFluidSpec", fields: [fluidSpecSnapshotId], references: [id])
-  vehicleSpec                VehicleSpecSnapshot?   @relation("RecVehicleSpec", fields: [vehicleSpecSnapshotId], references: [id])
-  supersedesRecommendation   MaintenanceRecommendation?  @relation("RecommendationLineage", fields: [supersedesRecommendationId], references: [id])
-  supersededBy               MaintenanceRecommendation[] @relation("RecommendationLineage")
-  createdBy                  UserAccount?           @relation("MaintenanceRecCreatedBy", fields: [createdByUserId], references: [id])
-  reminders                  MaintenanceReminder[]
+  vehicle                  Vehicle                     @relation(fields: [vehicleId], references: [id])
+  serviceVisit             ServiceVisit?               @relation(fields: [serviceVisitId], references: [id])
+  serviceOrder             ServiceOrder?               @relation(fields: [serviceOrderId], references: [id])
+  fluidSpec                FluidSpecSnapshot?          @relation("RecFluidSpec", fields: [fluidSpecSnapshotId], references: [id])
+  vehicleSpec              VehicleSpecSnapshot?        @relation("RecVehicleSpec", fields: [vehicleSpecSnapshotId], references: [id])
+  supersedesRecommendation MaintenanceRecommendation?  @relation("RecommendationLineage", fields: [supersedesRecommendationId], references: [id])
+  supersededBy             MaintenanceRecommendation[] @relation("RecommendationLineage")
+  createdBy                UserAccount?                @relation("MaintenanceRecCreatedBy", fields: [createdByUserId], references: [id])
+  reminders                MaintenanceReminder[]
 
   @@index([vehicleId])
   @@index([serviceVisitId])
@@ -1439,7 +1445,7 @@ model WorkResource {
   createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime            @updatedAt @map("updated_at") @db.Timestamptz
 
-  site         Site                  @relation(fields: [siteId], references: [id])
+  site              Site                       @relation(fields: [siteId], references: [id])
   occupancy         ResourceOccupancy?
   reservations      ResourceReservation[]
   assignments       TechnicianAssignment[]
@@ -1472,8 +1478,8 @@ model ResourceOccupancy {
   expectedEndAt  DateTime? @map("expected_end_at") @db.Timestamptz
   status         String    @default("AVAILABLE") // OCCUPIED, AVAILABLE
 
-  resource     WorkResource   @relation(fields: [resourceId], references: [id])
-  serviceVisit ServiceVisit?  @relation(fields: [serviceVisitId], references: [id])
+  resource     WorkResource  @relation(fields: [resourceId], references: [id])
+  serviceVisit ServiceVisit? @relation(fields: [serviceVisitId], references: [id])
 
   @@index([serviceVisitId])
   @@map("resource_occupancies")
@@ -1685,7 +1691,7 @@ model MechanicDayAvailability {
   technicianId String   @map("technician_id") @db.Uuid
   date         DateTime @db.Date
   shiftStart   String   @map("shift_start") // "08:00" format
-  shiftEnd     String   @map("shift_end")   // "17:00" format
+  shiftEnd     String   @map("shift_end") // "17:00" format
   status       String   @default("AVAILABLE") // AVAILABLE, ON_BREAK, OFF_FLOOR, ABSENT
   notes        String?
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -1703,16 +1709,16 @@ model MechanicDayAvailability {
 // =========================
 
 model VehicleWeightSuggestion {
-  id                   String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  makePattern          String            @map("make_pattern")
-  modelPattern         String?           @map("model_pattern")
-  yearFrom             Int?              @map("year_from")
-  yearTo               Int?              @map("year_to")
-  suggestedWeightClass VehicleWeightClass @map("suggested_weight_class")
+  id                    String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  makePattern           String               @map("make_pattern")
+  modelPattern          String?              @map("model_pattern")
+  yearFrom              Int?                 @map("year_from")
+  yearTo                Int?                 @map("year_to")
+  suggestedWeightClass  VehicleWeightClass   @map("suggested_weight_class")
   // CR-2026-008: advisory make/model -> serviceClass suggestion (nullable).
   // Advisory only — never written to Vehicle.serviceClass without staff confirm.
   suggestedServiceClass VehicleServiceClass? @map("suggested_service_class")
-  createdAt            DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  createdAt             DateTime             @default(now()) @map("created_at") @db.Timestamptz
 
   @@map("vehicle_weight_suggestions")
 }
@@ -1742,4 +1748,242 @@ model VehicleClassification {
 
   @@index([status])
   @@map("vehicle_classifications")
+}
+
+// ===========================================================================
+// CR-2026-088 — Technician KPI framework
+//
+// Measures technician-controlled job time (Start Work -> first Submit to QC,
+// minus approved exclusions) against a benchmark for the vehicle class and the
+// package of work, producing TWO ratings that are stored side by side.
+//
+// Deliberately separate from the service-duration model: ServiceType durations
+// still drive booking, scheduling and ETAs and are untouched by any of this. A
+// KPI standard is a whole-job benchmark, not a sum of catalogue times.
+// ===========================================================================
+
+/// The three manager-approved benchmark packages, plus the catch-all. A job is
+/// benchmarked only when its services map EXACTLY onto one of the three.
+enum KpiPackageType {
+  GENERAL_SERVICE_ONLY
+  GENERAL_SERVICE_FRONT_BRAKES
+  GENERAL_SERVICE_FRONT_BRAKES_SPARK_PLUGS
+  CUSTOM_UNBENCHMARKED
+}
+
+/// Component a service represents for package detection. Configured against
+/// service-type IDs by an administrator — never inferred from a service name,
+/// which is editable and would silently break the benchmark.
+enum KpiPackageComponent {
+  GENERAL_SERVICE
+  FRONT_BRAKES
+  SPARK_PLUGS
+}
+
+enum KpiRatingBand {
+  EXCELLENT
+  MEETS_TARGET
+  NEEDS_IMPROVEMENT
+  BELOW_STANDARD
+}
+
+/// Controlled reasons a job was delayed. Only some are ever eligible for KPI
+/// exclusion, and even those need supervisor approval. Ordinary work difficulty,
+/// tool searching, poor preparation and rework are never excluded.
+enum KpiDelayReason {
+  WAITING_FOR_PARTS
+  WAITING_CUSTOMER_AUTHORIZATION
+  BAY_OR_EQUIPMENT_UNAVAILABLE
+  MANAGER_OR_QC_HOLD
+  SYSTEM_OUTAGE
+  SAFETY_HOLD
+  /// Only when heat genuinely makes the work unsafe or impractical AND the
+  /// technician cannot get on with another part of the approved job. Routine
+  /// cooling is absorbed by the benchmark and the 30-minute tolerance.
+  EXCEPTIONAL_THERMAL_SAFETY_HOLD
+  TECHNICIAN_REASSIGNMENT
+  OTHER
+}
+
+enum KpiApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Why a job carries no formal adjusted rating.
+enum KpiEligibilityStatus {
+  ELIGIBLE
+  MISSING_VEHICLE_CLASS
+  NOT_BENCHMARKED
+  MISSING_TIMESTAMPS
+  NO_PRIMARY_TECHNICIAN
+  CANCELLED_OR_VOID
+  INVALID_TIMER_DATA
+}
+
+/// An effective-dated set of KPI standards, snapshotted onto each job so that
+/// changing standards later cannot silently recalculate historical results.
+model KpiPolicy {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name    String
+  version Int    @unique
+
+  effectiveFrom DateTime  @map("effective_from") @db.Timestamptz
+  effectiveTo   DateTime? @map("effective_to") @db.Timestamptz
+  isActive      Boolean   @default(true) @map("is_active")
+
+  // Scope-adjusted tolerances, in whole minutes of variance from standard.
+  meetsToleranceMinutes            Int @default(30) @map("meets_tolerance_minutes")
+  needsImprovementToleranceMinutes Int @default(60) @map("needs_improvement_tolerance_minutes")
+
+  // The manager's absolute completion bands, in whole minutes. Snapshotted too,
+  // so a later retune does not rewrite history.
+  absoluteExcellentMaxMinutes        Int @default(120) @map("absolute_excellent_max_minutes")
+  absoluteMeetsTargetMaxMinutes      Int @default(150) @map("absolute_meets_target_max_minutes")
+  absoluteNeedsImprovementMaxMinutes Int @default(180) @map("absolute_needs_improvement_max_minutes")
+
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  benchmarks KpiBenchmark[]
+  snapshots  WorkOrderKpiSnapshot[]
+
+  @@index([isActive, effectiveFrom])
+  @@map("kpi_policies")
+}
+
+/// One standard time per (vehicle class, package) under a policy.
+model KpiBenchmark {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  policyId String @map("policy_id") @db.Uuid
+
+  vehicleClass    VehicleServiceClass @map("vehicle_class")
+  packageType     KpiPackageType      @map("package_type")
+  standardMinutes Int                 @map("standard_minutes")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  policy KpiPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, vehicleClass, packageType])
+  @@map("kpi_benchmarks")
+}
+
+/// Administrator-controlled mapping of a service type to a package component.
+model KpiServiceComponent {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceTypeId String              @unique @map("service_type_id") @db.Uuid
+  component     KpiPackageComponent
+
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  serviceType ServiceType @relation(fields: [serviceTypeId], references: [id], onDelete: Cascade)
+
+  @@map("kpi_service_components")
+}
+
+/// The frozen KPI result for one work order. Everything needed to reproduce the
+/// number lives here, including the policy version it was rated under.
+model WorkOrderKpiSnapshot {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceOrderId String @unique @map("service_order_id") @db.Uuid
+
+  policyId      String @map("policy_id") @db.Uuid
+  policyVersion Int    @map("policy_version")
+
+  vehicleClass VehicleServiceClass? @map("vehicle_class")
+  packageType  KpiPackageType       @map("package_type")
+
+  /// Null for a custom job with no approved standard.
+  standardMinutes Int? @map("standard_minutes")
+
+  /// A manager-approved standard for an otherwise unbenchmarked job.
+  customStandardMinutes    Int?      @map("custom_standard_minutes")
+  customStandardReason     String?   @map("custom_standard_reason")
+  customStandardByUserId   String?   @map("custom_standard_by_user_id") @db.Uuid
+  customStandardApprovedAt DateTime? @map("custom_standard_approved_at") @db.Timestamptz
+
+  firstWorkStartedAt   DateTime? @map("first_work_started_at") @db.Timestamptz
+  firstSubmittedToQcAt DateTime? @map("first_submitted_to_qc_at") @db.Timestamptz
+
+  rawElapsedMinutes       Int?   @map("raw_elapsed_minutes")
+  approvedExcludedMinutes Int    @default(0) @map("approved_excluded_minutes")
+  kpiCompletionMinutes    Int?   @map("kpi_completion_minutes")
+  varianceMinutes         Int?   @map("variance_minutes")
+  variancePercent         Float? @map("variance_percent")
+
+  absoluteCompletionRating KpiRatingBand? @map("absolute_completion_rating")
+  adjustedTechnicianRating KpiRatingBand? @map("adjusted_technician_rating")
+  onTarget                 Boolean        @default(false) @map("on_target")
+
+  eligibilityStatus KpiEligibilityStatus @default(ELIGIBLE) @map("eligibility_status")
+  eligibilityReason String?              @map("eligibility_reason")
+
+  primaryTechnicianId String? @map("primary_technician_id") @db.Uuid
+
+  /// True when more than one technician worked it, or it was reassigned mid-job.
+  /// Such jobs stay out of individual leaderboards but remain in detailed reporting.
+  isSharedOrReassigned Boolean @default(false) @map("is_shared_or_reassigned")
+
+  /// Set when QC sent the job back. The completion result above is preserved.
+  hadRework Boolean @default(false) @map("had_rework")
+
+  calculatedAt DateTime  @default(now()) @map("calculated_at") @db.Timestamptz
+  finalisedAt  DateTime? @map("finalised_at") @db.Timestamptz
+
+  // Post-completion correction — always visible, always reasoned.
+  correctedByUserId String?   @map("corrected_by_user_id") @db.Uuid
+  correctedAt       DateTime? @map("corrected_at") @db.Timestamptz
+  correctionReason  String?   @map("correction_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+  policy       KpiPolicy    @relation(fields: [policyId], references: [id], onDelete: Restrict)
+
+  @@index([adjustedTechnicianRating])
+  @@index([packageType])
+  @@index([primaryTechnicianId])
+  @@index([eligibilityStatus])
+  @@map("work_order_kpi_snapshots")
+}
+
+/// A recorded delay and its journey through approval. A technician may record
+/// one; a technician may never approve their own exclusion.
+model KpiDelayEvent {
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceOrderId String  @map("service_order_id") @db.Uuid
+  technicianId   String? @map("technician_id") @db.Uuid
+
+  reasonCode  KpiDelayReason @map("reason_code")
+  description String?
+
+  startedAt       DateTime  @map("started_at") @db.Timestamptz
+  endedAt         DateTime? @map("ended_at") @db.Timestamptz
+  durationMinutes Int?      @map("duration_minutes")
+
+  requestedForExclusion Boolean           @default(false) @map("requested_for_exclusion")
+  approvalStatus        KpiApprovalStatus @default(PENDING) @map("approval_status")
+  approvedByUserId      String?           @map("approved_by_user_id") @db.Uuid
+  approvedAt            DateTime?         @map("approved_at") @db.Timestamptz
+  rejectionReason       String?           @map("rejection_reason")
+
+  /// Links back to the existing recording-only pause ledger when the delay was
+  /// raised from a pause, so the two can never diverge.
+  serviceOrderPauseId String? @unique @map("service_order_pause_id") @db.Uuid
+
+  recordedByUserId String?  @map("recorded_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+
+  @@index([serviceOrderId])
+  @@index([approvalStatus])
+  @@map("kpi_delay_events")
 }
