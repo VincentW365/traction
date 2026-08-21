@@ -10,6 +10,7 @@ import { StatusHistoryService } from '../audit/status-history.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { SchedulingService } from '../scheduling/scheduling.service';
 import { KpiService } from '../kpi/kpi.service';
+import { WorkSegmentService } from '../kpi/work-segment.service';
 import { CreateServiceOrderDto } from './dto/create-service-order.dto';
 import { AssignTechnicianDto } from './dto/assign-technician.dto';
 import { ChangeStatusDto } from './dto/change-status.dto';
@@ -99,6 +100,9 @@ export class ServiceOrdersService {
     // CR-2026-088 — KPI hooks at the two moments that define the measurement:
     // start of work, and the first submission to QC.
     private kpi: KpiService,
+    // CR-2026-090 — per-technician labour segments. Hooked at every point work
+    // starts or stops for a person: start, pause, resume, reassign, assist, QC.
+    private segments: WorkSegmentService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -716,6 +720,18 @@ export class ServiceOrdersService {
       },
     });
 
+    // CR-2026-090 — a cancelled job stops the labour clock. Without this, an open
+    // segment on a cancelled order keeps accruing against "now" every time a report
+    // is run, and the technician's labour grows indefinitely for a job nobody is
+    // doing.
+    if (toStatus === 'CANCELLED') {
+      await this.segments.endAllForOrder({
+        serviceOrderId: id,
+        endReason: 'JOB_CANCELLED',
+        actorUserId: userId,
+      });
+    }
+
     // Record status history
     await this.statusHistory.record({
       entityType: 'ServiceOrder',
@@ -797,6 +813,18 @@ export class ServiceOrdersService {
           notes: dto.notes,
         },
       });
+
+      // CR-2026-090 — pausing stops the labour clock for everyone on the job.
+      //
+      // Inside the same transaction as the pause itself, because a pause recorded
+      // without its segments closed would leave technicians accruing labour through
+      // time the job was explicitly stopped, and that error is invisible until
+      // someone reads a labour report weeks later.
+      await this.segments.endAllForOrder(
+        { serviceOrderId: id, endReason: 'PAUSED', actorUserId: userId },
+        tx as never,
+      );
+
       return so;
     });
 
@@ -831,6 +859,14 @@ export class ServiceOrdersService {
         where: { serviceOrderId: id, endedAt: null },
         data: { endedAt: new Date(), resumedByUserId: userId },
       });
+
+      // CR-2026-090 — the labour clock restarts for everyone still assigned. Anyone
+      // taken off the job while it sat paused is deliberately not reopened.
+      await this.segments.resumeForOrder(
+        { serviceOrderId: id, actorUserId: userId },
+        tx as never,
+      );
+
       return so;
     });
 
@@ -979,6 +1015,15 @@ export class ServiceOrdersService {
       throw new NotFoundException(`Assignment ${assignmentId} not found on order ${orderId}`);
     }
 
+    // CR-2026-090 — taking someone off a live job closes their labour segment. Their
+    // time up to this point is kept: they did the work, whatever happened next.
+    await this.segments.endSegment({
+      serviceOrderId: orderId,
+      technicianId: assignment.technicianId,
+      endReason: 'REASSIGNED',
+      actorUserId: userId,
+    });
+
     await this.prisma.technicianAssignment.update({
       where: { id: assignmentId },
       data: { endedAt: new Date(), status: 'REMOVED' },
@@ -1071,6 +1116,23 @@ export class ServiceOrdersService {
       data: { startedAt: new Date(), status: 'IN_PROGRESS' },
     });
 
+    // CR-2026-090 — open this technician's labour segment.
+    //
+    // Not wrapped in a try/catch like the KPI snapshot below. The snapshot is
+    // reporting derived from timestamps that exist anyway, so it can fail without
+    // losing information; a segment IS the record of when this person started, and
+    // there is no way to reconstruct it afterwards. If it cannot be written, the
+    // start should fail loudly rather than silently produce a technician who worked
+    // on a job with no evidence of having done so.
+    await this.segments.startSegment({
+      serviceOrderId: orderId,
+      assignmentId,
+      technicianId: assignment.technicianId,
+      role: assignment.isPrimary ? 'PRIMARY' : 'ASSISTING',
+      startSource: 'TECHNICIAN_START',
+      actorUserId: userId,
+    });
+
     // If this is the first started assignment and order is ASSIGNED, transition to IN_PROGRESS
     const order = await this.prisma.serviceOrder.findUnique({ where: { id: orderId } });
     if (order && order.status === 'ASSIGNED') {
@@ -1098,6 +1160,15 @@ export class ServiceOrdersService {
     if (!assignment) {
       throw new NotFoundException(`Assignment ${assignmentId} not found`);
     }
+
+    // CR-2026-090 — an assistant stepping off the job closes their labour segment.
+    // Everyone else on the order keeps working, so only this technician's segment ends.
+    await this.segments.endSegment({
+      serviceOrderId: orderId,
+      technicianId: assignment.technicianId,
+      endReason: 'ASSISTANCE_COMPLETE',
+      actorUserId: userId,
+    });
 
     const updated = await this.prisma.technicianAssignment.update({
       where: { id: assignmentId },
@@ -1165,6 +1236,16 @@ export class ServiceOrdersService {
     }
 
     await this.changeStatus(orderId, { toStatus: 'QC' as any }, userId);
+
+    // CR-2026-090 — close every open labour segment at the same moment the
+    // assignments end. Submitting to QC stops the work for everyone, including any
+    // assistant who never pressed anything themselves.
+    await this.segments.endAllForOrder({
+      serviceOrderId: orderId,
+      endReason: 'SUBMITTED_TO_QC',
+      actorUserId: userId,
+    });
+
     await this.prisma.technicianAssignment.updateMany({
       where: { serviceOrderId: orderId, endedAt: null },
       data: { endedAt: new Date(), status: 'COMPLETED' },

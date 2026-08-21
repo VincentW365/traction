@@ -44,6 +44,14 @@ function buildService(opts: { techId?: string | null; hasOwnAssignment?: boolean
       captureSnapshotOnQc: vi.fn(async () => undefined),
       reevaluatePackage: vi.fn(async () => undefined),
     } as any,
+    // CR-2026-090 - work-segment hooks. Stubbed for the same reason: these tests
+    // exercise the order state machine, and segments have their own suite.
+    {
+      startSegment: vi.fn(async () => ({ id: 'seg-1' })),
+      endSegment: vi.fn(async () => null),
+      endAllForOrder: vi.fn(async () => 0),
+      resumeForOrder: vi.fn(async () => 0),
+    } as any,
   );
   vi.spyOn(service as any, 'triggerQueueRecompute').mockResolvedValue(undefined);
 

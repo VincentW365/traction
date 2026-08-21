@@ -737,8 +737,10 @@ model ServiceType {
   appointmentServices AppointmentService[]
   serviceOrderItems   ServiceOrderItem[]
 
-  // CR-2026-088 — optional KPI package-component mapping.
-  kpiComponent KpiServiceComponent?
+  // CR-2026-088 / CR-2026-090 — KPI component mappings. A list, not one: mappings
+  // are effective-dated and superseded rather than deleted, so a service accumulates
+  // history, and several services may alias to the same component.
+  kpiComponents KpiServiceComponent[]
 
   @@map("service_types")
 }
@@ -1079,6 +1081,7 @@ model ServiceOrder {
   // CR-2026-088 — technician KPI
   kpiSnapshot                WorkOrderKpiSnapshot?
   kpiDelayEvents             KpiDelayEvent[]
+  workSegments               TechnicianWorkSegment[]
 
   @@index([serviceVisitId])
   @@index([status])
@@ -1140,6 +1143,10 @@ model ServiceOrderItem {
   serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
   serviceType  ServiceType  @relation(fields: [serviceTypeId], references: [id])
 
+  /// CR-2026-090 — which axle this line covers. Required for brake services where
+  /// axle position decides the KPI package; null elsewhere.
+  axlePosition AxlePosition? @map("axle_position")
+
   @@map("service_order_items")
 }
 
@@ -1159,6 +1166,9 @@ model TechnicianAssignment {
   technician   Technician    @relation(fields: [technicianId], references: [id])
   bay          WorkBay?      @relation(fields: [bayId], references: [id])
   resource     WorkResource? @relation(fields: [resourceId], references: [id])
+
+  // CR-2026-090 — the actual periods this technician worked.
+  workSegments TechnicianWorkSegment[]
 
   @@index([technicianId])
   @@index([serviceOrderId])
@@ -1898,16 +1908,37 @@ model KpiBenchmark {
 
 /// Administrator-controlled mapping of a service type to a package component.
 model KpiServiceComponent {
-  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  serviceTypeId String              @unique @map("service_type_id") @db.Uuid
-  component     KpiPackageComponent
+  id            String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceTypeId String @map("service_type_id") @db.Uuid
+
+  /// CR-2026-090 — the richer role. Several services may map to the SAME role as
+  /// aliases (the catalogue carries more than one code for disc-pad work); package
+  /// detection de-duplicates by role, so two aliases on one order never count the
+  /// component twice.
+  componentRole KpiComponentRole @map("component_role")
+
+  /// When true, the service only satisfies its component if the order line carries
+  /// an axle qualifier of FRONT (or FRONT_AND_REAR where management allows it).
+  /// Rear-brake-only work must never silently satisfy Front Brakes.
+  requiresAxleQualifier Boolean @default(false) @map("requires_axle_qualifier")
+
+  /// Mappings are effective-dated and superseded, never deleted, because historical
+  /// KPI snapshots were produced under them.
+  isActive      Boolean   @default(true) @map("is_active")
+  effectiveFrom DateTime  @default(now()) @map("effective_from") @db.Timestamptz
+  effectiveTo   DateTime? @map("effective_to") @db.Timestamptz
+
+  notes String?
 
   createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   serviceType ServiceType @relation(fields: [serviceTypeId], references: [id], onDelete: Cascade)
 
+  @@index([serviceTypeId, isActive])
+  @@index([componentRole, isActive])
   @@map("kpi_service_components")
 }
 
@@ -2053,4 +2084,121 @@ model DailyTicketCounter {
 
   @@unique([siteId, businessDate])
   @@map("daily_ticket_counters")
+}
+
+// ===========================================================================
+// CR-2026-090 — KPI mapping v2: component roles, service aliases, axle qualifier
+// ===========================================================================
+
+/// Which axle a service line applies to.
+///
+/// Added because the shop's real price list distinguishes axles explicitly — it
+/// carries separate lines for "To R/R DISC PADS" and "To R/R DISC PADS rear
+/// electronic", plus brake shoes (drums, typically rear). Traction's own service
+/// codes carry no axle, so a brake line is ambiguous on its own and must not be
+/// allowed to satisfy the Front Brakes benchmark by default.
+enum AxlePosition {
+  FRONT
+  REAR
+  FRONT_AND_REAR
+  NOT_APPLICABLE
+}
+
+/// What a mapped service means for benchmarking.
+///
+/// Richer than a plain "this service IS front brakes", because the interesting
+/// cases are the other three: work already covered by the General Service
+/// standard, and work substantial enough that the manager's packages stop
+/// describing the job at all.
+enum KpiComponentRole {
+  /// Defines the General Service component of a benchmark package.
+  GENERAL_SERVICE_CORE
+  /// Defines the Front Brakes component (subject to the axle qualifier).
+  FRONT_BRAKES
+  /// Defines the Spark Plugs component.
+  SPARK_PLUGS
+  /// Minor work already absorbed by the General Service standard — present on the
+  /// order, but adds no component and no extra time.
+  INCLUDED_NO_ADDITIONAL_BENCHMARK
+  /// Substantial additional work the approved packages do not describe. Its
+  /// presence forces CUSTOM_UNBENCHMARKED unless a manager approves a standard,
+  /// so a gearbox strip bolted onto an oil change is never quietly measured
+  /// against the 90-minute General Service benchmark.
+  FORCES_CUSTOM_BENCHMARK
+}
+
+/// Per-technician work segment — the actual periods a named technician was working
+/// on a job.
+///
+/// Exists because technician labour and job elapsed time are different quantities
+/// and the pause ledger cannot separate them: pauses are recorded per ORDER, so
+/// when two technicians overlap there is no way to say who was working when. This
+/// model records that directly rather than inferring it.
+///
+/// Deliberately hangs off the existing TechnicianAssignment rather than creating a
+/// competing technician or work-order entity.
+model TechnicianWorkSegment {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceOrderId String @map("service_order_id") @db.Uuid
+  assignmentId   String @map("assignment_id") @db.Uuid
+  technicianId   String @map("technician_id") @db.Uuid
+
+  /// The technician's role AS AT the segment. Snapshotted because a technician can
+  /// be promoted from assisting to primary mid-job, and the earlier segments must
+  /// keep saying what they were at the time.
+  roleSnapshot TechnicianSegmentRole @default(PRIMARY) @map("role_snapshot")
+
+  startedAt DateTime  @map("started_at") @db.Timestamptz
+  endedAt   DateTime? @map("ended_at") @db.Timestamptz
+
+  startedByUserId String? @map("started_by_user_id") @db.Uuid
+  endedByUserId   String? @map("ended_by_user_id") @db.Uuid
+
+  startSource SegmentStartSource @default(TECHNICIAN_START) @map("start_source")
+  endReason   SegmentEndReason?  @map("end_reason")
+
+  notes String?
+
+  /// Set when a manager corrected the segment after the fact. Always reasoned and
+  /// audited — a silently editable labour record is not a labour record.
+  correctedByUserId String?   @map("corrected_by_user_id") @db.Uuid
+  correctedAt       DateTime? @map("corrected_at") @db.Timestamptz
+  correctionReason  String?   @map("correction_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  serviceOrder ServiceOrder         @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
+  assignment   TechnicianAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([serviceOrderId])
+  @@index([technicianId])
+  @@index([assignmentId])
+  @@map("technician_work_segments")
+}
+
+enum TechnicianSegmentRole {
+  PRIMARY
+  ASSISTING
+  REPLACEMENT
+}
+
+enum SegmentStartSource {
+  TECHNICIAN_START
+  TECHNICIAN_RESUME
+  ASSISTANCE_START
+  REASSIGNMENT
+  MANAGER_CORRECTION
+}
+
+enum SegmentEndReason {
+  PAUSED
+  REASSIGNED
+  ASSISTANCE_COMPLETE
+  SUBMITTED_TO_QC
+  JOB_CANCELLED
+  /// Closed by the system because the technician never closed it themselves —
+  /// flagged so a manager can tell a real record from a tidy-up.
+  SYSTEM_CLOSED
+  CORRECTED_BY_MANAGER
 }

@@ -17,6 +17,7 @@ import {
   isBenchmarked,
   type KpiPackageType,
   type PackageComponentMap,
+  type PackageDetectionOptions,
 } from './engine/package-detection';
 
 /**
@@ -64,27 +65,72 @@ export class KpiService {
     return policy;
   }
 
-  /** The administrator-configured serviceTypeId -> component map. */
-  async getComponentMap(): Promise<PackageComponentMap> {
+  /**
+   * The administrator-configured serviceTypeId -> mapping.
+   *
+   * Only ACTIVE, currently-effective rows. Superseded mappings stay in the table on
+   * purpose — completed snapshots were produced under them and must remain
+   * explicable — but they must never influence a job being classified today.
+   */
+  async getComponentMap(at: Date = new Date()): Promise<PackageComponentMap> {
     const rows = await this.prisma.kpiServiceComponent.findMany({
-      select: { serviceTypeId: true, component: true },
+      where: {
+        isActive: true,
+        effectiveFrom: { lte: at },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }],
+      },
+      select: {
+        serviceTypeId: true,
+        componentRole: true,
+        requiresAxleQualifier: true,
+      },
     });
-    return new Map(rows.map((r) => [r.serviceTypeId, r.component as never]));
+    return new Map(
+      rows.map((r) => [
+        r.serviceTypeId,
+        {
+          componentRole: r.componentRole as never,
+          requiresAxleQualifier: r.requiresAxleQualifier,
+        },
+      ]),
+    );
+  }
+
+  /**
+   * Whether management has approved front-and-rear brake jobs to use the Front
+   * Brakes standard. Configuration, not a constant: a job covering both axles is
+   * more work than that standard was built for, so the default is no.
+   */
+  async getFrontAndRearApproval(at: Date = new Date()): Promise<boolean> {
+    const rule = await this.prisma.businessRuleConfig.findFirst({
+      where: {
+        ruleKey: 'kpi_front_and_rear_satisfies_front_brakes',
+        effectiveFrom: { lte: at },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }],
+      },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+    return (rule?.valueJson as boolean) ?? false;
+  }
+
+  /** Service lines in the shape detection needs, including the axle qualifier. */
+  private async detectionOptions(): Promise<PackageDetectionOptions> {
+    return { frontAndRearSatisfiesFrontBrakes: await this.getFrontAndRearApproval() };
   }
 
   /** Classify a work order's services into a benchmark package. */
   async detectPackageForOrder(serviceOrderId: string) {
     const order = await this.prisma.serviceOrder.findUnique({
       where: { id: serviceOrderId },
-      select: { items: { select: { serviceTypeId: true } } },
+      select: { items: { select: { serviceTypeId: true, axlePosition: true } } },
     });
     if (!order) throw new NotFoundException(`Service order ${serviceOrderId} not found`);
 
-    const map = await this.getComponentMap();
-    return detectPackage(
-      order.items.map((i) => i.serviceTypeId),
-      map,
-    );
+    const [map, options] = await Promise.all([
+      this.getComponentMap(),
+      this.detectionOptions(),
+    ]);
+    return detectPackage(order.items as never, map, options);
   }
 
   // -------------------------------------------------------------------------
@@ -167,7 +213,7 @@ export class KpiService {
     const order = await this.prisma.serviceOrder.findUnique({
       where: { id: serviceOrderId },
       select: {
-        items: { select: { serviceTypeId: true } },
+        items: { select: { serviceTypeId: true, axlePosition: true } },
         assignments: { select: { technicianId: true, isPrimary: true } },
         serviceVisit: { select: { vehicle: { select: { serviceClass: true } } } },
       },
@@ -180,11 +226,11 @@ export class KpiService {
       return null;
     }
 
-    const componentMap = await this.getComponentMap();
-    const detection = detectPackage(
-      order.items.map((i) => i.serviceTypeId),
-      componentMap,
-    );
+    const [componentMap, options] = await Promise.all([
+      this.getComponentMap(),
+      this.detectionOptions(),
+    ]);
+    const detection = detectPackage(order.items as never, componentMap, options);
 
     const vehicleClass = order.serviceVisit?.vehicle?.serviceClass ?? null;
     const usableClass =
@@ -519,15 +565,16 @@ export class KpiService {
       select: {
         startedAt: true,
         completedAt: true,
-        items: { select: { serviceTypeId: true } },
+        items: { select: { serviceTypeId: true, axlePosition: true } },
         serviceVisit: { select: { vehicle: { select: { serviceClass: true } } } },
       },
     });
     if (!order) throw new NotFoundException(`Service order ${serviceOrderId} not found`);
 
-    const [policy, componentMap, delays] = await Promise.all([
+    const [policy, componentMap, detectOptions, delays] = await Promise.all([
       this.getActivePolicy(now),
       this.getComponentMap(),
+      this.detectionOptions(),
       this.prisma.kpiDelayEvent.findMany({
         where: { serviceOrderId },
         select: {
@@ -539,10 +586,7 @@ export class KpiService {
       }),
     ]);
 
-    const detection = detectPackage(
-      order.items.map((i) => i.serviceTypeId),
-      componentMap,
-    );
+    const detection = detectPackage(order.items as never, componentMap, detectOptions);
     const vehicleClass = order.serviceVisit?.vehicle?.serviceClass ?? null;
     const usableClass =
       vehicleClass && vehicleClass !== 'UNKNOWN_REQUIRES_REVIEW' ? vehicleClass : null;

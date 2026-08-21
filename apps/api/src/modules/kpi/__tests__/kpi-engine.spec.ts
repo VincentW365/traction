@@ -11,7 +11,7 @@ import {
   hasOverlap,
   type DelaySpan,
 } from '../engine/kpi-calculation';
-import { detectPackage, isBenchmarked, type PackageComponentMap } from '../engine/package-detection';
+// Package detection has its own suite: kpi-package-detection.spec.ts
 
 /**
  * CR-2026-088 — the KPI engine.
@@ -356,67 +356,3 @@ describe('custom, unbenchmarked jobs', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Package detection
-// ---------------------------------------------------------------------------
-describe('package detection', () => {
-  const map: PackageComponentMap = new Map([
-    ['svc-oil', 'GENERAL_SERVICE'],
-    ['svc-service', 'GENERAL_SERVICE'],
-    ['svc-discpad', 'FRONT_BRAKES'],
-    ['svc-plugs', 'SPARK_PLUGS'],
-  ] as const);
-
-  it('detects the three approved packages', () => {
-    expect(detectPackage(['svc-oil'], map).packageType).toBe('GENERAL_SERVICE_ONLY');
-    expect(detectPackage(['svc-oil', 'svc-discpad'], map).packageType).toBe(
-      'GENERAL_SERVICE_FRONT_BRAKES',
-    );
-    expect(detectPackage(['svc-oil', 'svc-discpad', 'svc-plugs'], map).packageType).toBe(
-      'GENERAL_SERVICE_FRONT_BRAKES_SPARK_PLUGS',
-    );
-  });
-
-  it('is order- and duplicate-insensitive', () => {
-    expect(detectPackage(['svc-plugs', 'svc-discpad', 'svc-oil', 'svc-oil'], map).packageType).toBe(
-      'GENERAL_SERVICE_FRONT_BRAKES_SPARK_PLUGS',
-    );
-  });
-
-  it('treats two services mapping to the same component as one component', () => {
-    expect(detectPackage(['svc-oil', 'svc-service'], map).packageType).toBe(
-      'GENERAL_SERVICE_ONLY',
-    );
-  });
-
-  it('falls out to custom when an unmapped service is present', () => {
-    const r = detectPackage(['svc-oil', 'svc-aircon'], map);
-    expect(r.packageType).toBe('CUSTOM_UNBENCHMARKED');
-    expect(r.unmappedServiceTypeIds).toEqual(['svc-aircon']);
-    expect(r.reason).toMatch(/not part of any benchmark/i);
-  });
-
-  it('falls out to custom for a combination the manager did not approve', () => {
-    // Brakes without a general service is real work, but it has no standard.
-    const r = detectPackage(['svc-discpad'], map);
-    expect(r.packageType).toBe('CUSTOM_UNBENCHMARKED');
-    expect(r.reason).toMatch(/not one of the three approved packages/i);
-  });
-
-  it('never matches on service names, only configured ids', () => {
-    // An empty mapping means nothing is benchmarked, however the services are named.
-    const r = detectPackage(['svc-oil', 'svc-discpad'], new Map());
-    expect(r.packageType).toBe('CUSTOM_UNBENCHMARKED');
-  });
-
-  it('handles a job with no services', () => {
-    const r = detectPackage([], map);
-    expect(r.packageType).toBe('CUSTOM_UNBENCHMARKED');
-    expect(r.reason).toMatch(/no services/i);
-  });
-
-  it('knows which packages carry a standard', () => {
-    expect(isBenchmarked('GENERAL_SERVICE_ONLY')).toBe(true);
-    expect(isBenchmarked('CUSTOM_UNBENCHMARKED')).toBe(false);
-  });
-});

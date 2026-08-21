@@ -18,6 +18,13 @@ import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.de
 import { PERMISSIONS } from '../../common/constants/permissions';
 import { RecordDelayDto, DecideDelayDto } from './dto/kpi-delay.dto';
 import { ApproveCustomStandardDto } from './dto/kpi-custom-standard.dto';
+import { KpiMappingService } from './kpi-mapping.service';
+import { WorkSegmentService } from './work-segment.service';
+import {
+  UpsertKpiMappingDto,
+  DeactivateKpiMappingDto,
+  CorrectWorkSegmentDto,
+} from './dto/kpi-mapping.dto';
 
 /**
  * CR-2026-088 — technician KPI.
@@ -35,6 +42,8 @@ export class KpiController {
   constructor(
     private readonly kpi: KpiService,
     private readonly reporting: KpiReportingService,
+    private readonly mapping: KpiMappingService,
+    private readonly segments: WorkSegmentService,
   ) {}
 
   @Get('orders/:serviceOrderId/live')
@@ -155,5 +164,118 @@ export class KpiController {
   })
   jobs(@Query() query: Record<string, string>) {
     return this.reporting.getJobRows(query);
+  }
+
+  /**
+   * CR-2026-090 — shared and reassigned jobs.
+   *
+   * A separate report rather than a dashboard filter, because these jobs are
+   * deliberately excluded from individual comparison and mixing them into the
+   * ranking view is how they end up being compared anyway.
+   */
+  @Get('reports/shared-jobs')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({
+    summary:
+      'Jobs worked by more than one technician, with labour measures. Informational — not individual KPI.',
+  })
+  @ApiQuery({ name: 'from', required: false })
+  @ApiQuery({ name: 'to', required: false })
+  @ApiQuery({ name: 'technicianId', required: false })
+  sharedJobs(@Query() query: Record<string, string>) {
+    return this.reporting.getSharedJobs(query);
+  }
+
+  // -------------------------------------------------------------------------
+  // Work segments (CR-2026-090)
+  // -------------------------------------------------------------------------
+
+  @Get('orders/:serviceOrderId/segments')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: 'Technician work segments recorded against a job' })
+  listSegments(@Param('serviceOrderId', ParseUUIDPipe) serviceOrderId: string) {
+    return this.segments.listForOrder(serviceOrderId);
+  }
+
+  @Get('orders/:serviceOrderId/labour')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({
+    summary:
+      'Labour measures for a job: per-technician active minutes, team labour, coverage and concurrent assistance',
+  })
+  labour(@Param('serviceOrderId', ParseUUIDPipe) serviceOrderId: string) {
+    return this.segments.getLabourForOrder(serviceOrderId);
+  }
+
+  // Correcting a segment changes a labour figure, so it is manager-only and always
+  // carries a reason.
+  @Post('segments/:segmentId/correct')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'Correct a work segment’s times (manager, audited, reason required)' })
+  correctSegment(
+    @Param('segmentId', ParseUUIDPipe) segmentId: string,
+    @Body() dto: CorrectWorkSegmentDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.segments.correctSegment(
+      segmentId,
+      {
+        startedAt: dto.startedAt ? new Date(dto.startedAt) : undefined,
+        endedAt:
+          dto.endedAt === undefined ? undefined : dto.endedAt ? new Date(dto.endedAt) : null,
+        reason: dto.reason,
+      },
+      user.sub,
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Package-component mapping administration (CR-2026-090)
+  // -------------------------------------------------------------------------
+
+  @Get('mappings')
+  @RequirePermission(PERMISSIONS.CONFIG_EDIT)
+  @ApiOperation({ summary: 'Every service with its current KPI component mapping' })
+  @ApiQuery({ name: 'includeHistory', required: false })
+  listMappings(@Query('includeHistory') includeHistory?: string) {
+    return this.mapping.list(includeHistory === 'true');
+  }
+
+  @Get('mappings/:serviceTypeId/history')
+  @RequirePermission(PERMISSIONS.CONFIG_EDIT)
+  @ApiOperation({ summary: 'Mapping history for one service' })
+  mappingHistory(@Param('serviceTypeId', ParseUUIDPipe) serviceTypeId: string) {
+    return this.mapping.history(serviceTypeId);
+  }
+
+  @Post('mappings')
+  @RequirePermission(PERMISSIONS.CONFIG_EDIT)
+  @ApiOperation({
+    summary: 'Set a service’s KPI component mapping. Supersedes rather than overwrites.',
+  })
+  upsertMapping(@Body() dto: UpsertKpiMappingDto, @CurrentUser() user: JwtPayload) {
+    return this.mapping.upsert(
+      {
+        serviceTypeId: dto.serviceTypeId,
+        componentRole: dto.componentRole,
+        requiresAxleQualifier: dto.requiresAxleQualifier,
+        notes: dto.notes,
+        effectiveFrom: dto.effectiveFrom ? new Date(dto.effectiveFrom) : undefined,
+      },
+      user.sub,
+    );
+  }
+
+  @Post('mappings/:mappingId/deactivate')
+  @RequirePermission(PERMISSIONS.CONFIG_EDIT)
+  @ApiOperation({
+    summary: 'Stop a mapping applying to new jobs. Never deletes — history stays explicable.',
+  })
+  deactivateMapping(
+    @Param('mappingId', ParseUUIDPipe) mappingId: string,
+    @Body() dto: DeactivateKpiMappingDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.mapping.deactivate(mappingId, user.sub, dto?.reason);
   }
 }

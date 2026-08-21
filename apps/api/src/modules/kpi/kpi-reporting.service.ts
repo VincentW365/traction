@@ -1,6 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { computeLabourMeasures } from './engine/labour-measures';
+
+/**
+ * Carried on the report AND on every row, so it survives a CSV export — the caveat
+ * that only lives in a heading is the caveat that gets lost the moment someone
+ * downloads the data and mails it round.
+ */
+const SHARED_JOBS_NOTE =
+  'Informational only — not included in individual KPI comparison.';
 
 /**
  * CR-2026-088 — the manager KPI dashboard.
@@ -100,6 +109,173 @@ export class KpiReportingService {
         firstSubmittedToQcAt: r.firstSubmittedToQcAt,
       };
     });
+  }
+
+  /**
+   * CR-2026-090 — jobs more than one technician worked on.
+   *
+   * Its own report, not a dashboard filter. These jobs are excluded from individual
+   * comparison by design, and the surest way to have them compared anyway is to leave
+   * them sitting in the ranking view behind a checkbox.
+   *
+   * What it does NOT do is split the job's elapsed time between the technicians. The
+   * data cannot support that split — no formula turns "two people were on this job"
+   * into "Marcus did 62% of it" — and the CR is explicit that none may be invented.
+   * What it reports instead is measured: who was on the job, how long each was
+   * actually working, and how much of that was side by side.
+   */
+  async getSharedJobs(q: Record<string, string>) {
+    const where: Prisma.WorkOrderKpiSnapshotWhereInput = {
+      ...this.buildWhere(q),
+      isSharedOrReassigned: true,
+    };
+    // technicianId filters on the PRIMARY technician for the main dashboard, but a
+    // shared-jobs report is exactly where "jobs Marcus helped on" matters, so the
+    // filter is applied against the segments instead.
+    delete where.primaryTechnicianId;
+
+    const snapshots = await this.prisma.workOrderKpiSnapshot.findMany({
+      where,
+      orderBy: { firstSubmittedToQcAt: 'desc' },
+      take: Math.min(Number(q.take ?? 300), 1000),
+      include: {
+        serviceOrder: {
+          select: {
+            id: true,
+            serviceVisit: {
+              select: {
+                queueTicket: { select: { ticketNumber: true } },
+                vehicle: { select: { plateNumber: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (snapshots.length === 0) {
+      return {
+        rows: [],
+        note: SHARED_JOBS_NOTE,
+        totals: { jobs: 0, teamLabourMinutes: 0, concurrentAssistMinutes: 0 },
+      };
+    }
+
+    const orderIds = snapshots.map((s) => s.serviceOrderId);
+    const segments = await this.prisma.technicianWorkSegment.findMany({
+      where: { serviceOrderId: { in: orderIds } },
+      select: {
+        serviceOrderId: true,
+        technicianId: true,
+        startedAt: true,
+        endedAt: true,
+        roleSnapshot: true,
+        startSource: true,
+        endReason: true,
+      },
+      orderBy: { startedAt: 'asc' },
+    });
+
+    const exclusions = await this.prisma.kpiDelayEvent.findMany({
+      where: {
+        serviceOrderId: { in: orderIds },
+        requestedForExclusion: true,
+        approvalStatus: 'APPROVED',
+      },
+      select: { serviceOrderId: true, startedAt: true, endedAt: true },
+    });
+
+    const techIds = [...new Set(segments.map((s) => s.technicianId))];
+    const techs = techIds.length
+      ? await this.prisma.technician.findMany({
+          where: { id: { in: techIds } },
+          select: { id: true, employeeCode: true, userAccount: { select: { fullName: true } } },
+        })
+      : [];
+    const techById = new Map(techs.map((t) => [t.id, t]));
+
+    const segmentsByOrder = new Map<string, typeof segments>();
+    for (const s of segments) {
+      const list = segmentsByOrder.get(s.serviceOrderId);
+      if (list) list.push(s);
+      else segmentsByOrder.set(s.serviceOrderId, [s]);
+    }
+    const exclusionsByOrder = new Map<string, typeof exclusions>();
+    for (const e of exclusions) {
+      const list = exclusionsByOrder.get(e.serviceOrderId);
+      if (list) list.push(e);
+      else exclusionsByOrder.set(e.serviceOrderId, [e]);
+    }
+
+    // Snapshots are finished jobs, so "now" only matters for a segment somebody left
+    // open. Measuring such a segment to the moment the job reached QC is the honest
+    // bound — a technician cannot have been working on it after that.
+    const rows = snapshots
+      .map((s) => {
+        const own = segmentsByOrder.get(s.serviceOrderId) ?? [];
+        const bound = s.firstSubmittedToQcAt ?? new Date();
+        const labour = computeLabourMeasures(
+          own,
+          exclusionsByOrder.get(s.serviceOrderId) ?? [],
+          bound,
+        );
+
+        const ticket = s.serviceOrder?.serviceVisit?.queueTicket;
+        return {
+          serviceOrderId: s.serviceOrderId,
+          ticketNumber: ticket?.ticketNumber ?? null,
+          plate: s.serviceOrder?.serviceVisit?.vehicle?.plateNumber ?? null,
+          vehicleClass: s.vehicleClass,
+          packageType: s.packageType,
+          standardMinutes: s.standardMinutes,
+          kpiCompletionMinutes: s.kpiCompletionMinutes,
+          policyVersion: s.policyVersion,
+          firstWorkStartedAt: s.firstWorkStartedAt,
+          firstSubmittedToQcAt: s.firstSubmittedToQcAt,
+          hadRework: s.hadRework,
+
+          technicianCount: labour.technicianCount,
+          teamLabourMinutes: labour.teamLabourMinutes,
+          activeCoverageMinutes: labour.activeCoverageMinutes,
+          concurrentAssistMinutes: labour.concurrentAssistMinutes,
+          excludedCoverageMinutes: labour.excludedCoverageMinutes,
+
+          wasReassigned: own.some(
+            (x) => x.endReason === 'REASSIGNED' || x.startSource === 'REASSIGNMENT',
+          ),
+
+          technicians: labour.perTechnician.map((t) => {
+            const tech = techById.get(t.technicianId);
+            const first = own.find((x) => x.technicianId === t.technicianId);
+            return {
+              technicianId: t.technicianId,
+              technicianCode: tech?.employeeCode ?? null,
+              technicianName: tech?.userAccount?.fullName ?? null,
+              role: first?.roleSnapshot ?? null,
+              activeMinutes: t.activeMinutes,
+              segmentCount: t.segmentCount,
+            };
+          }),
+
+          // No per-technician rating. Stated on the row itself so it survives a CSV
+          // export, where the explanatory note at the top of the screen does not.
+          individualRating: null as null,
+          note: SHARED_JOBS_NOTE,
+        };
+      })
+      .filter((r) =>
+        q.technicianId ? r.technicians.some((t) => t.technicianId === q.technicianId) : true,
+      );
+
+    return {
+      rows,
+      note: SHARED_JOBS_NOTE,
+      totals: {
+        jobs: rows.length,
+        teamLabourMinutes: rows.reduce((a, r) => a + r.teamLabourMinutes, 0),
+        concurrentAssistMinutes: rows.reduce((a, r) => a + r.concurrentAssistMinutes, 0),
+      },
+    };
   }
 
   async getDashboard(q: Record<string, string>) {

@@ -1,5 +1,6 @@
 /**
- * CR-2026-088 — KPI policy, benchmark matrix and package-component mapping.
+ * CR-2026-088 / CR-2026-090 — KPI policy, benchmark matrix and package-component
+ * mapping.
  *
  * The benchmark matrix supplied by the service manager, in whole minutes:
  *
@@ -15,9 +16,9 @@
  * effective-dated and every job snapshots the version it was rated under, so an
  * administrator can retune future standards without rewriting historical results.
  *
- * Idempotent — safe to re-run on every deploy. Existing policies are never
- * modified, because doing so would silently change what past jobs were measured
- * against.
+ * Idempotent — safe to re-run on every deploy. Existing policies and existing
+ * mappings are never modified, because doing so would silently change what past
+ * jobs were measured against.
  */
 import type { PrismaClient } from '@prisma/client';
 
@@ -29,6 +30,13 @@ type PackageType =
   | 'GENERAL_SERVICE_ONLY'
   | 'GENERAL_SERVICE_FRONT_BRAKES'
   | 'GENERAL_SERVICE_FRONT_BRAKES_SPARK_PLUGS';
+
+type ComponentRole =
+  | 'GENERAL_SERVICE_CORE'
+  | 'FRONT_BRAKES'
+  | 'SPARK_PLUGS'
+  | 'INCLUDED_NO_ADDITIONAL_BENCHMARK'
+  | 'FORCES_CUSTOM_BENCHMARK';
 
 export const KPI_BENCHMARK_MATRIX: Array<{
   vehicleClass: VehicleClass;
@@ -46,23 +54,143 @@ export const KPI_BENCHMARK_MATRIX: Array<{
 /**
  * Default package-component mapping, by service CODE.
  *
- * This is a starting point the manager is expected to confirm and adjust in the
- * admin screen — it is configuration, not a rule. Detection matches on service-type
- * ID, never on the displayed name, so renaming "Disc Pad Change" in the catalogue
+ * A starting point the manager confirms and adjusts in Admin -> KPI package
+ * mapping. It is configuration, not a rule. Detection matches on service-type ID,
+ * never on the displayed name, so renaming "Disc Pad Change" in the catalogue
  * cannot silently stop a benchmark from matching.
  *
- * Note there are two plausible front-brake services in the catalogue today
- * (DISC-01 "Disc Pad Change" and BRK-02 "Brake Pad Replacement"). DISC-01 is seeded
- * because the directive named it; if the shop actually books BRK-02 for front
- * brakes, an administrator should move the mapping.
+ * An unmapped service is NOT neutral: it forces CUSTOM_UNBENCHMARKED. That is the
+ * deliberately safe direction, because the failure modes are not symmetric. Marking
+ * real extra work as "included" leaves the job benchmarked at a standard that never
+ * accounted for it and rates the technician slow for doing more; leaving a service
+ * unmapped only costs an adjusted rating on that job. So this list under-claims on
+ * purpose, and the gaps below are flagged for the manager rather than guessed.
  */
 export const KPI_DEFAULT_COMPONENT_MAP: Array<{
   serviceCode: string;
-  component: 'GENERAL_SERVICE' | 'FRONT_BRAKES' | 'SPARK_PLUGS';
+  componentRole: ComponentRole;
+  requiresAxleQualifier?: boolean;
+  notes: string;
 }> = [
-  { serviceCode: 'OIL-01', component: 'GENERAL_SERVICE' },
-  { serviceCode: 'DISC-01', component: 'FRONT_BRAKES' },
-  { serviceCode: 'SPK-01', component: 'SPARK_PLUGS' },
+  {
+    serviceCode: 'OIL-01',
+    componentRole: 'GENERAL_SERVICE_CORE',
+    notes: 'Anchors the General Service component of every benchmarked package.',
+  },
+
+  // --- Front brakes: two catalogue codes, one component -------------------
+  //
+  // DISC-01 "Disc Pad Change" and BRK-02 "Brake Pad Replacement" both describe
+  // front-brake pad work, so both are mapped as ALIASES of the one FRONT_BRAKES
+  // component. Detection counts the component once even if both appear on a work
+  // order, so a job cannot earn the brake allowance twice for one set of pads.
+  //
+  // Both require an axle qualifier. The shop's imported price list distinguishes
+  // axles explicitly — it carries "To R/R DISC PADS" and "To R/R DISC PADS rear
+  // electronic" as separate lines, plus brake shoes for drums — while neither
+  // Traction code encodes an axle at all. A brake line is therefore genuinely
+  // ambiguous on its own, and rear-only work must never silently satisfy a
+  // benchmark built for front brakes.
+  {
+    serviceCode: 'DISC-01',
+    componentRole: 'FRONT_BRAKES',
+    requiresAxleQualifier: true,
+    notes:
+      'Alias of BRK-02. Satisfies Front Brakes only when the line is qualified FRONT ' +
+      '(or FRONT_AND_REAR where management approves).',
+  },
+  {
+    serviceCode: 'BRK-02',
+    componentRole: 'FRONT_BRAKES',
+    requiresAxleQualifier: true,
+    notes:
+      'Alias of DISC-01. Historically the code actually booked for brake work — ' +
+      'DISC-01 has never been used on a work order.',
+  },
+
+  {
+    serviceCode: 'SPK-01',
+    componentRole: 'SPARK_PLUGS',
+    notes: 'Anchors the Spark Plugs component.',
+  },
+
+  // --- Absorbed by the General Service standard ---------------------------
+  //
+  // Only activities the manager's own general-service breakdown names ("oil change,
+  // filters, wipers, fluid checks, paperwork") are marked absorbed. These add no
+  // component and no extra time: the 90/120-minute standard already contains them,
+  // so booking them as separate lines is a bookkeeping artefact and must not knock
+  // the job out of its benchmark.
+  {
+    serviceCode: 'OIL-FLT-01',
+    componentRole: 'INCLUDED_NO_ADDITIONAL_BENCHMARK',
+    notes: 'An oil change includes the filter; a separate line is bookkeeping, not extra work.',
+  },
+  {
+    serviceCode: 'AIR-FLT-01',
+    componentRole: 'INCLUDED_NO_ADDITIONAL_BENCHMARK',
+    notes: 'Named under "filters" in the general-service activity breakdown.',
+  },
+  {
+    serviceCode: 'WIPER-01',
+    componentRole: 'INCLUDED_NO_ADDITIONAL_BENCHMARK',
+    notes: 'Named as "wipers" in the general-service activity breakdown.',
+  },
+
+  // --- Substantial work the approved packages do not describe -------------
+  //
+  // These would force CUSTOM_UNBENCHMARKED anyway by being unmapped. Marking them
+  // explicitly is what separates "management decided this needs its own standard"
+  // from "nobody has looked at this yet" — the admin screen surfaces the second as
+  // outstanding work, and the manager sees a real reason instead of "not mapped".
+  ...(
+    [
+      ['ENG-02', 'Major tune-up — a job in its own right, not a package add-on.'],
+      ['ENG-01', 'Diagnostic time is investigative and does not fit a fixed benchmark.'],
+      ['ELE-01', 'Diagnostic time is investigative and does not fit a fixed benchmark.'],
+      ['TRANS-01', 'Diagnostic time is investigative and does not fit a fixed benchmark.'],
+      ['RACK-01', 'Major steering work.'],
+      ['SUSP-02', 'Major suspension work.'],
+      ['SHOCK-01', 'Major suspension work.'],
+      ['BJOINT-01', 'Major suspension work.'],
+      ['COL-01', 'Cooling system service is substantial standalone work.'],
+      ['AC-02', 'A/C repair is substantial standalone work.'],
+      ['INSP-01', 'Pre-purchase inspection is a distinct product, not service work.'],
+      ['MSHOP-01', 'External machine-shop work — elapsed time is outside the technician’s control.'],
+    ] as const
+  ).map(([serviceCode, notes]) => ({
+    serviceCode,
+    componentRole: 'FORCES_CUSTOM_BENCHMARK' as ComponentRole,
+    notes,
+  })),
+];
+
+/**
+ * Services deliberately left unmapped, and why. Not seeded — recorded so the gap is
+ * visible in the admin screen's "needs review" list instead of looking like an
+ * oversight.
+ */
+export const KPI_UNMAPPED_FOR_REVIEW: Array<{ serviceCode: string; question: string }> = [
+  {
+    serviceCode: 'FUEL-FLT-01',
+    question:
+      'Is a fuel filter change part of your standard general service, or extra work? ' +
+      'The activity breakdown says "filters" without saying which.',
+  },
+  {
+    serviceCode: 'BRK-01',
+    question:
+      'Brake Inspection is inspection-only. Is it absorbed by the general service, ' +
+      'or does a job that includes it need its own standard?',
+  },
+  {
+    serviceCode: 'EST-01',
+    question: 'Is a booked estimate/inspection line technician work that should be benchmarked?',
+  },
+  {
+    serviceCode: 'TIR-01',
+    question: 'Is a tyre rotation part of your standard general service?',
+  },
 ];
 
 export async function seedKpiFramework(prisma: PrismaClient): Promise<{
@@ -127,13 +255,21 @@ export async function seedKpiFramework(prisma: PrismaClient): Promise<{
       componentsSkipped.push(m.serviceCode);
       continue;
     }
-    // create-if-missing: never overwrite a mapping an administrator has changed.
-    const existing = await prisma.kpiServiceComponent.findUnique({
-      where: { serviceTypeId: svc.id },
+
+    // create-if-missing, keyed on the ACTIVE mapping: never overwrite a mapping an
+    // administrator has changed, and never resurrect one they deactivated.
+    const existing = await prisma.kpiServiceComponent.findFirst({
+      where: { serviceTypeId: svc.id, isActive: true },
+      select: { id: true },
     });
     if (!existing) {
       await prisma.kpiServiceComponent.create({
-        data: { serviceTypeId: svc.id, component: m.component as never },
+        data: {
+          serviceTypeId: svc.id,
+          componentRole: m.componentRole as never,
+          requiresAxleQualifier: m.requiresAxleQualifier ?? false,
+          notes: m.notes,
+        },
       });
     }
     componentsMapped++;

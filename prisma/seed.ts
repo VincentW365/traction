@@ -354,6 +354,8 @@ async function main() {
     { ruleKey: 'manager_override_required_after_cutoff', valueJson: true, notes: 'Whether same-day cutoff is enforced (true) or advisory (false)' },
     { ruleKey: 'midday_followup_enabled', valueJson: true, notes: 'DMAIC Rule 2: send a same-day follow-up for jobs COMPLETED before noon' },
     { ruleKey: 'midday_followup_run_time', valueJson: '12:15', notes: 'When the (idempotent) midday follow-up batch should run, HH:mm site-local (after the noon cutoff)' },
+    // CR-2026-090: KPI axle qualifier
+    { ruleKey: 'kpi_front_and_rear_satisfies_front_brakes', valueJson: false, notes: 'CR-2026-090: whether a brake line covering BOTH axles may satisfy the Front Brakes benchmark component. Default false — a front-and-rear job is more work than that standard was built for, so approving it is a deliberate management decision.' },
   ];
 
   for (const r of v41Rules) {
