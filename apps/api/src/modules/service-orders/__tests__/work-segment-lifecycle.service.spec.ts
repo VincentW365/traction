@@ -67,6 +67,12 @@ function buildService(overrides: Record<string, any> = {}) {
     openSnapshotOnStart: vi.fn(async () => undefined),
     captureSnapshotOnQc: vi.fn(async () => undefined),
     reevaluatePackage: vi.fn(async () => undefined),
+    calculateStandardForOrder: vi.fn(async () => ({
+      missingQualifiers: [],
+      unmappedServiceTypeIds: [],
+      finalStandardMinutes: 90,
+      benchmarkSource: 'MANAGER_PACKAGE',
+    })),
   };
   const auditService = { log: vi.fn(async () => ({})) };
 

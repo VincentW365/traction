@@ -1145,7 +1145,24 @@ model ServiceOrderItem {
 
   /// CR-2026-090 — which axle this line covers. Required for brake services where
   /// axle position decides the KPI package; null elsewhere.
+  ///
+  /// FRONT_AND_REAR is a legitimate booking, and the benchmark resolves it into TWO
+  /// contributions rather than storing an ambiguous single one — front pads and rear
+  /// shoes are different work with different allowances.
   axlePosition AxlePosition? @map("axle_position")
+
+  /// CR-2026-092 — what brake work this line actually is. Brake family membership
+  /// says nothing useful on its own: shoes are not front pads, and an inspection is
+  /// not a repair.
+  brakeWorkType BrakeWorkType? @map("brake_work_type")
+
+  /// CR-2026-092 — what tyre work this line actually is. A pressure check is inside
+  /// the General Service allowance; a replacement is additional work.
+  tireOperation TireOperation? @map("tire_operation")
+
+  /// Units where — and only where — the mapping's allowance basis is PER_UNIT.
+  /// Never multiplies a PER_JOB allowance.
+  unitQuantity Int? @map("unit_quantity")
 
   @@map("service_order_items")
 }
@@ -1928,6 +1945,54 @@ model KpiServiceComponent {
   /// Rear-brake-only work must never silently satisfy Front Brakes.
   requiresAxleQualifier Boolean @default(false) @map("requires_axle_qualifier")
 
+  // -------------------------------------------------------------------------
+  // CR-2026-092 — service contribution policy
+  //
+  // Replaces the binary "identifies a package, or forces the job custom" model. Most
+  // real work is neither: a fuel filter is genuine extra technician time that should
+  // extend the standard, a tyre-pressure check is already inside the General Service
+  // allowance, and preparing a quotation is not technician repair time at all.
+  // Collapsing those three into "not benchmarked" is what made ordinary jobs
+  // unrateable.
+  // -------------------------------------------------------------------------
+
+  /// How this service contributes to the job's standard.
+  contributionMode KpiContributionMode @default(CUSTOM_ONLY) @map("contribution_mode")
+
+  /// Where the minutes come from when the mode contributes time.
+  durationSource KpiDurationSource @default(NO_DURATION) @map("duration_source")
+
+  /// Independently configured minutes, used only with FIXED_CONFIGURED_DURATION.
+  /// Null means "fall back to the duration source" rather than "zero minutes" —
+  /// there is no such thing as an approved zero-minute repair.
+  ///
+  /// Sedan and SUV are held separately because the manager's PACKAGE base differs by
+  /// class. Additive services deliberately start with one figure for both: inventing
+  /// a class split nobody approved would rate an SUV technician against a number
+  /// management never agreed.
+  fixedSedanMinutes Int? @map("fixed_sedan_minutes")
+  fixedSuvMinutes   Int? @map("fixed_suv_minutes")
+
+  /// Whether the allowance applies once per job, once per booked line, or per unit.
+  /// PER_JOB is the default and the safe one: a four-wheel rotation is one job, and
+  /// multiplying its whole-job time by four would quadruple the standard for work
+  /// that was always priced as a single operation.
+  allowanceBasis KpiAllowanceBasis @default(PER_JOB) @map("allowance_basis")
+
+  /// A structured qualifier the work-order line must carry before this service can be
+  /// resolved. CONDITIONAL services are meaningless without one — "brake work" is
+  /// front pads or rear shoes or a fluid bleed, and those are different jobs.
+  requiredQualifier KpiRequiredQualifier @default(NONE) @map("required_qualifier")
+
+  /// The configured duration is a stand-in seeded because the catalogue had none, not
+  /// a figure management approved. Surfaced as a warning in the admin screen so it is
+  /// replaced deliberately rather than hardening into an accepted standard by default.
+  provisionalDuration Boolean @default(false) @map("provisional_duration")
+
+  /// Superseded catalogue codes stay resolvable for historical work orders but should
+  /// not be offered for new bookings.
+  isSupersededCode Boolean @default(false) @map("is_superseded_code")
+
   /// Mappings are effective-dated and superseded, never deleted, because historical
   /// KPI snapshots were produced under them.
   isActive      Boolean   @default(true) @map("is_active")
@@ -2000,6 +2065,28 @@ model WorkOrderKpiSnapshot {
   /// Always audited — this is the one path that gives a finished job its first rating.
   benchmarkResolvedAt       DateTime? @map("benchmark_resolved_at") @db.Timestamptz
   benchmarkResolvedByUserId String?   @map("benchmark_resolved_by_user_id") @db.Uuid
+
+  /// CR-2026-092 — how the final standard was built.
+  ///
+  /// Without this, "standard 120 minutes" is unreadable: it could be a Sedan General
+  /// Service package, or a standalone brake repair whose catalogue times happen to
+  /// sum to the same figure. Management must never assume a standalone repair was
+  /// measured against a package.
+  benchmarkSource KpiBenchmarkSource @default(NOT_TECHNICIAN_RATED) @map("benchmark_source")
+
+  /// The full arithmetic behind `standardMinutes`: base package, each additive and
+  /// its minutes, included services contributing zero, separate-SLA activity excluded
+  /// from technician time, and the total.
+  ///
+  /// Stored rather than recomputed because the mapping it was built from is
+  /// effective-dated and will change. A standard nobody can reconstruct is a standard
+  /// nobody can defend in a review with the technician it rated.
+  calculationBreakdown Json? @map("calculation_breakdown")
+
+  /// Prior calculations, newest last, each with actor, reason and timestamp. A scope
+  /// change before completion revises the standard; the superseded arithmetic is kept
+  /// so the change is visible rather than silent.
+  calculationRevisions Json? @map("calculation_revisions")
 
   primaryTechnicianId String? @map("primary_technician_id") @db.Uuid
 
@@ -2147,6 +2234,120 @@ enum KpiComponentRole {
   /// so a gearbox strip bolted onto an oil change is never quietly measured
   /// against the 90-minute General Service benchmark.
   FORCES_CUSTOM_BENCHMARK
+}
+
+// ===========================================================================
+// CR-2026-092 — service contribution policy
+// ===========================================================================
+
+/// How a service contributes to a job's KPI standard.
+///
+/// The old model had two answers: the service identifies a manager package, or it
+/// makes the job custom. Most real work is neither, and forcing it into one of those
+/// two is what left ordinary jobs unrateable.
+enum KpiContributionMode {
+  /// Helps identify one of the three manager-approved packages.
+  PACKAGE_COMPONENT
+  /// Already absorbed by the applicable package. Adds no minutes, and — critically —
+  /// does not knock the job out of its package for being booked as its own line.
+  INCLUDED_IN_BASE
+  /// Genuine additional technician work. Its approved duration is ADDED to the
+  /// package standard rather than replacing it or voiding it.
+  ADDITIVE_STANDARD
+  /// Tracked operationally but outside technician repair time — quotation
+  /// preparation, advisor processing. It neither extends the standard nor makes the
+  /// job unrateable; the technician is neither charged nor credited for it.
+  SEPARATE_SLA
+  /// Contribution depends on a structured qualifier (which axle, which tyre
+  /// operation). Resolves to one of the modes above once the qualifier is supplied,
+  /// and must never stay unresolved after it is.
+  CONDITIONAL
+  /// Genuinely bespoke or highly variable work no catalogue standard can describe.
+  /// Deliberately narrow: NOT for "this simply is not one of the three packages".
+  CUSTOM_ONLY
+}
+
+/// Where a contribution's minutes come from.
+enum KpiDurationSource {
+  /// The manager's Sedan/SUV package matrix.
+  MANAGER_PACKAGE
+  /// The service's own catalogue duration — the immediate source for additive work,
+  /// so a shop that already maintains its durations does not restate them here.
+  SERVICE_CATALOG_DURATION
+  /// A figure configured on the mapping, independent of the catalogue.
+  FIXED_CONFIGURED_DURATION
+  /// Contributes no minutes at all (included work, separate-SLA activity).
+  NO_DURATION
+}
+
+/// How often a contribution's allowance applies.
+enum KpiAllowanceBasis {
+  /// Once for the whole job. The default, and the safe one.
+  PER_JOB
+  /// Once per booked service line.
+  PER_SERVICE_LINE
+  /// Per physical unit, and ONLY where the catalogue explicitly prices it that way.
+  /// Multiplying a whole-job rotation time by four wheels would quadruple a standard
+  /// for work that was always one operation.
+  PER_UNIT
+}
+
+/// What kind of structured qualifier a CONDITIONAL service needs before it resolves.
+enum KpiRequiredQualifier {
+  NONE
+  /// Axle plus brake work type — front pads and rear shoes are different jobs.
+  BRAKE
+  /// Which tyre operation — a pressure check and a replacement are different jobs.
+  TIRE_OPERATION
+}
+
+/// Which axle a brake contribution applies to, once resolved.
+///
+/// Separate from `AxlePosition` on purpose: a line may be booked FRONT_AND_REAR, but
+/// the benchmark resolves it into two distinct contributions, and each of those is
+/// unambiguously one axle.
+enum BrakeAxle {
+  FRONT
+  REAR
+}
+
+/// What brake work a line actually represents.
+enum BrakeWorkType {
+  PADS
+  SHOES
+  ROTOR_OR_DISC
+  FLUID_OR_BLEED
+  INSPECTION_ONLY
+  OTHER
+}
+
+/// What tyre work a line actually represents.
+enum TireOperation {
+  PRESSURE_OR_TREAD_CHECK
+  ROTATION
+  BALANCE
+  ALIGNMENT
+  PUNCTURE_REPAIR
+  REPLACEMENT
+  OTHER_PHYSICAL_WORK
+}
+
+/// Where a job's final standard came from.
+///
+/// Stored on every snapshot so management can never assume a standalone brake repair
+/// was measured against the General Service package. "120 minutes" means different
+/// things depending on how it was built, and the report has to say which.
+enum KpiBenchmarkSource {
+  /// The manager's package matrix alone.
+  MANAGER_PACKAGE
+  /// The package plus approved additive services.
+  MANAGER_PACKAGE_PLUS_ADDITIVES
+  /// No General Service present — built from catalogue durations.
+  CATALOG_COMPOSITE
+  /// A manager-approved custom standard for this job.
+  MANAGER_CUSTOM
+  /// Not technician repair work, or nothing rateable on the order.
+  NOT_TECHNICIAN_RATED
 }
 
 /// Per-technician work segment — the actual periods a named technician was working

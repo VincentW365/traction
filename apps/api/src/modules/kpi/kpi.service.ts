@@ -13,12 +13,17 @@ import {
   type DelaySpan,
 } from './engine/kpi-calculation';
 import {
-  detectPackage,
   isBenchmarked,
   type KpiPackageType,
   type PackageComponentMap,
-  type PackageDetectionOptions,
 } from './engine/package-detection';
+import {
+  calculateStandard,
+  type ContributionPolicyMap,
+  type StandardCalculation,
+  type WorkOrderLine,
+  type VehicleClass,
+} from './engine/contribution-resolution';
 
 /**
  * CR-2026-088 — the technician KPI framework.
@@ -97,6 +102,119 @@ export class KpiService {
   }
 
   /**
+   * CR-2026-092 — the contribution policy for every service, as at a moment.
+   *
+   * Same effective-dating rule as the mapping above, and for the same reason: a
+   * completed job must stay explicable under the policy that produced it.
+   */
+  async getContributionPolicies(at: Date = new Date()): Promise<ContributionPolicyMap> {
+    const rows = await this.prisma.kpiServiceComponent.findMany({
+      where: {
+        isActive: true,
+        effectiveFrom: { lte: at },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: at } }],
+      },
+      select: {
+        serviceTypeId: true,
+        contributionMode: true,
+        componentRole: true,
+        durationSource: true,
+        fixedSedanMinutes: true,
+        fixedSuvMinutes: true,
+        allowanceBasis: true,
+        requiredQualifier: true,
+        provisionalDuration: true,
+      },
+    });
+
+    return new Map(
+      rows.map((r) => [
+        r.serviceTypeId,
+        {
+          contributionMode: r.contributionMode as never,
+          componentRole: r.componentRole as never,
+          durationSource: r.durationSource as never,
+          fixedSedanMinutes: r.fixedSedanMinutes,
+          fixedSuvMinutes: r.fixedSuvMinutes,
+          allowanceBasis: r.allowanceBasis as never,
+          requiredQualifier: r.requiredQualifier as never,
+          provisionalDuration: r.provisionalDuration,
+        },
+      ]),
+    );
+  }
+
+  /**
+   * Everything the calculation needs about a job: its lines with their qualifiers and
+   * catalogue durations, plus the vehicle class that picks the package base.
+   */
+  private async loadJobForCalculation(serviceOrderId: string) {
+    const order = await this.prisma.serviceOrder.findUnique({
+      where: { id: serviceOrderId },
+      select: {
+        items: {
+          select: {
+            id: true,
+            serviceTypeId: true,
+            status: true,
+            axlePosition: true,
+            brakeWorkType: true,
+            tireOperation: true,
+            unitQuantity: true,
+            serviceType: {
+              select: { code: true, name: true, baseDurationMinutes: true },
+            },
+          },
+        },
+        serviceVisit: { select: { vehicle: { select: { serviceClass: true } } } },
+      },
+    });
+    if (!order) return null;
+
+    const lines: WorkOrderLine[] = order.items.map((i) => ({
+      id: i.id,
+      serviceTypeId: i.serviceTypeId,
+      serviceCode: i.serviceType.code,
+      serviceName: i.serviceType.name,
+      catalogueMinutes: i.serviceType.baseDurationMinutes,
+      status: i.status,
+      axlePosition: i.axlePosition as never,
+      brakeWorkType: i.brakeWorkType as never,
+      tireOperation: i.tireOperation as never,
+      unitQuantity: i.unitQuantity,
+    }));
+
+    const raw = order.serviceVisit?.vehicle?.serviceClass ?? null;
+    const vehicleClass =
+      raw && raw !== 'UNKNOWN_REQUIRES_REVIEW' ? (raw as VehicleClass) : null;
+
+    return { lines, vehicleClass };
+  }
+
+  /**
+   * Work out a job's final standard and the arithmetic behind it.
+   *
+   * The package base comes from the effective policy rather than a constant, so a
+   * retuned matrix applies to new jobs without touching finished ones.
+   */
+  async calculateStandardForOrder(serviceOrderId: string, at: Date = new Date()) {
+    const [job, policies, kpiPolicy] = await Promise.all([
+      this.loadJobForCalculation(serviceOrderId),
+      this.getContributionPolicies(at),
+      this.getActivePolicy(at),
+    ]);
+    if (!job) throw new NotFoundException(`Service order ${serviceOrderId} not found`);
+
+    return calculateStandard(job.lines, policies, {
+      vehicleClass: job.vehicleClass,
+      packageStandard: (cls, pkg) =>
+        kpiPolicy?.benchmarks.find(
+          (b) => b.vehicleClass === cls && b.packageType === pkg,
+        )?.standardMinutes ?? null,
+    });
+  }
+
+  /**
    * Whether management has approved front-and-rear brake jobs to use the Front
    * Brakes standard. Configuration, not a constant: a job covering both axles is
    * more work than that standard was built for, so the default is no.
@@ -113,24 +231,22 @@ export class KpiService {
     return (rule?.valueJson as boolean) ?? false;
   }
 
-  /** Service lines in the shape detection needs, including the axle qualifier. */
-  private async detectionOptions(): Promise<PackageDetectionOptions> {
-    return { frontAndRearSatisfiesFrontBrakes: await this.getFrontAndRearApproval() };
-  }
-
-  /** Classify a work order's services into a benchmark package. */
+  /**
+   * Classify a work order's services and show the standard it produces.
+   *
+   * Kept on the same route the UI already calls, because the answer it wants has not
+   * changed — only how much of the working is now visible.
+   */
   async detectPackageForOrder(serviceOrderId: string) {
-    const order = await this.prisma.serviceOrder.findUnique({
-      where: { id: serviceOrderId },
-      select: { items: { select: { serviceTypeId: true, axlePosition: true } } },
-    });
-    if (!order) throw new NotFoundException(`Service order ${serviceOrderId} not found`);
-
-    const [map, options] = await Promise.all([
-      this.getComponentMap(),
-      this.detectionOptions(),
-    ]);
-    return detectPackage(order.items as never, map, options);
+    const calc = await this.calculateStandardForOrder(serviceOrderId);
+    return {
+      ...calc,
+      // The old field names the technician strip and axle prompt already read.
+      unmappedServiceTypeIds: calc.unmappedServiceTypeIds,
+      awaitingAxleQualifierServiceTypeIds: calc.missingQualifiers.map((m) => m.lineId),
+      resolvableByAxleQualifier:
+        calc.missingQualifiers.length > 0 && calc.unmappedServiceTypeIds.length === 0,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -202,25 +318,32 @@ export class KpiService {
         // CR-2026-091 — recorded now, while the mapping that produced it is the one in
         // force. Deciding this at the finish line would classify the job against a
         // mapping that may have changed while the work was under way.
-        pendingBenchmarkReview: terms.detection.requiresBenchmarkReview,
+        pendingBenchmarkReview: terms.calculation.requiresBenchmarkReview,
+        // CR-2026-092 — how the standard was built, and the arithmetic behind it.
+        benchmarkSource: terms.benchmarkSource as never,
+        calculationBreakdown: this.breakdownJson(terms.calculation) as never,
       },
     });
 
     this.logger.log(
       `KPI snapshot opened for order ${serviceOrderId}: ${terms.packageType}, ` +
-        `${terms.vehicleClass ?? 'unclassified'}, standard ${terms.standardMinutes ?? 'n/a'}m`,
+        `${terms.vehicleClass ?? 'unclassified'}, standard ${terms.standardMinutes ?? 'n/a'}m ` +
+        `(${terms.benchmarkSource})`,
     );
   }
 
-  /** Policy, class, package and standard for a job — the terms it is judged on. */
+  /**
+   * Policy, class, package and standard for a job — the terms it is judged on.
+   *
+   * CR-2026-092 — the standard is now the CALCULATED one: package base plus approved
+   * additives, or a sum of catalogue standards where there is no General Service. The
+   * arithmetic comes back with it, because a standard nobody can reconstruct is a
+   * standard nobody can defend in a review with the technician it rated.
+   */
   private async resolveTerms(serviceOrderId: string) {
     const order = await this.prisma.serviceOrder.findUnique({
       where: { id: serviceOrderId },
-      select: {
-        items: { select: { serviceTypeId: true, axlePosition: true } },
-        assignments: { select: { technicianId: true, isPrimary: true } },
-        serviceVisit: { select: { vehicle: { select: { serviceClass: true } } } },
-      },
+      select: { assignments: { select: { technicianId: true, isPrimary: true } } },
     });
     if (!order) return null;
 
@@ -230,33 +353,63 @@ export class KpiService {
       return null;
     }
 
-    const [componentMap, options] = await Promise.all([
-      this.getComponentMap(),
-      this.detectionOptions(),
+    const [job, policies] = await Promise.all([
+      this.loadJobForCalculation(serviceOrderId),
+      this.getContributionPolicies(),
     ]);
-    const detection = detectPackage(order.items as never, componentMap, options);
+    if (!job) return null;
 
-    const vehicleClass = order.serviceVisit?.vehicle?.serviceClass ?? null;
-    const usableClass =
-      vehicleClass && vehicleClass !== 'UNKNOWN_REQUIRES_REVIEW' ? vehicleClass : null;
-
-    const benchmark =
-      usableClass && isBenchmarked(detection.packageType)
-        ? policy.benchmarks.find(
-            (b) => b.vehicleClass === usableClass && b.packageType === detection.packageType,
-          )
-        : undefined;
+    const calculation = calculateStandard(job.lines, policies, {
+      vehicleClass: job.vehicleClass,
+      packageStandard: (cls, pkg) =>
+        policy.benchmarks.find((b) => b.vehicleClass === cls && b.packageType === pkg)
+          ?.standardMinutes ?? null,
+    });
 
     const primary =
       order.assignments.find((a) => a.isPrimary) ?? order.assignments[0] ?? null;
 
     return {
       policy,
-      detection,
-      vehicleClass: usableClass,
-      packageType: detection.packageType,
-      standardMinutes: benchmark?.standardMinutes ?? null,
+      calculation,
+      // `detection` is kept as an alias so the eligibility and review paths written
+      // against CR-2026-091 keep reading the same field names.
+      detection: calculation,
+      vehicleClass: job.vehicleClass,
+      packageType: calculation.packageType,
+      standardMinutes: calculation.finalStandardMinutes,
+      benchmarkSource: calculation.benchmarkSource,
       primaryTechnicianId: primary?.technicianId ?? null,
+    };
+  }
+
+  /**
+   * The stored form of a calculation: enough to reprint the breakdown months later
+   * without re-running anything.
+   */
+  private breakdownJson(calc: StandardCalculation) {
+    return {
+      packageType: calc.packageType,
+      benchmarkSource: calc.benchmarkSource,
+      components: calc.components,
+      basePackageMinutes: calc.basePackageMinutes,
+      additiveMinutes: calc.additiveMinutes,
+      finalStandardMinutes: calc.finalStandardMinutes,
+      provisionalDurationsUsed: calc.provisionalDurationsUsed,
+      lines: calc.contributions.map((c) => ({
+        serviceCode: c.serviceCode,
+        serviceName: c.serviceName,
+        mode: c.mode,
+        minutes: c.minutes,
+        qualifierLabel: c.qualifierLabel,
+        provisional: c.provisional,
+        suppressedAsDuplicate: c.suppressedAsDuplicate ?? false,
+        note: c.note,
+      })),
+      missingQualifiers: calc.missingQualifiers.map((m) => ({
+        serviceCode: m.serviceCode,
+        message: m.message,
+      })),
     };
   }
 
@@ -287,16 +440,41 @@ export class KpiService {
     // necessarily moving the package, so this has to be checked in its own right or a
     // job would stay flagged for review after the thing it was waiting for arrived.
     const reviewChanged =
-      terms.detection.requiresBenchmarkReview !== snapshot.pendingBenchmarkReview;
-    if (!packageChanged && !standardChanged && !reviewChanged) return;
+      terms.calculation.requiresBenchmarkReview !== snapshot.pendingBenchmarkReview;
+    const sourceChanged = terms.benchmarkSource !== snapshot.benchmarkSource;
+    if (!packageChanged && !standardChanged && !reviewChanged && !sourceChanged) return;
+
+    const newStandard = snapshot.customStandardMinutes ?? terms.standardMinutes;
+
+    // CR-2026-092 — the superseded arithmetic is kept, not overwritten. A technician
+    // told mid-job that their benchmark moved is entitled to see what it moved from,
+    // and a manager reviewing the job later needs the same. Elapsed time is untouched:
+    // the scope changed, the clock did not restart.
+    const revisions = Array.isArray(snapshot.calculationRevisions)
+      ? (snapshot.calculationRevisions as unknown[])
+      : [];
+    revisions.push({
+      supersededAt: new Date().toISOString(),
+      byUserId: actorUserId,
+      reason: 'SCOPE_CHANGE',
+      packageType: snapshot.packageType,
+      standardMinutes: snapshot.standardMinutes,
+      benchmarkSource: snapshot.benchmarkSource,
+      breakdown: snapshot.calculationBreakdown ?? null,
+    });
 
     await this.prisma.workOrderKpiSnapshot.update({
       where: { serviceOrderId },
       data: {
         packageType: terms.packageType as never,
         // A manager-approved custom standard survives a re-detection.
-        standardMinutes: snapshot.customStandardMinutes ?? terms.standardMinutes,
-        pendingBenchmarkReview: terms.detection.requiresBenchmarkReview,
+        standardMinutes: newStandard,
+        pendingBenchmarkReview: terms.calculation.requiresBenchmarkReview,
+        benchmarkSource: (snapshot.customStandardMinutes != null
+          ? 'MANAGER_CUSTOM'
+          : terms.benchmarkSource) as never,
+        calculationBreakdown: this.breakdownJson(terms.calculation) as never,
+        calculationRevisions: revisions as never,
       },
     });
 
@@ -308,19 +486,21 @@ export class KpiService {
       beforeJson: {
         packageType: snapshot.packageType,
         standardMinutes: snapshot.standardMinutes,
+        benchmarkSource: snapshot.benchmarkSource,
       },
       afterJson: {
         packageType: terms.packageType,
-        standardMinutes: snapshot.customStandardMinutes ?? terms.standardMinutes,
+        standardMinutes: newStandard,
+        benchmarkSource: terms.benchmarkSource,
       },
       reasonCode: 'SCOPE_CHANGE',
       notes: `Services changed on order ${serviceOrderId}`,
     });
 
     this.logger.log(
-      `KPI package revised for order ${serviceOrderId}: ` +
-        `${snapshot.packageType} (${snapshot.standardMinutes ?? 'n/a'}m) -> ` +
-        `${terms.packageType} (${terms.standardMinutes ?? 'n/a'}m)`,
+      `KPI standard revised for order ${serviceOrderId}: ` +
+        `${snapshot.standardMinutes ?? 'n/a'}m -> ${newStandard ?? 'n/a'}m ` +
+        `(${terms.benchmarkSource}, revision ${revisions.length})`,
     );
   }
 
@@ -361,9 +541,9 @@ export class KpiService {
       throw new BadRequestException('The job’s terms could not be resolved.');
     }
 
-    if (terms.detection.requiresBenchmarkReview) {
+    if (terms.calculation.requiresBenchmarkReview) {
       throw new BadRequestException(
-        `Still awaiting configuration: ${terms.detection.reason ?? 'a service on this job is not mapped.'}`,
+        `Still awaiting configuration: ${terms.calculation.reason ?? 'a service on this job is not mapped.'}`,
       );
     }
 
@@ -408,7 +588,7 @@ export class KpiService {
       firstWorkStartedAt: snapshot.firstWorkStartedAt,
       firstSubmittedToQcAt: snapshot.firstSubmittedToQcAt,
       computedMinutes: result.kpiCompletionMinutes,
-      detectionReason: terms.detection.reason,
+      detectionReason: terms.calculation.reason,
       requiresBenchmarkReview: false,
     });
 
@@ -428,6 +608,8 @@ export class KpiService {
         pendingBenchmarkReview: false,
         benchmarkResolvedAt: new Date(),
         benchmarkResolvedByUserId: actorUserId,
+        benchmarkSource: terms.benchmarkSource as never,
+        calculationBreakdown: this.breakdownJson(terms.calculation) as never,
       },
     });
 
@@ -561,6 +743,9 @@ export class KpiService {
         customStandardByUserId: input.actorUserId,
         customStandardApprovedAt: new Date(),
         standardMinutes: input.standardMinutes,
+        // A manager-set standard is its own provenance — it did not come from the
+        // package matrix or the catalogue.
+        benchmarkSource: 'MANAGER_CUSTOM' as never,
       },
     });
 
@@ -802,19 +987,17 @@ export class KpiService {
   async getLiveKpi(serviceOrderId: string, now: Date = new Date()) {
     const order = await this.prisma.serviceOrder.findUnique({
       where: { id: serviceOrderId },
-      select: {
-        startedAt: true,
-        completedAt: true,
-        items: { select: { serviceTypeId: true, axlePosition: true } },
-        serviceVisit: { select: { vehicle: { select: { serviceClass: true } } } },
-      },
+      select: { startedAt: true, completedAt: true },
     });
     if (!order) throw new NotFoundException(`Service order ${serviceOrderId} not found`);
 
-    const [policy, componentMap, detectOptions, delays] = await Promise.all([
+    // A live job reads its standard from the OPEN SNAPSHOT where one exists, so the
+    // strip counts down against the terms the job was started under rather than
+    // against whatever the mapping says this second. Only an unstarted job is
+    // calculated fresh.
+    const [policy, snapshot, delays] = await Promise.all([
       this.getActivePolicy(now),
-      this.getComponentMap(),
-      this.detectionOptions(),
+      this.prisma.workOrderKpiSnapshot.findUnique({ where: { serviceOrderId } }),
       this.prisma.kpiDelayEvent.findMany({
         where: { serviceOrderId },
         select: {
@@ -826,23 +1009,30 @@ export class KpiService {
       }),
     ]);
 
-    const detection = detectPackage(order.items as never, componentMap, detectOptions);
-    const vehicleClass = order.serviceVisit?.vehicle?.serviceClass ?? null;
-    const usableClass =
-      vehicleClass && vehicleClass !== 'UNKNOWN_REQUIRES_REVIEW' ? vehicleClass : null;
+    const detection =
+      snapshot && snapshot.calculationBreakdown
+        ? null
+        : await this.calculateStandardForOrder(serviceOrderId, now);
 
-    const benchmark =
-      policy && usableClass && isBenchmarked(detection.packageType)
-        ? policy.benchmarks.find(
-            (b) => b.vehicleClass === usableClass && b.packageType === detection.packageType,
-          )
-        : undefined;
+    const usableClass = (snapshot?.vehicleClass ??
+      (await this.loadJobForCalculation(serviceOrderId))?.vehicleClass ??
+      null) as VehicleClass | null;
+
+    const standardMinutes =
+      snapshot?.customStandardMinutes ??
+      snapshot?.standardMinutes ??
+      detection?.finalStandardMinutes ??
+      null;
+
+    const breakdown =
+      (snapshot?.calculationBreakdown as never) ??
+      (detection ? this.breakdownJson(detection) : null);
 
     const result = calculateKpi({
       firstWorkStartedAt: order.startedAt,
       firstSubmittedToQcAt: order.completedAt,
       delays: delays as DelaySpan[],
-      standardMinutes: benchmark?.standardMinutes ?? null,
+      standardMinutes,
       absoluteBands: policy
         ? {
             excellentMaxMinutes: policy.absoluteExcellentMaxMinutes,
@@ -861,12 +1051,20 @@ export class KpiService {
 
     return {
       vehicleClass: usableClass,
-      packageType: detection.packageType,
-      packageReason: detection.reason,
-      standardMinutes: benchmark?.standardMinutes ?? null,
+      packageType: (snapshot?.packageType ?? detection?.packageType ?? 'CUSTOM_UNBENCHMARKED') as string,
+      packageReason: detection?.reason ?? null,
+      standardMinutes,
+      // CR-2026-092 — what the standard was built from, so a strip showing "120 min"
+      // says whether that is a package or a sum of catalogue times.
+      benchmarkSource:
+        snapshot?.benchmarkSource ?? detection?.benchmarkSource ?? 'NOT_TECHNICIAN_RATED',
+      calculationBreakdown: breakdown,
+      pendingBenchmarkReview:
+        snapshot?.pendingBenchmarkReview ?? detection?.requiresBenchmarkReview ?? false,
+      missingQualifiers: detection?.missingQualifiers ?? [],
       minutesRemaining:
-        benchmark && result.kpiCompletionMinutes != null
-          ? benchmark.standardMinutes - result.kpiCompletionMinutes
+        standardMinutes != null && result.kpiCompletionMinutes != null
+          ? standardMinutes - result.kpiCompletionMinutes
           : null,
       ...result,
     };

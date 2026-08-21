@@ -67,5 +67,8 @@ demo-output/
 # Local DB backups (may contain PII) — never commit
 backups/
 
+# Generated review evidence (screenshots, capture output) — reproducible, never committed
+artifacts/
+
 # Local customer-data exports / reports (PII) — never commit
 /ExportedCustomers*.csv

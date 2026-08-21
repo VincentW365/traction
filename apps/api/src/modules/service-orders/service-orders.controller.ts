@@ -13,7 +13,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ServiceOrdersService } from './service-orders.service';
 import { CreateServiceOrderDto } from './dto/create-service-order.dto';
-import { SetItemAxleDto } from './dto/set-item-axle.dto';
+import { SetItemAxleDto, SetItemQualifiersDto } from './dto/set-item-axle.dto';
 import { UpdateServiceOrderDto } from './dto/update-service-order.dto';
 import { AssignTechnicianDto } from './dto/assign-technician.dto';
 import { AssignAllDto } from './dto/assign-all.dto';
@@ -237,6 +237,35 @@ export class ServiceOrdersController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.serviceOrdersService.setItemAxle(id, itemId, dto.axlePosition, user.sub);
+  }
+
+  /**
+   * CR-2026-092 — record the structured qualifiers a conditional service needs.
+   * Supersedes the axle-only endpoint, which stays for existing callers.
+   */
+  @Patch(':id/items/:itemId/qualifiers')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({
+    summary: 'Record brake axle / work type, or tyre operation, on a service line',
+  })
+  async setItemQualifiers(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() dto: SetItemQualifiersDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.setItemQualifiers(id, itemId, dto, user.sub);
+  }
+
+  /**
+   * Whether the job can be benchmarked yet, and what is missing if not. Read by the
+   * work-order screen so the answer arrives while somebody can still act on it.
+   */
+  @Get(':id/benchmark-readiness')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: 'KPI benchmark readiness and the calculated standard' })
+  async benchmarkReadiness(@Param('id', ParseUUIDPipe) id: string) {
+    return this.serviceOrdersService.getBenchmarkReadiness(id);
   }
 
   @Patch(':id/assignments/:assignmentId')

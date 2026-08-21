@@ -85,7 +85,18 @@ function build(overrides: Record<string, any> = {}) {
         startedAt: new Date('2026-08-21T09:00:00Z'),
         completedAt: new Date('2026-08-21T13:00:00Z'), // 240 min — well past every band
         assignments: [{ technicianId: 'tech-1', isPrimary: true }],
-        items: [{ serviceTypeId: OIL, axlePosition: null }],
+        items: [
+          {
+            id: 'line-1',
+            serviceTypeId: OIL,
+            status: 'PLANNED',
+            axlePosition: null,
+            brakeWorkType: null,
+            tireOperation: null,
+            unitQuantity: null,
+            serviceType: { code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30 },
+          },
+        ],
         serviceVisit: { vehicle: { serviceClass: 'SEDAN_CLASS' } },
       })),
     },
@@ -145,7 +156,7 @@ describe('a job held for benchmark review carries no rating at all', () => {
     expect(h.prisma.workOrderKpiSnapshot.create).toHaveBeenCalled();
     expect(h.saved.rawElapsedMinutes).toBe(240);
     expect(h.saved.firstWorkStartedAt).toBeInstanceOf(Date);
-    expect(h.saved.eligibilityReason).toMatch(/not mapped/i);
+    expect(h.saved.eligibilityReason).toMatch(/no KPI contribution policy/i);
   });
 
   it('a job with a genuine no-standard answer keeps its absolute band', async () => {
@@ -157,6 +168,13 @@ describe('a job held for benchmark review carries no rating at all', () => {
           {
             serviceTypeId: OIL,
             componentRole: 'FORCES_CUSTOM_BENCHMARK',
+            contributionMode: 'CUSTOM_ONLY',
+            durationSource: 'NO_DURATION',
+            fixedSedanMinutes: null,
+            fixedSuvMinutes: null,
+            allowanceBasis: 'PER_JOB',
+            requiredQualifier: 'NONE',
+            provisionalDuration: false,
             requiresAxleQualifier: false,
           },
         ]),
@@ -193,6 +211,13 @@ describe('resolving the review once the configuration exists', () => {
         {
           serviceTypeId: OIL,
           componentRole: 'GENERAL_SERVICE_CORE',
+          contributionMode: 'PACKAGE_COMPONENT',
+          durationSource: 'MANAGER_PACKAGE',
+          fixedSedanMinutes: null,
+          fixedSuvMinutes: null,
+          allowanceBasis: 'PER_JOB',
+          requiredQualifier: 'NONE',
+          provisionalDuration: false,
           requiresAxleQualifier: false,
         },
       ]),

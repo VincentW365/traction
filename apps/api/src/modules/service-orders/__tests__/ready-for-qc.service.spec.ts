@@ -27,6 +27,14 @@ function build(opts: { callerTech?: any; timingOrder?: any; pauses?: any[]; othe
       openSnapshotOnStart: vi.fn(async () => undefined),
       captureSnapshotOnQc: vi.fn(async () => undefined),
       reevaluatePackage: vi.fn(async () => undefined),
+      // CR-2026-092 - the pre-start benchmark-readiness check. Stubbed as "nothing
+      // missing"; the calculation has its own suite.
+      calculateStandardForOrder: vi.fn(async () => ({
+        missingQualifiers: [],
+        unmappedServiceTypeIds: [],
+        finalStandardMinutes: 90,
+        benchmarkSource: 'MANAGER_PACKAGE',
+      })),
     } as any,
     // CR-2026-090 - work-segment hooks. Stubbed for the same reason: these tests
     // exercise the order state machine, and segments have their own suite.

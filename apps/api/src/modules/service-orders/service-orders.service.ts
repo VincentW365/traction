@@ -379,6 +379,98 @@ export class ServiceOrdersService {
     return updated;
   }
 
+  /**
+   * CR-2026-092 — record the structured qualifiers a conditional service needs.
+   *
+   * Supersedes setting the axle alone: a brake line needs a work type as well, because
+   * front pads, rear shoes and a fluid bleed are different jobs measured differently.
+   * Any subset may be supplied, so a screen can save each answer as it is given rather
+   * than forcing the whole set at once.
+   */
+  async setItemQualifiers(
+    orderId: string,
+    itemId: string,
+    q: {
+      axlePosition?: string;
+      brakeWorkType?: string;
+      tireOperation?: string;
+      unitQuantity?: number;
+    },
+    userId: string,
+  ) {
+    const item = await this.prisma.serviceOrderItem.findFirst({
+      where: { id: itemId, serviceOrderId: orderId },
+      include: { serviceType: { select: { code: true, name: true } } },
+    });
+    if (!item) {
+      throw new NotFoundException(`Service line ${itemId} not found on order ${orderId}`);
+    }
+
+    const data: Record<string, unknown> = {};
+    if (q.axlePosition !== undefined) data.axlePosition = q.axlePosition;
+    if (q.brakeWorkType !== undefined) data.brakeWorkType = q.brakeWorkType;
+    if (q.tireOperation !== undefined) data.tireOperation = q.tireOperation;
+    if (q.unitQuantity !== undefined) data.unitQuantity = q.unitQuantity;
+    if (Object.keys(data).length === 0) return item;
+
+    const updated = await this.prisma.serviceOrderItem.update({
+      where: { id: itemId },
+      data: data as never,
+      include: { serviceType: { select: { code: true, name: true } } },
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: 'SERVICE_LINE_QUALIFIERS_SET',
+      entityType: 'ServiceOrderItem',
+      entityId: itemId,
+      beforeJson: {
+        axlePosition: item.axlePosition,
+        brakeWorkType: item.brakeWorkType,
+        tireOperation: item.tireOperation,
+        unitQuantity: item.unitQuantity,
+      },
+      afterJson: { ...data, serviceCode: updated.serviceType.code },
+    });
+
+    // Supplying a qualifier can turn an unrateable job into a rateable one, so the
+    // standard is re-derived immediately rather than at the finish line.
+    try {
+      await this.kpi.reevaluatePackage(orderId, userId);
+    } catch (err) {
+      this.logger.error(
+        `KPI re-evaluation failed for order ${orderId}: ${(err as Error).message}`,
+      );
+    }
+
+    this.logger.log(
+      `Qualifiers set on ${updated.serviceType.code} (order ${orderId}) by ${userId}: ` +
+        JSON.stringify(data),
+    );
+    return updated;
+  }
+
+  /**
+   * CR-2026-092 — is this job ready to be measured?
+   *
+   * Read before Start Work, and available to the work-order screen so the answer
+   * arrives while somebody can still act on it. The failure this prevents is
+   * discovering at submit-to-QC that a brake line never said which axle — by then the
+   * technician has done the work and the job cannot be rated, which reads to them as
+   * being punished for a form they never saw.
+   */
+  async getBenchmarkReadiness(orderId: string) {
+    const calc = await this.kpi.calculateStandardForOrder(orderId);
+    return {
+      ready: calc.missingQualifiers.length === 0 && calc.unmappedServiceTypeIds.length === 0,
+      missingQualifiers: calc.missingQualifiers,
+      unmappedServiceTypeIds: calc.unmappedServiceTypeIds,
+      finalStandardMinutes: calc.finalStandardMinutes,
+      benchmarkSource: calc.benchmarkSource,
+      calculation: calc,
+    };
+  }
+
   async deleteOrder(id: string, userId: string) {
     const order = await this.findById(id);
     this.assertEditableStatus(order.status, 'delete');
@@ -1181,6 +1273,22 @@ export class ServiceOrdersService {
     // of starting is the last honest moment: afterwards the clock is already running
     // and any classification looks like it was chosen to suit the result.
     await this.kpi.assertVehicleClassConfirmed(orderId);
+
+    // CR-2026-092 — a conditional service with no qualifier cannot be benchmarked, and
+    // the last honest moment to ask is now. Discovering it at submit-to-QC leaves a
+    // technician who did the work with a job that cannot be rated, over a question
+    // nobody put to them.
+    //
+    // Deliberately actionable rather than blocking-with-no-way-out: the message names
+    // the service and the missing answer, and a service advisor or manager can supply
+    // it immediately from the work-order screen.
+    const readiness = await this.getBenchmarkReadiness(orderId);
+    if (readiness.missingQualifiers.length > 0) {
+      throw new BadRequestException(
+        readiness.missingQualifiers.map((m) => m.message).join(' ') +
+          ' A service advisor can set this on the work order.',
+      );
+    }
 
     const updated = await this.prisma.technicianAssignment.update({
       where: { id: assignmentId },
