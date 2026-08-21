@@ -285,6 +285,19 @@ export class ServiceOrdersService {
       afterJson: { items: dto.items?.map((i) => i.serviceTypeCode), notes: dto.notes },
     });
 
+    // CR-2026-088 — a scope change can move the job to a different benchmark
+    // package, so re-evaluate and record the revision. Only ever applies before the
+    // result is known; a finalised snapshot is left alone.
+    if (dto.items) {
+      try {
+        await this.kpi.reevaluatePackage(id, userId);
+      } catch (err) {
+        this.logger.error(
+          `KPI package re-evaluation failed for order ${id}: ${(err as Error).message}`,
+        );
+      }
+    }
+
     // Line items drive duration estimates — refresh the queue.
     await this.triggerQueueRecompute(order.serviceVisit.siteId);
     this.logger.log(`ServiceOrder ${id} edited by ${userId}`);
@@ -1062,6 +1075,17 @@ export class ServiceOrdersService {
     const order = await this.prisma.serviceOrder.findUnique({ where: { id: orderId } });
     if (order && order.status === 'ASSIGNED') {
       await this.changeStatus(orderId, { toStatus: 'IN_PROGRESS' as any }, userId);
+    }
+
+    // CR-2026-088 — fix the terms the job will be judged on NOW, before the outcome
+    // is known. A benchmark chosen after seeing a poor result is not a benchmark.
+    // Wrapped: a reporting problem must never stop someone starting work.
+    try {
+      await this.kpi.openSnapshotOnStart(orderId);
+    } catch (err) {
+      this.logger.error(
+        `KPI snapshot could not be opened for order ${orderId}: ${(err as Error).message}`,
+      );
     }
 
     return updated;

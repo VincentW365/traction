@@ -9,6 +9,7 @@ import { EmptyState } from '../../../components/ui/empty-state';
 import { LoadingState } from '../../../components/ui/loading-state';
 import { StatusBadge } from '../../../components/status-badge';
 import { PAUSE_REASONS } from '../../../lib/service-order-actions';
+import { KpiStrip, type LiveKpi } from '../../../components/kpi-strip';
 
 // CR-2026-073 — H:MM:SS for the live work timers.
 function fmtClock(ms: number): string {
@@ -105,6 +106,15 @@ export default function TechnicianWorkView() {
     refetchInterval: 15000,
   });
 
+  // CR-2026-088 — live KPI for the job in hand. Polls with the timers so the
+  // countdown to the standard stays honest while work is under way.
+  const kpiQuery = useQuery<LiveKpi>({
+    queryKey: ['kpi-live', currentJob?.orderId],
+    queryFn: () => api.get(`/kpi/orders/${currentJob!.orderId}/live`),
+    enabled: !!currentJob,
+    refetchInterval: 30000,
+  });
+
   const inspectionsQuery = useQuery<{ items: Array<{ id: string; inspectionNumber: string; status: string }> }>({
     queryKey: ['tech-inspections', currentJob?.serviceVisitId],
     queryFn: () => api.get(`/inspections?serviceVisitId=${currentJob!.serviceVisitId}`),
@@ -172,6 +182,9 @@ export default function TechnicianWorkView() {
                   <StatusBadge status={currentJob.orderStatus} />
                 </div>
               )}
+
+              {/* CR-2026-088 — where this job stands against its standard. */}
+              <KpiStrip kpi={kpiQuery.data} />
 
               <div>
                 <div className="input-label">Services</div>

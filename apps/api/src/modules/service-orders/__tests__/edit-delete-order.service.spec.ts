@@ -27,7 +27,12 @@ function build() {
   const service = new ServiceOrdersService(prisma as any, statusHistory as any, audit as any, scheduling as any,
     // CR-2026-088 - KPI hooks. Stubbed: these tests exercise the order state
     // machine, not the KPI framework, which has its own suite.
-    { assertVehicleClassConfirmed: vi.fn(async () => undefined), captureSnapshotOnQc: vi.fn(async () => undefined) } as any,
+    {
+      assertVehicleClassConfirmed: vi.fn(async () => undefined),
+      openSnapshotOnStart: vi.fn(async () => undefined),
+      captureSnapshotOnQc: vi.fn(async () => undefined),
+      reevaluatePackage: vi.fn(async () => undefined),
+    } as any,
   );
   vi.spyOn(service as any, 'triggerQueueRecompute').mockResolvedValue(undefined);
   return { service, prisma, audit };

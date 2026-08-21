@@ -17,6 +17,7 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import { RecordDelayDto, DecideDelayDto } from './dto/kpi-delay.dto';
+import { ApproveCustomStandardDto } from './dto/kpi-custom-standard.dto';
 
 /**
  * CR-2026-088 — technician KPI.
@@ -105,6 +106,25 @@ export class KpiController {
       approve: dto.approve,
       actorUserId: user.sub,
       rejectionReason: dto.rejectionReason,
+    });
+  }
+
+  @Post('orders/:serviceOrderId/custom-standard')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({
+    summary:
+      'Approve a custom standard for an unbenchmarked job. Must be set before the job finishes.',
+  })
+  approveCustomStandard(
+    @Param('serviceOrderId', ParseUUIDPipe) serviceOrderId: string,
+    @Body() dto: ApproveCustomStandardDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.kpi.approveCustomStandard({
+      serviceOrderId,
+      standardMinutes: dto.standardMinutes,
+      reason: dto.reason,
+      actorUserId: user.sub,
     });
   }
 
