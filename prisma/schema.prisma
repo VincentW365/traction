@@ -398,14 +398,56 @@ enum InspectionStatus {
   COMPLETED
   SIGNED_OFF
   CLOSED
+  /// CR-2026-093 — deliberately not carried out. Distinct from CANCELLED, which means
+  /// the record itself was a mistake. Both require a reason; neither is a technician
+  /// failure, and neither blocks the visit.
+  SKIPPED
   CANCELLED
 }
 
 enum InspectionItemResult {
+  /// CR-2026-093 — the honest default. An untouched item used to default to OK, so a
+  /// blank form asserted that every component had been checked and passed. Nobody
+  /// made that claim; the form did.
+  NOT_INSPECTED
   OK
   FUTURE
   IMMEDIATE
   NOT_APPLICABLE
+}
+
+/// CR-2026-093 — what kind of record this is.
+///
+/// One aggregate rather than two, because a pre-inspection and a full inspection share
+/// the same customer, vehicle, visit, photo, recommendation and audit machinery. What
+/// differs is which fields are used and which lifecycle applies.
+enum InspectionKind {
+  /// The full technical checklist, from the approved paper form.
+  VEHICLE_INSPECTION
+  /// A quick photo-first condition record taken before work begins.
+  PRE_INSPECTION
+}
+
+/// Which angle or subject a photograph shows.
+enum InspectionPhotoCategory {
+  FRONT
+  REAR
+  DRIVER_SIDE
+  PASSENGER_SIDE
+  INTERIOR
+  DASHBOARD_ODOMETER
+  EXISTING_DAMAGE
+  WHEEL_TIRE
+  OTHER
+}
+
+/// Why a pre-inspection was completed with no photograph. Recorded rather than
+/// blocked: a missing camera must never stop a vehicle being booked in.
+enum NoPhotoReason {
+  CAMERA_UNAVAILABLE
+  CUSTOMER_DECLINED
+  IMAGE_NOT_REQUIRED
+  OTHER
 }
 
 enum BatteryTestResult {
@@ -454,6 +496,10 @@ model InspectionTemplate {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   version   Int      @unique
   name      String
+  /// CR-2026-093 — which kind of record this template drives. A pre-inspection needs a
+  /// template too (it snapshots one like any other inspection), but it carries no
+  /// checklist items.
+  kind      InspectionKind @default(VEHICLE_INSPECTION)
   isActive  Boolean  @default(false) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
@@ -471,6 +517,10 @@ model InspectionTemplateItem {
   label      String
   orderIndex Int     @map("order_index")
   allowsNa   Boolean @default(false) @map("allows_na")
+  /// Which column of the paper form this item belongs in. Presentation, not meaning —
+  /// the print view and the two-column screen both need it, and deriving it from the
+  /// category name would break the first time a category was renamed.
+  formColumn String  @default("LEFT") @map("form_column")
 
   template InspectionTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
@@ -488,6 +538,13 @@ model VehicleInspection {
   templateId               String             @map("template_id") @db.Uuid
   templateVersion          Int                @map("template_version")
   status                   InspectionStatus   @default(DRAFT)
+
+  /// CR-2026-093 — which kind of record this is. Existing rows migrate to
+  /// VEHICLE_INSPECTION: every inspection created before this CR was the full
+  /// technical checklist, and reinterpreting history would be a lie about what staff
+  /// actually did.
+  kind InspectionKind @default(VEHICLE_INSPECTION)
+
   performedByUserId        String?            @map("performed_by_user_id") @db.Uuid
   batteryTestResult        BatteryTestResult? @map("battery_test_result")
   batteryFactoryCca        Int?               @map("battery_factory_cca")
@@ -505,6 +562,34 @@ model VehicleInspection {
   // Nullable; historical rows stay null (reads fall back to signedOffAt/customerAckAt/createdAt).
   completedAt              DateTime?          @map("completed_at") @db.Timestamptz
   closedAt                 DateTime?          @map("closed_at") @db.Timestamptz
+
+  // CR-2026-093 — skip and cancel are outcomes, not absences. Recording who and why
+  // is what separates "we decided not to" from "nobody got round to it", and the
+  // difference matters when someone asks months later why a vehicle has no record.
+  skippedAt          DateTime? @map("skipped_at") @db.Timestamptz
+  skippedByUserId    String?   @map("skipped_by_user_id") @db.Uuid
+  skipReason         String?   @map("skip_reason")
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz
+  cancelledByUserId  String?   @map("cancelled_by_user_id") @db.Uuid
+  cancelReason       String?   @map("cancel_reason")
+  completedByUserId  String?   @map("completed_by_user_id") @db.Uuid
+
+  // --- Pre-inspection fields -----------------------------------------------
+  // Null on a full vehicle inspection. Held on the same aggregate rather than a
+  // parallel table because both kinds share customer, vehicle, visit, photos,
+  // recommendations and audit; only the fields in use differ.
+  generalCondition String?        @map("general_condition")
+  visibleDamage    Boolean?       @map("visible_damage")
+  damageNotes      String?        @map("damage_notes")
+  itemsLeftInside  String?        @map("items_left_inside")
+  warningLights    String?        @map("warning_lights")
+  fuelLevelNote    String?        @map("fuel_level_note")
+  odometerReading  Int?           @map("odometer_reading")
+  /// Set only when a pre-inspection was completed with no photograph. The confirmation
+  /// is not a nag: it is the record of a deliberate choice.
+  noPhotoReason      NoPhotoReason? @map("no_photo_reason")
+  noPhotoReasonNote  String?        @map("no_photo_reason_note")
+
   createdByUserId          String?            @map("created_by_user_id") @db.Uuid
   createdAt                DateTime           @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                DateTime           @updatedAt @map("updated_at") @db.Timestamptz
@@ -526,6 +611,8 @@ model VehicleInspection {
   @@index([vehicleId])
   @@index([customerId])
   @@index([status])
+  @@index([siteId, kind, status])
+  @@index([kind])
   @@map("vehicle_inspections")
 }
 
@@ -535,7 +622,10 @@ model InspectionItem {
   category     String
   label        String
   orderIndex   Int                  @map("order_index")
-  result       InspectionItemResult @default(OK)
+  /// CR-2026-093 — NOT_INSPECTED, never OK. A freshly created checklist must not
+  /// assert that every component was checked and passed before anyone has looked at
+  /// the vehicle.
+  result       InspectionItemResult @default(NOT_INSPECTED)
   note         String?
 
   inspection      VehicleInspection          @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
@@ -976,19 +1066,67 @@ model QueueEvent {
 /// (longest edge 1280px, JPEG) — a raw tablet photo is 1-5 MB and would both bloat
 /// every row read and exceed the request body limit. Revisit an object store before
 /// this becomes the shop's primary photographic record.
+/// A photograph attached to an inspection.
+///
+/// CR-2026-093 moved the bytes OUT of this row. The original stored a whole JPEG as a
+/// base64 data URL in a text column: every listing query dragged megabytes through the
+/// database, the row could not be streamed, and nothing could be served with a
+/// cacheable content type. The bytes now live behind a storage boundary and this row
+/// carries only metadata — including a checksum, so a file that changes underneath is
+/// detectable rather than silently trusted.
 model InspectionPhoto {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  inspectionId  String   @map("inspection_id") @db.Uuid
-  /// base64 data URL, e.g. "data:image/jpeg;base64,..."
-  imageData     String   @map("image_data")
-  /// Optional free-text note, e.g. "front bumper scuff on arrival".
-  caption       String?
-  takenByUserId String?  @map("taken_by_user_id") @db.Uuid
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inspectionId String @map("inspection_id") @db.Uuid
+
+  /// Opaque key in the configured store. Never a URL and never guessable from the
+  /// inspection number — photos are reached through an authorised endpoint, not by
+  /// anyone who can count.
+  storageKey String? @map("storage_key")
+
+  originalFilename  String? @map("original_filename")
+  sanitizedFilename String? @map("sanitized_filename")
+  mimeType          String? @map("mime_type")
+  byteSize          Int?    @map("byte_size")
+  width             Int?
+  height            Int?
+  /// SHA-256 of the stored bytes.
+  checksumSha256    String? @map("checksum_sha256") @db.Char(64)
+  /// Thumbnail key, where the runtime could produce one.
+  thumbnailKey      String? @map("thumbnail_key")
+
+  category   InspectionPhotoCategory @default(OTHER)
+  caption    String?
+  sortOrder  Int                     @default(0) @map("sort_order")
+  isPrimary  Boolean                 @default(false) @map("is_primary")
+
+  /// Legacy base64 payload from before the storage boundary existed. Kept nullable and
+  /// unread by new code so historical photographs stay viewable; never written again.
+  imageData String? @map("image_data")
+
+  takenByUserId    String?   @map("taken_by_user_id") @db.Uuid
+  uploadedByUserId String?   @map("uploaded_by_user_id") @db.Uuid
+  uploadedAt       DateTime? @map("uploaded_at") @db.Timestamptz
+
+  /// Evidence is not edited in place after completion. A correction supersedes the
+  /// original with a new row and a reason; the original stays, flagged, so the trail
+  /// shows what was replaced and by whom rather than what someone wants it to say.
+  supersedesPhotoId String?   @map("supersedes_photo_id") @db.Uuid
+  supersededAt      DateTime? @map("superseded_at") @db.Timestamptz
+  correctedByUserId String?   @map("corrected_by_user_id") @db.Uuid
+  correctionReason  String?   @map("correction_reason")
+
+  /// Soft removal, permitted only while the record is DRAFT.
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
+  deletedByUserId String?   @map("deleted_by_user_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
   inspection VehicleInspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
 
   @@index([inspectionId])
+  @@index([inspectionId, deletedAt])
+  @@index([checksumSha256])
   @@map("inspection_photos")
 }
 

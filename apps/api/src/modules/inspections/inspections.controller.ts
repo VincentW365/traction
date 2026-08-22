@@ -1,6 +1,22 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards, ParseUUIDPipe } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiOkResponse, ApiCreatedResponse } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards, ParseUUIDPipe, UseInterceptors, UploadedFile, Res } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiOkResponse, ApiCreatedResponse, ApiConsumes } from '@nestjs/swagger';
 import { InspectionsService } from './inspections.service';
+import { InspectionPhotosService } from './inspection-photos.service';
+import { MAX_BYTES } from './storage/image-inspection';
+
+/**
+ * The shape multer hands back. Declared locally because `@types/multer` is not a
+ * dependency of this API and the upload path needs exactly three fields — adding a
+ * types package to get them would be a dependency for a type alias.
+ */
+interface UploadedImage {
+  buffer: Buffer;
+  originalname?: string;
+  size?: number;
+  mimetype?: string;
+}
 import { CreateInspectionDto } from './dto/create-inspection.dto';
 import { UpdateInspectionDto } from './dto/update-inspection.dto';
 import { AddRecommendationDto } from './dto/add-recommendation.dto';
@@ -27,7 +43,10 @@ import { PERMISSIONS } from '../../common/constants/permissions';
 @UseGuards(JwtAuthGuard, RbacGuard)
 @Controller('inspections')
 export class InspectionsController {
-  constructor(private readonly service: InspectionsService) {}
+  constructor(
+    private readonly service: InspectionsService,
+    private readonly photos: InspectionPhotosService,
+  ) {}
 
   @Post()
   @RequirePermission(PERMISSIONS.INSPECTION_CREATE)
@@ -66,19 +85,105 @@ export class InspectionsController {
     return this.service.addRecommendation(id, dto, user);
   }
 
-  // CR-2026-087 — pre-inspection photos from the technician's tablet.
+  // ─── Photographs (CR-2026-087, reworked by CR-2026-093) ───────────────────
+
+  /**
+   * Multipart upload — what a phone camera or a file picker uses.
+   *
+   * Memory storage, capped at the same 10 MB the validator enforces, so an oversized
+   * file is refused at the boundary rather than after being written anywhere.
+   */
+  @Post(':id/photos/upload')
+  @RequirePermission(PERMISSIONS.INSPECTION_EDIT)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_BYTES, files: 1 } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload an inspection photograph (JPEG, PNG or WebP, max 10 MB)' })
+  uploadPhoto(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: UploadedImage | undefined,
+    @Body() body: { caption?: string; category?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.photos.upload(id, file, { caption: body?.caption, category: body?.category }, user);
+  }
+
+  /**
+   * The original CR-2026-087 shape, kept working for clients that still post a base64
+   * data URL. The bytes no longer land in a database column — they go through the same
+   * validation and storage as an uploaded file.
+   */
   @Post(':id/photos')
   @RequirePermission(PERMISSIONS.INSPECTION_EDIT)
-  @ApiOperation({ summary: 'Attach a pre-inspection photo (base64 data URL) before sign-off' })
+  @ApiOperation({ summary: 'Attach a photograph as a base64 data URL (legacy shape)' })
   addPhoto(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AddInspectionPhotoDto, @CurrentUser() user: JwtPayload) {
-    return this.service.addPhoto(id, dto, user);
+    return this.photos.addFromDataUrl(id, dto.imageData, dto.caption, user);
+  }
+
+  @Get(':id/photos')
+  @RequirePermission(PERMISSIONS.INSPECTION_VIEW)
+  @ApiOperation({ summary: 'List photograph metadata for an inspection' })
+  listPhotos(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.photos.list(id, user);
+  }
+
+  /**
+   * The bytes themselves.
+   *
+   * Authorised on every request, and served from an application endpoint rather than a
+   * static path: an inspection photograph must never be reachable by anyone who can
+   * guess a number.
+   */
+  @Get(':id/photos/:photoId/file')
+  @RequirePermission(PERMISSIONS.INSPECTION_VIEW)
+  @ApiOperation({ summary: 'Fetch an inspection photograph' })
+  async photoFile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('photoId', ParseUUIDPipe) photoId: string,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ) {
+    const { body, mimeType, filename } = await this.photos.readBytes(id, photoId, user);
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Length', String(body.length));
+    // private: this is customer property, and no shared cache should hold it.
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end(body);
+  }
+
+  @Patch(':id/photos/:photoId')
+  @RequirePermission(PERMISSIONS.INSPECTION_EDIT)
+  @ApiOperation({ summary: 'Change a photograph caption, category, order or primary flag' })
+  updatePhoto(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('photoId', ParseUUIDPipe) photoId: string,
+    @Body() patch: { caption?: string; category?: string; sortOrder?: number; isPrimary?: boolean },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.photos.updateMeta(id, photoId, patch ?? {}, user);
   }
 
   @Delete(':id/photos/:photoId')
   @RequirePermission(PERMISSIONS.INSPECTION_EDIT)
-  @ApiOperation({ summary: 'Remove a pre-inspection photo taken in error' })
+  @ApiOperation({ summary: 'Remove a DRAFT photograph. Completed evidence is corrected, not deleted.' })
   deletePhoto(@Param('id', ParseUUIDPipe) id: string, @Param('photoId', ParseUUIDPipe) photoId: string, @CurrentUser() user: JwtPayload) {
-    return this.service.deletePhoto(id, photoId, user);
+    return this.photos.remove(id, photoId, user);
+  }
+
+  @Post(':id/photos/:photoId/correct')
+  @RequirePermission(PERMISSIONS.INSPECTION_SIGNOFF)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_BYTES, files: 1 } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Supersede a completed photograph, preserving the original' })
+  correctPhoto(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('photoId', ParseUUIDPipe) photoId: string,
+    @UploadedFile() file: UploadedImage | undefined,
+    @Body() body: { reason?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.photos.correct(id, photoId, file, body?.reason ?? '', user);
   }
 
   @Post(':id/complete')

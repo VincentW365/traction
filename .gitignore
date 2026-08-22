@@ -72,3 +72,6 @@ artifacts/
 
 # Local customer-data exports / reports (PII) — never commit
 /ExportedCustomers*.csv
+
+# CR-2026-093 — locally stored inspection photographs (customer property, never committed)
+.data/

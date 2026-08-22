@@ -1,0 +1,288 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; background: #e8eaed; }
+    a { color: #1e40af; } a:hover { color: #1e3a8a; }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="padding: 28px 24px; background: #e8eaed;">
+<div style="max-width: 794px; margin: 0 auto; background: #ffffff; border: 1px solid #94a3b8; box-shadow: 0 1px 3px rgba(15,23,42,0.12); padding: 26px 30px 30px 30px;">
+
+  <!-- Letterhead -->
+  <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;">
+    <img src="berts-logo.png" alt="Bert's Auto Parts" style="height: 58px; width: auto; display: block;">
+    <div style="text-align: right; font-size: 10px; color: #475569; line-height: 1.5; padding-top: 4px;">
+      Bert&#39;s Auto Parts Service Centre<br>Your Parts Specialist
+    </div>
+  </div>
+
+  <!-- Title row -->
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 20px; margin-top: 14px;">
+    <h1 style="margin: 0; font-size: 19px; font-weight: 800; letter-spacing: 0.03em; color: #0f172a;">SERVICE CENTRE JOB CARD</h1>
+    <div style="display: flex; align-items: baseline; gap: 7px; min-width: 250px;">
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">DATE:</span>
+      <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{date}}</span>
+    </div>
+  </div>
+
+  <!-- PERSONAL DATA -->
+  <div style="background: #0f172a; color: #ffffff; font-size: 12px; font-weight: 800; letter-spacing: 0.07em; padding: 4px 10px; margin-top: 16px;">PERSONAL DATA</div>
+  <div style="display: flex; flex-direction: column; gap: 11px; padding: 13px 2px 0 2px;">
+    <div style="display: flex; align-items: baseline; gap: 7px;">
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a; white-space: nowrap;">NAME:</span>
+      <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{name}}</span>
+    </div>
+    <div style="display: flex; align-items: baseline; gap: 7px;">
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a; white-space: nowrap;">CONTACT NUMBER(S):</span>
+      <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{contact}}</span>
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a; white-space: nowrap;">EMAIL ADDRESS:</span>
+      <span style="flex-grow: 1.6; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{email}}</span>
+    </div>
+  </div>
+
+  <!-- VEHICLE DETAILS -->
+  <div style="background: #0f172a; color: #ffffff; font-size: 12px; font-weight: 800; letter-spacing: 0.07em; padding: 4px 10px; margin-top: 18px;">VEHICLE DETAILS</div>
+  <div style="display: flex; flex-direction: column; gap: 11px; padding: 13px 2px 0 2px;">
+    <div style="display: flex; align-items: baseline; gap: 7px;">
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">YEAR:</span>
+      <span style="width: 68px; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{year}}</span>
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">MAKE:</span>
+      <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{make}}</span>
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">MODEL:</span>
+      <span style="flex-grow: 1.4; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{model}}</span>
+    </div>
+    <div style="display: flex; align-items: baseline; gap: 7px;">
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">LICENCE:</span>
+      <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{licence}}</span>
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">ENGINE #:</span>
+      <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{engineNo}}</span>
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">CHASSIS #:</span>
+      <span style="flex-grow: 1.3; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{chassisNo}}</span>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 7px; flex-wrap: wrap;">
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">MILEAGE:</span>
+      <span style="width: 118px; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{mileage}}</span>
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a; margin-right: 12px;">KM/ML</span>
+
+      <sc-for list="{{transmission}}" as="t" hint-placeholder-count="4">
+        <div onClick="{{t.pick}}" style="display: flex; align-items: center; gap: 5px; cursor: pointer; margin-right: 6px;">
+          <span style="font-size: 12px; font-weight: 800; color: #0f172a;">{{t.label}}</span>
+          <div style="{{t.boxStyle}}">{{t.mark}}</div>
+        </div>
+      </sc-for>
+
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a; margin-left: 10px;">Fuel:</span>
+      <sc-for list="{{fuel}}" as="f" hint-placeholder-count="2">
+        <div onClick="{{f.pick}}" style="display: flex; align-items: center; gap: 5px; cursor: pointer; margin-right: 6px;">
+          <span style="font-size: 12px; font-weight: 800; color: #0f172a;">{{f.label}}</span>
+          <div style="{{f.boxStyle}}">{{f.mark}}</div>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display: flex; align-items: baseline; gap: 7px;">
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">NEXT SERVICE MILEAGE:</span>
+      <span style="width: 128px; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{nextMileage}}</span>
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">KM/ML</span>
+      <span style="width: 74px; border-bottom: 1px solid #0f172a;">&nbsp;</span>
+      <span style="font-size: 12px; font-weight: 800; color: #0f172a;">DATE:</span>
+      <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{nextDate}}</span>
+    </div>
+  </div>
+
+  <!-- SERVICE DETAILS -->
+  <div style="background: #0f172a; color: #ffffff; font-size: 12px; font-weight: 800; letter-spacing: 0.07em; padding: 4px 10px; margin-top: 18px;">SERVICE DETAILS</div>
+  <div style="display: flex; flex-direction: column; gap: 11px; padding: 13px 2px 0 2px;">
+
+    <div style="display: flex; align-items: center; gap: 26px; flex-wrap: wrap;">
+      <sc-for list="{{servicesRow1}}" as="s" hint-placeholder-count="3">
+        <div style="display: flex; align-items: center; gap: 7px;">
+          <span style="font-size: 12px; font-weight: 800; color: #0f172a;">{{s.label}}</span>
+          <sc-for list="{{s.boxes}}" as="b" hint-placeholder-count="1">
+            <div onClick="{{b.pick}}" style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+              <sc-if value="{{b.hasLabel}}" hint-placeholder-val="{{true}}">
+                <span style="font-size: 12px; font-weight: 800; color: #0f172a;">{{b.label}}</span>
+              </sc-if>
+              <div style="{{b.boxStyle}}">{{b.mark}}</div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 26px; flex-wrap: wrap;">
+      <sc-for list="{{servicesRow2}}" as="s" hint-placeholder-count="2">
+        <div style="display: flex; align-items: center; gap: 7px;">
+          <span style="font-size: 12px; font-weight: 800; color: #0f172a;">{{s.label}}</span>
+          <sc-for list="{{s.boxes}}" as="b" hint-placeholder-count="1">
+            <div onClick="{{b.pick}}" style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+              <sc-if value="{{b.hasLabel}}" hint-placeholder-val="{{true}}">
+                <span style="font-size: 12px; font-weight: 800; color: #0f172a;">{{b.label}}</span>
+              </sc-if>
+              <div style="{{b.boxStyle}}">{{b.mark}}</div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="margin-top: 4px;">
+      <div style="font-size: 12px; font-weight: 800; color: #0f172a; margin-bottom: 7px;">CUSTOMER&#39;S DIRECTIVE</div>
+      <div style="border: 1px solid #cbd5e1; background: #f8fafc; padding: 9px 11px; min-height: 96px; font-size: 12px; line-height: 24px; color: #0f172a; white-space: pre-line;">{{directive}}</div>
+    </div>
+  </div>
+
+  <!-- OFFICE USE ONLY -->
+  <div style="border: 2px solid #0f172a; margin-top: 20px;">
+    <div style="background: #0f172a; color: #ffffff; font-size: 12px; font-weight: 800; letter-spacing: 0.07em; padding: 4px 10px; text-align: center;">OFFICE USE ONLY</div>
+    <div style="display: flex; flex-direction: column; gap: 11px; padding: 13px 14px;">
+      <sc-for list="{{officeFields}}" as="o" hint-placeholder-count="4">
+        <div style="display: flex; align-items: baseline; gap: 7px;">
+          <span style="font-size: 12px; font-weight: 800; color: #0f172a; white-space: nowrap; width: 168px;">{{o.label}}</span>
+          <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; font-size: 12px; padding: 0 4px 1px 4px; color: #0f172a;">{{o.value}}</span>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- Signature -->
+  <div style="display: flex; align-items: baseline; justify-content: center; gap: 12px; margin-top: 26px;">
+    <span style="font-size: 12px; font-weight: 800; color: #0f172a;">CUSTOMER&#39;S SIGNATURE:</span>
+    <span style="width: 218px; border-bottom: 1px solid #0f172a;">&nbsp;</span>
+    <span style="font-size: 12px; font-weight: 800; color: #0f172a;">DATE:</span>
+    <span style="width: 148px; border-bottom: 1px solid #0f172a;">&nbsp;</span>
+  </div>
+
+</div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "date": {"editor": "text", "default": "21 Aug 2026"},
+  "name": {"editor": "text", "default": "Sample Customer"},
+  "contact": {"editor": "text", "default": "876-000-0000"},
+  "email": {"editor": "text", "default": "sample@example.com"},
+  "year": {"editor": "text", "default": "2019"},
+  "make": {"editor": "text", "default": "Toyota"},
+  "model": {"editor": "text", "default": "Corolla"},
+  "licence": {"editor": "text", "default": "SAMPLE-01"},
+  "engineNo": {"editor": "text", "default": "2ZR-0000000"},
+  "chassisNo": {"editor": "text", "default": "JTDBR32E1B0000000"},
+  "mileage": {"editor": "text", "default": "84,120"},
+  "nextMileage": {"editor": "text", "default": "89,120"},
+  "nextDate": {"editor": "text", "default": "21 Feb 2027"},
+  "directive": {"editor": "text", "default": "Customer reports a squeal on braking at low speed.\nRequests full service and brake check before the weekend."},
+  "customerNo": {"editor": "text", "default": "CUS-004821"},
+  "preparedBy": {"editor": "text", "default": "S. Advisor"},
+  "assignedMechanic": {"editor": "text", "default": "A. Technician"},
+  "salesInv": {"editor": "text", "default": "INV-019204"},
+  "$preview": {"width": 842, "height": 1180}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    // Nothing pre-ticked: the paper card arrives blank and the digital one has to
+    // mean the same thing. A pre-ticked service is work nobody asked for.
+    this.state = { transmission: null, fuel: null, services: {} };
+  }
+
+  box(on) {
+    return 'width: 15px; height: 15px; border: 1.5px solid #0f172a; background: #ffffff;' +
+      ' display: flex; align-items: center; justify-content: center; font-size: 11px;' +
+      ' font-weight: 900; line-height: 1; cursor: pointer; color: ' +
+      (on ? '#0f172a' : 'transparent') + ';';
+  }
+
+  exclusive(group, value, label) {
+    const on = this.state[group] === value;
+    return {
+      label,
+      mark: on ? '✓' : '',
+      boxStyle: this.box(on),
+      pick: () => this.setState({ [group]: on ? null : value }),
+    };
+  }
+
+  serviceBox(key, label) {
+    const on = !!this.state.services[key];
+    return {
+      label: label ?? '',
+      hasLabel: !!label,
+      mark: on ? '✓' : '',
+      boxStyle: this.box(on),
+      pick: () => {
+        const next = { ...this.state.services };
+        if (next[key]) delete next[key]; else next[key] = true;
+        this.setState({ services: next });
+      },
+    };
+  }
+
+  renderVals() {
+    return {
+      date: this.props.date ?? '',
+      name: this.props.name ?? '',
+      contact: this.props.contact ?? '',
+      email: this.props.email ?? '',
+      year: this.props.year ?? '',
+      make: this.props.make ?? '',
+      model: this.props.model ?? '',
+      licence: this.props.licence ?? '',
+      engineNo: this.props.engineNo ?? '',
+      chassisNo: this.props.chassisNo ?? '',
+      mileage: this.props.mileage ?? '',
+      nextMileage: this.props.nextMileage ?? '',
+      nextDate: this.props.nextDate ?? '',
+      directive: this.props.directive ?? '',
+
+      transmission: [
+        this.exclusive('transmission', 'ATM', 'ATM'),
+        this.exclusive('transmission', 'MTM', 'MTM'),
+        this.exclusive('transmission', '4WD', '4WD'),
+        this.exclusive('transmission', '2WD', '2WD'),
+      ],
+      fuel: [
+        this.exclusive('fuel', 'DSL', 'Dsl'),
+        this.exclusive('fuel', 'GAS', 'Gas'),
+      ],
+
+      // Row 1 mirrors the card exactly: DISC PADS carries its own FR and RR boxes,
+      // which is the same front/rear split the KPI benchmark already depends on.
+      servicesRow1: [
+        { label: 'OIL & FILTER CHANGE', boxes: [this.serviceBox('oil')] },
+        { label: 'ENGINE TUNE-UP', boxes: [this.serviceBox('tuneup')] },
+        {
+          label: 'DISC PADS -',
+          boxes: [this.serviceBox('discFront', 'FR'), this.serviceBox('discRear', 'RR')],
+        },
+      ],
+      servicesRow2: [
+        { label: 'BRAKE SHOE', boxes: [this.serviceBox('shoe')] },
+        {
+          label: 'SHOCKS -',
+          boxes: [this.serviceBox('shocksGenuine', 'GENUINE'), this.serviceBox('shocksKyb', 'KYB')],
+        },
+      ],
+
+      officeFields: [
+        { label: 'CUSTOMER NO.', value: this.props.customerNo ?? '' },
+        { label: 'PREPARED BY:', value: this.props.preparedBy ?? '' },
+        { label: 'ASSIGNED MECHANIC:', value: this.props.assignedMechanic ?? '' },
+        { label: 'SALES INV. #:', value: this.props.salesInv ?? '' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

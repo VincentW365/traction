@@ -107,7 +107,11 @@ export class InspectionsService {
           category: ti.category,
           label: ti.label,
           orderIndex: ti.orderIndex,
-          result: 'OK' as const,
+          // CR-2026-093 — NOT_INSPECTED, never OK. A blank checklist used to claim
+          // every component had been checked and passed before anyone opened the
+          // bonnet, and a technician who filled in half the form silently signed off
+          // the other half.
+          result: 'NOT_INSPECTED' as const,
         })),
       });
       // One measurement row per wheel.

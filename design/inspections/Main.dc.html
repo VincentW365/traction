@@ -1,0 +1,524 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; background: #e8eaed; }
+    a { color: #1e40af; } a:hover { color: #1e3a8a; }
+    * { box-sizing: border-box; }
+    .rule { border-bottom: 1px solid #cbd5e1; height: 26px; }
+  </style>
+</helmet>
+
+<div style="padding: 28px 24px; background: #e8eaed;">
+<div style="max-width: 1000px; margin: 0 auto; background: #ffffff; border: 1px solid #94a3b8; box-shadow: 0 1px 3px rgba(15,23,42,0.12);">
+
+  <!-- Letterhead + title -->
+  <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px 10px 18px;">
+    <img src="berts-logo.png" alt="Bert's Auto Parts" style="height: 46px; width: auto; display: block;">
+    <div style="font-size: 10px; color: #475569; text-align: right; line-height: 1.5;">
+      ITEM #72970<br>Bert&#39;s Auto Parts Service Centre
+    </div>
+  </div>
+
+  <div style="text-align: center; padding: 0 18px 10px 18px;">
+    <h1 style="margin: 0; font-size: 25px; font-weight: 800; letter-spacing: 0.02em; color: #0f172a;">VISUAL VEHICLE INSPECTION REPORT</h1>
+    <div style="height: 3px; background: #0f172a; margin-top: 7px;"></div>
+  </div>
+
+  <!-- Header fields -->
+  <div style="padding: 4px 18px 12px 18px; display: flex; flex-direction: column; gap: 9px; font-size: 11px; color: #0f172a;">
+    <div style="display: flex; gap: 18px;">
+      <div style="flex-grow: 2; display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-weight: 700;">Dealer Name:</span>
+        <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; padding: 0 4px;">Bert&#39;s Auto Parts Service Centre</span>
+      </div>
+      <div style="flex-grow: 1; display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-weight: 700;">Technician:</span>
+        <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; padding: 0 4px;">{{tech}}</span>
+      </div>
+      <div style="width: 150px; display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-weight: 700;">Date:</span>
+        <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; padding: 0 4px;">{{date}}</span>
+      </div>
+    </div>
+    <div style="display: flex; gap: 18px;">
+      <div style="flex-grow: 2; display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-weight: 700;">Customer Name:</span>
+        <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; padding: 0 4px;">{{customer}}</span>
+      </div>
+      <div style="flex-grow: 2; display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-weight: 700;">Yr./Make/Model:</span>
+        <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; padding: 0 4px;">{{vehicle}}</span>
+      </div>
+      <div style="width: 150px; display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-weight: 700;">Hat/Tag#:</span>
+        <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; padding: 0 4px;">{{plate}}</span>
+      </div>
+    </div>
+    <div style="display: flex; gap: 18px; align-items: flex-end;">
+      <div style="width: 190px; display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-weight: 700;">Mileage:</span>
+        <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; padding: 0 4px;">{{mileage}}</span>
+      </div>
+      <div style="flex-grow: 1; display: flex; align-items: flex-end; gap: 7px;">
+        <span style="font-weight: 700;">VIN:</span>
+        <div style="display: flex; gap: 0;">
+          <sc-for list="{{vinCells}}" as="cell" hint-placeholder-count="17">
+            <div style="width: 19px; height: 21px; border: 1px solid #0f172a; margin-left: -1px; text-align: center; font-size: 11px; line-height: 19px; background: {{cell.bg}};">{{cell.ch}}</div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="width: 190px; display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-weight: 700;">Repair Order #:</span>
+        <span style="flex-grow: 1; border-bottom: 1px solid #0f172a; padding: 0 4px;">{{repairOrder}}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Two-column body -->
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; border-top: 2px solid #0f172a;">
+
+    <!-- ================= LEFT COLUMN ================= -->
+    <div style="border-right: 2px solid #0f172a;">
+
+      <!-- Legend -->
+      <div>
+        <div style="background: #00a651; color: #ffffff; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: 0.02em;">CHECKED AND OKAY</div>
+        <div style="background: #ffd400; color: #0f172a; font-size: 11px; font-weight: 800; padding: 3px 8px; padding-left: 26px; letter-spacing: 0.02em;">MAY NEED FUTURE ATTENTION</div>
+        <div style="background: #e02020; color: #ffffff; font-size: 11px; font-weight: 800; padding: 3px 8px; padding-left: 44px; letter-spacing: 0.02em;">REQUIRES IMMEDIATE ATTENTION</div>
+      </div>
+
+      <sc-for list="{{leftSections}}" as="sec" hint-placeholder-count="3">
+        <div style="background: #0f172a; color: #ffffff; text-align: center; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: 0.06em;">{{sec.title}}</div>
+        <sc-for list="{{sec.items}}" as="item" hint-placeholder-count="10">
+          <div style="display: flex; align-items: stretch; border-bottom: 1px solid #cbd5e1;">
+            <div style="display: flex; gap: 4px; padding: 5px 6px; align-items: center; border-right: 1px solid #cbd5e1;">
+              <div onClick="{{item.pickOk}}" title="Checked and Okay" style="{{item.okStyle}}">{{item.okMark}}</div>
+              <div onClick="{{item.pickFuture}}" title="May Need Future Attention" style="{{item.futureStyle}}">{{item.futureMark}}</div>
+              <div onClick="{{item.pickImmediate}}" title="Requires Immediate Attention" style="{{item.immediateStyle}}">{{item.immediateMark}}</div>
+              <div onClick="{{item.pickNa}}" title="Not Applicable" style="{{item.naStyle}}">{{item.naMark}}</div>
+            </div>
+            <div style="flex-grow: 1; padding: 5px 8px; font-size: 10.5px; line-height: 1.35; color: #0f172a; align-self: center;">{{item.label}}</div>
+          </div>
+        </sc-for>
+      </sc-for>
+    </div>
+
+    <!-- ================= RIGHT COLUMN ================= -->
+    <div>
+
+      <!-- Legend -->
+      <div>
+        <div style="background: #00a651; color: #ffffff; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: 0.02em;">CHECKED AND OKAY</div>
+        <div style="background: #ffd400; color: #0f172a; font-size: 11px; font-weight: 800; padding: 3px 8px; padding-left: 26px; letter-spacing: 0.02em;">MAY NEED FUTURE ATTENTION</div>
+        <div style="background: #e02020; color: #ffffff; font-size: 11px; font-weight: 800; padding: 3px 8px; padding-left: 44px; letter-spacing: 0.02em;">REQUIRES IMMEDIATE ATTENTION</div>
+      </div>
+
+      <!-- Battery -->
+      <div style="background: #0f172a; color: #ffffff; text-align: center; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: 0.06em;">BATTERY</div>
+      <sc-for list="{{batteryItems}}" as="item" hint-placeholder-count="2">
+        <div style="display: flex; align-items: stretch; border-bottom: 1px solid #cbd5e1;">
+          <div style="display: flex; gap: 4px; padding: 5px 6px; align-items: center; border-right: 1px solid #cbd5e1;">
+            <div onClick="{{item.pickOk}}" style="{{item.okStyle}}">{{item.okMark}}</div>
+            <div onClick="{{item.pickFuture}}" style="{{item.futureStyle}}">{{item.futureMark}}</div>
+            <div onClick="{{item.pickImmediate}}" style="{{item.immediateStyle}}">{{item.immediateMark}}</div>
+            <div onClick="{{item.pickNa}}" style="{{item.naStyle}}">{{item.naMark}}</div>
+          </div>
+          <div style="flex-grow: 1; padding: 5px 8px; font-size: 10.5px; line-height: 1.35; color: #0f172a; align-self: center;">{{item.label}}</div>
+        </div>
+      </sc-for>
+
+      <div style="display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-bottom: 1px solid #cbd5e1;">
+        <div style="display: flex; gap: 12px; flex-grow: 1;">
+          <sc-for list="{{batteryResults}}" as="r" hint-placeholder-count="3">
+            <div onClick="{{r.pick}}" style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+              <div style="{{r.boxStyle}}">{{r.mark}}</div>
+              <span style="font-size: 10px; font-weight: 700; color: #0f172a;">{{r.label}}</span>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <div style="display: flex; align-items: center; gap: 5px;">
+            <span style="font-size: 8px; font-weight: 700; color: #0f172a; text-align: right; width: 78px; line-height: 1.15;">Factory Spec Cold<br>Cranking Amps</span>
+            <div style="width: 66px; height: 17px; border: 1px solid #0f172a; font-size: 10px; text-align: center; line-height: 15px;">{{factoryCca}}</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 5px;">
+            <span style="font-size: 8px; font-weight: 700; color: #0f172a; text-align: right; width: 78px; line-height: 1.15;">Actual Cold<br>Cranking Amps</span>
+            <div style="width: 66px; height: 17px; border: 1px solid #0f172a; font-size: 10px; text-align: center; line-height: 15px;">{{actualCca}}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Brake and tire -->
+      <div style="background: #0f172a; color: #ffffff; text-align: center; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: 0.06em;">BRAKE AND TIRE</div>
+
+      <div style="position: relative; padding: 0;">
+        <img src="tire.webp" alt="" style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 92px; height: auto; opacity: 0.92; pointer-events: none;">
+
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0;">
+          <sc-for list="{{wheels}}" as="w" hint-placeholder-count="4">
+            <div style="{{w.cellStyle}}">
+              <div style="font-size: 9.5px; font-weight: 800; color: #0f172a; text-align: {{w.align}}; margin-bottom: 3px;">{{w.title}}</div>
+              <div style="display: flex; gap: 5px; align-items: flex-start;">
+                <div style="display: flex; flex-direction: column; gap: 3px; padding-top: 1px;">
+                  <sc-for list="{{w.dots}}" as="d" hint-placeholder-count="3">
+                    <div style="display: flex; gap: 2px;">
+                      <div onClick="{{d.pickOk}}" style="{{d.okStyle}}"></div>
+                      <div onClick="{{d.pickFuture}}" style="{{d.futureStyle}}"></div>
+                      <div onClick="{{d.pickImmediate}}" style="{{d.immediateStyle}}"></div>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px; font-size: 9px; color: #0f172a;">
+                  <div style="display: flex; align-items: baseline; gap: 3px;"><span>Brake Lining</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.lining}}</span><span>mm</span></div>
+                  <div style="display: flex; align-items: baseline; gap: 3px;"><span>Tire Tread</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.tread}}</span><span>32nds</span></div>
+                  <div style="display: flex; align-items: baseline; gap: 3px;"><span>Wear Pattern</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.wear}}</span></div>
+                  <div style="text-align: center; font-size: 8.5px;">Tire Pressure PSI</div>
+                  <div style="display: flex; align-items: baseline; gap: 4px; font-size: 8.5px;">
+                    <span>Before</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.psiBefore}}</span>
+                    <span>After</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.psiAfter}}</span>
+                  </div>
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-top: 4px; justify-content: {{w.justify}};">
+                <div style="display: flex; gap: 2px;">
+                  <div onClick="{{w.rotorPickOk}}" style="{{w.rotorOkStyle}}"></div>
+                  <div onClick="{{w.rotorPickFuture}}" style="{{w.rotorFutureStyle}}"></div>
+                  <div onClick="{{w.rotorPickImmediate}}" style="{{w.rotorImmediateStyle}}"></div>
+                </div>
+                <span style="font-size: 9px; font-weight: 700; color: #0f172a;">Rotor / Drum</span>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; padding: 5px 8px; border-bottom: 1px solid #cbd5e1; border-top: 1px solid #cbd5e1;">
+        <div onClick="{{alignment.pick}}" style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+          <div style="{{alignment.boxStyle}}">{{alignment.mark}}</div>
+          <span style="font-size: 9.5px; font-weight: 700; color: #0f172a;">Alignment Check Needed</span>
+        </div>
+        <div onClick="{{balance.pick}}" style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+          <div style="{{balance.boxStyle}}">{{balance.mark}}</div>
+          <span style="font-size: 9.5px; font-weight: 700; color: #0f172a;">Wheel Balance Needed</span>
+        </div>
+      </div>
+
+      <div onClick="{{notPerformed.pick}}" style="display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid #cbd5e1; cursor: pointer;">
+        <div style="{{notPerformed.boxStyle}}">{{notPerformed.mark}}</div>
+        <span style="font-size: 9.5px; font-weight: 700; color: #0f172a;">Brake Inspection Not Performed This Visit</span>
+      </div>
+
+      <!-- Prior body damage -->
+      <div style="background: #0f172a; color: #ffffff; text-align: center; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: 0.06em;">PRIOR BODY DAMAGE</div>
+      <div style="padding: 8px; background: #f1f5f9;">
+        <img src="body-damage.png" alt="Vehicle outline — mark prior damage" style="width: 100%; height: auto; display: block;">
+        <div style="display: flex; gap: 8px; margin-top: 8px;">
+          <sc-for list="{{damageChoices}}" as="c" hint-placeholder-count="2">
+            <div onClick="{{c.pick}}" style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+              <div style="{{c.boxStyle}}">{{c.mark}}</div>
+              <span style="font-size: 9.5px; font-weight: 700; color: #0f172a;">{{c.label}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+      <div style="display: flex; gap: 14px; padding: 10px 8px 6px 8px;">
+        <div style="flex-grow: 1;">
+          <div style="border-bottom: 1px solid #0f172a; height: 20px;"></div>
+          <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-top: 2px;">X&nbsp;&nbsp;ADVISOR</div>
+        </div>
+        <div style="flex-grow: 1;">
+          <div style="border-bottom: 1px solid #0f172a; height: 20px;"></div>
+          <div style="font-size: 8.5px; font-weight: 700; color: #0f172a; margin-top: 2px;">X&nbsp;&nbsp;CUSTOMER ACKNOWLEDGEMENT</div>
+        </div>
+      </div>
+
+      <!-- Comments -->
+      <div style="background: #0f172a; color: #ffffff; text-align: center; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: 0.06em;">COMMENTS / ESTIMATES</div>
+      <div style="padding: 6px 8px 10px 8px;">
+        <div class="rule"></div><div class="rule"></div><div class="rule"></div>
+        <div class="rule"></div><div class="rule"></div><div class="rule"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Legend footer: colour is never the only signal -->
+  <div style="border-top: 2px solid #0f172a; padding: 9px 18px; display: flex; gap: 18px; flex-wrap: wrap; align-items: center; background: #f8fafc;">
+    <span style="font-size: 9.5px; font-weight: 800; color: #0f172a; letter-spacing: 0.05em;">RESULT KEY</span>
+    <sc-for list="{{legend}}" as="l" hint-placeholder-count="5">
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <div style="{{l.swatch}}">{{l.glyph}}</div>
+        <span style="font-size: 9.5px; color: #334155;">{{l.text}}</span>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{
+  "customer": {"editor": "text", "default": "Sample Customer"},
+  "tech": {"editor": "text", "default": "A. Technician"},
+  "date": {"editor": "text", "default": "21 Aug 2026"},
+  "vehicle": {"editor": "text", "default": "2019 Toyota Corolla"},
+  "plate": {"editor": "text", "default": "SAMPLE-01"},
+  "mileage": {"editor": "text", "default": "84,120 KM"},
+  "repairOrder": {"editor": "text", "default": "SO-004821"},
+  "vin": {"editor": "text", "default": "JTDBR32E1B0000000"},
+  "factoryCca": {"editor": "text", "default": "550"},
+  "actualCca": {"editor": "text", "default": "512"},
+  "$preview": {"width": 1048, "height": 1560}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    // Nothing starts green. An untouched item is NOT_INSPECTED and must read as
+    // such — a pre-ticked "Checked and Okay" is a claim nobody made.
+    this.state = {
+      results: {},
+      battery: null,
+      alignment: false,
+      balance: false,
+      notPerformed: false,
+      damage: null,
+      wheels: {},
+    };
+  }
+
+  // ---- checkbox rendering ------------------------------------------------
+  cellBase(border, fill, on) {
+    return 'width: 15px; height: 15px; border: 2px solid ' + border +
+      '; background: ' + (on ? fill : '#ffffff') +
+      '; cursor: pointer; display: flex; align-items: center; justify-content: center;' +
+      ' font-size: 10px; font-weight: 900; line-height: 1; color: ' + (on ? '#ffffff' : 'transparent') + ';';
+  }
+
+  resultCell(key, value, current) {
+    const on = current === value;
+    const palette = {
+      OK: ['#00a651', '#00a651'],
+      FUTURE: ['#ffd400', '#ffd400'],
+      IMMEDIATE: ['#e02020', '#e02020'],
+      NOT_APPLICABLE: ['#94a3b8', '#64748b'],
+    }[value];
+    const mark = value === 'FUTURE' ? '✓' : value === 'NOT_APPLICABLE' ? 'N' : '✓';
+    return {
+      style: this.cellBase(palette[0], palette[1], on) + (value === 'FUTURE' && on ? ' color: #0f172a;' : ''),
+      mark: on ? mark : '',
+      pick: () => {
+        const next = { ...this.state.results };
+        // Clicking the selected result clears it back to Not Inspected, so a
+        // mis-tap does not leave a finding nobody meant to record.
+        if (next[key] === value) delete next[key]; else next[key] = value;
+        this.setState({ results: next });
+      },
+    };
+  }
+
+  buildItem(sectionKey, label, i) {
+    const key = sectionKey + '-' + i;
+    const cur = this.state.results[key];
+    const ok = this.resultCell(key, 'OK', cur);
+    const fu = this.resultCell(key, 'FUTURE', cur);
+    const im = this.resultCell(key, 'IMMEDIATE', cur);
+    const na = this.resultCell(key, 'NOT_APPLICABLE', cur);
+    return {
+      label,
+      okStyle: ok.style, okMark: ok.mark, pickOk: ok.pick,
+      futureStyle: fu.style, futureMark: fu.mark, pickFuture: fu.pick,
+      immediateStyle: im.style, immediateMark: im.mark, pickImmediate: im.pick,
+      naStyle: na.style, naMark: na.mark, pickNa: na.pick,
+    };
+  }
+
+  tick(flag, label) {
+    const on = this.state[flag];
+    return {
+      label,
+      mark: on ? '✓' : '',
+      boxStyle: 'width: 14px; height: 14px; border: 2px solid #0f172a; background: #ffffff;' +
+        ' display: flex; align-items: center; justify-content: center; font-size: 10px;' +
+        ' font-weight: 900; line-height: 1; color: ' + (on ? '#0f172a' : 'transparent') + ';',
+      pick: () => this.setState({ [flag]: !this.state[flag] }),
+    };
+  }
+
+  renderVals() {
+    const LEFT = [
+      { key: 'ie', title: 'INTERIOR/EXTERIOR', items: [
+        'Head Lights / Tail Lights / Turn Signals / Brake Lights / Hazard Warning Lights / Exterior Lamps / License Plate Lights',
+        'Windshield Washer Spray / Wiper Operation / Wiper Blades',
+        'Windshield Condition (Inspect for Cracks, Chips, or Pitting)',
+        'Mirrors / Glass',
+        'Emergency Brake Adjustment',
+        'Horn Operation',
+        'Fuel Tank Cap Gasket',
+        'Air Conditioning Filter (if equipped)',
+        'Clutch Operation (if equipped)',
+        'Back-up Lights Left / Right',
+        'Dash Warning Lights',
+        'Carpet / Upholstery / Floor Mats',
+      ] },
+      { key: 'uv', title: 'UNDER VEHICLE', items: [
+        'Shock Absorbers / Suspension / Struts',
+        'Steering Gear Box / Linkage and Boots / Ball Joints / Dust Covers',
+        'Muffler / Exhaust Pipes / Mountings / Catalytic Converter',
+        'Engine Oil and/or Fluid Leaks',
+        'Brake Lines / Hoses / Parking Brake Cable',
+        'Drive Shaft Boots / Constant Velocity Boots / U-joints / Transmission Linkage (if equipped)',
+        'Transmission / Differential / Transfer Case (Check Fluid Level, Fluid Condition and Fluid Leaks)',
+        'Fuel Lines and Connections / Fuel Tank Band / Fuel Tank Vapor Vent Systems Hoses',
+        'Inspect Nuts and Bolts on Body Chassis',
+      ] },
+      { key: 'uh', title: 'UNDER HOOD', items: [
+        'Fluid Levels: Oil / Coolant / Battery / Power Steering / Brake Fluid / Washer / Automatic Transmission',
+        'Engine Air Filter',
+        'Drive Belts (condition and adjustment)',
+        'Cooling System Hoses / Heater Hoses / Air Conditioning Hoses and Connections',
+        'Radiator Core / Air Conditioning Condenser (if equipped)',
+        'Coolant Recovery Reservoir Fluid Level / Condition',
+        'Clutch Reservoir Fluid / Condition (as equipped)',
+      ] },
+    ];
+
+    const leftSections = LEFT.map((s) => ({
+      title: s.title,
+      items: s.items.map((label, i) => this.buildItem(s.key, label, i)),
+    }));
+
+    const batteryItems = [
+      'Battery Terminals / Cables / Mountings',
+      'Check Condition of Battery (Storage Capacity Test)',
+    ].map((label, i) => this.buildItem('bat', label, i));
+
+    const batteryResults = [
+      ['PASS', 'Pass', '#00a651'],
+      ['RECHARGE_RETEST', 'Recharge Retest', '#ffd400'],
+      ['FAIL', 'Fail', '#e02020'],
+    ].map(([value, label, colour]) => {
+      const on = this.state.battery === value;
+      return {
+        label,
+        mark: on ? '✓' : '',
+        boxStyle: 'width: 15px; height: 15px; border: 2px solid ' + colour +
+          '; background: ' + (on ? colour : '#ffffff') + '; display: flex; align-items: center;' +
+          ' justify-content: center; font-size: 10px; font-weight: 900; line-height: 1; color: ' +
+          (on ? (value === 'RECHARGE_RETEST' ? '#0f172a' : '#ffffff') : 'transparent') + ';',
+        pick: () => this.setState({ battery: this.state.battery === value ? null : value }),
+      };
+    });
+
+    // Four wheel cards, laid out as on the paper form: fronts on top, rears
+    // below, with the rear labels right-aligned on the right-hand cards.
+    const WHEELS = [
+      ['LF', 'Left Front', 'left', 'flex-start'],
+      ['RF', 'Right Front', 'right', 'flex-end'],
+      ['LR', 'Left Rear', 'left', 'flex-start'],
+      ['RR', 'Right Rear', 'right', 'flex-end'],
+    ];
+    const sample = {
+      LF: ['8.5', '7', 'Even', '32', '34'],
+      RF: ['8.0', '7', 'Even', '32', '34'],
+      LR: ['6.5', '5', 'Outer', '30', '33'],
+      RR: ['6.5', '6', 'Even', '30', '33'],
+    };
+    const wheels = WHEELS.map(([code, title, align, justify], idx) => {
+      const dots = [0, 1, 2].map((row) => {
+        const key = 'wheel-' + code + '-' + row;
+        const cur = this.state.results[key];
+        const ok = this.resultCell(key, 'OK', cur);
+        const fu = this.resultCell(key, 'FUTURE', cur);
+        const im = this.resultCell(key, 'IMMEDIATE', cur);
+        return {
+          okStyle: ok.style.replace('15px', '11px').replace('15px', '11px'),
+          pickOk: ok.pick,
+          futureStyle: fu.style.replace('15px', '11px').replace('15px', '11px'),
+          pickFuture: fu.pick,
+          immediateStyle: im.style.replace('15px', '11px').replace('15px', '11px'),
+          pickImmediate: im.pick,
+        };
+      });
+      const rotorKey = 'rotor-' + code;
+      const rc = this.state.results[rotorKey];
+      const rok = this.resultCell(rotorKey, 'OK', rc);
+      const rfu = this.resultCell(rotorKey, 'FUTURE', rc);
+      const rim = this.resultCell(rotorKey, 'IMMEDIATE', rc);
+      const s = sample[code];
+      return {
+        title, align, justify,
+        cellStyle: 'padding: 6px 8px; border-bottom: 1px solid #cbd5e1;' +
+          (idx % 2 === 0 ? ' border-right: 1px solid #cbd5e1;' : ''),
+        dots,
+        lining: s[0], tread: s[1], wear: s[2], psiBefore: s[3], psiAfter: s[4],
+        rotorOkStyle: rok.style.replace('15px', '11px').replace('15px', '11px'),
+        rotorPickOk: rok.pick,
+        rotorFutureStyle: rfu.style.replace('15px', '11px').replace('15px', '11px'),
+        rotorPickFuture: rfu.pick,
+        rotorImmediateStyle: rim.style.replace('15px', '11px').replace('15px', '11px'),
+        rotorPickImmediate: rim.pick,
+      };
+    });
+
+    const damageChoices = ['No prior damage observed', 'Prior damage observed'].map((label, i) => {
+      const on = this.state.damage === i;
+      return {
+        label,
+        mark: on ? '✓' : '',
+        boxStyle: 'width: 14px; height: 14px; border: 2px solid #0f172a; background: #ffffff;' +
+          ' display: flex; align-items: center; justify-content: center; font-size: 10px;' +
+          ' font-weight: 900; line-height: 1; color: ' + (on ? '#0f172a' : 'transparent') + ';',
+        pick: () => this.setState({ damage: this.state.damage === i ? null : i }),
+      };
+    });
+
+    const vinText = (this.props.vin ?? '').toUpperCase();
+    const vinCells = Array.from({ length: 17 }, (_, i) => ({
+      ch: vinText[i] ?? '',
+      bg: i >= 11 ? '#e2e8f0' : '#ffffff',
+    }));
+
+    const swatch = (bg, border, colour) =>
+      'width: 15px; height: 15px; border: 2px solid ' + border + '; background: ' + bg +
+      '; display: flex; align-items: center; justify-content: center; font-size: 9px;' +
+      ' font-weight: 900; line-height: 1; color: ' + colour + ';';
+
+    const legend = [
+      { swatch: swatch('#00a651', '#00a651', '#ffffff'), glyph: 'O', text: 'Checked and Okay' },
+      { swatch: swatch('#ffd400', '#ffd400', '#0f172a'), glyph: 'F', text: 'May Need Future Attention' },
+      { swatch: swatch('#e02020', '#e02020', '#ffffff'), glyph: 'I', text: 'Requires Immediate Attention' },
+      { swatch: swatch('#e2e8f0', '#94a3b8', '#334155'), glyph: 'N', text: 'Not Applicable' },
+      { swatch: swatch('#ffffff', '#94a3b8', '#334155'), glyph: '—', text: 'Not Inspected' },
+    ];
+
+    return {
+      customer: this.props.customer ?? 'Sample Customer',
+      tech: this.props.tech ?? 'A. Technician',
+      date: this.props.date ?? '21 Aug 2026',
+      vehicle: this.props.vehicle ?? '2019 Toyota Corolla',
+      plate: this.props.plate ?? 'SAMPLE-01',
+      mileage: this.props.mileage ?? '84,120 KM',
+      repairOrder: this.props.repairOrder ?? 'SO-004821',
+      factoryCca: this.props.factoryCca ?? '550',
+      actualCca: this.props.actualCca ?? '512',
+      vinCells,
+      leftSections,
+      batteryItems,
+      batteryResults,
+      wheels,
+      damageChoices,
+      legend,
+      alignment: this.tick('alignment', 'Alignment Check Needed'),
+      balance: this.tick('balance', 'Wheel Balance Needed'),
+      notPerformed: this.tick('notPerformed', 'Brake Inspection Not Performed This Visit'),
+    };
+  }
+}
+</script>
+</body>
+</html>
