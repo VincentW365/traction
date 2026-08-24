@@ -103,7 +103,27 @@ if (dbOk) {
   await tableCheck('sites', 'sites', 1, 'seed has not run');
   await tableCheck('service types', 'service_types', 1, 'seed has not run');
   await tableCheck('active KPI policy', 'kpi_policies', 1, 'seed has not run');
-  await tableCheck('inspection templates', 'inspection_templates', 1, 'seed has not run');
+  // Counted per KIND, not as one row total: the vehicle checklist and the photo-first
+  // pre-inspection are separate templates, and "there is a template" has already
+  // shipped a deploy where New Pre-Inspection failed while this check stayed green.
+  try {
+    const [{ vi }] = await prisma.$queryRawUnsafe(
+      `SELECT count(*)::int AS vi FROM inspection_templates WHERE is_active AND kind = 'VEHICLE_INSPECTION'`,
+    );
+    const [{ pre }] = await prisma.$queryRawUnsafe(
+      `SELECT count(*)::int AS pre FROM inspection_templates WHERE is_active AND kind = 'PRE_INSPECTION'`,
+    );
+    check('vehicle inspection template', vi >= 1, vi >= 1 ? `${vi} active` : 'missing — run pnpm db:seed');
+    check('pre-inspection template', pre >= 1, pre >= 1 ? `${pre} active` : 'missing — run pnpm db:seed');
+    const [{ items }] = await prisma.$queryRawUnsafe(
+      `SELECT count(*)::int AS items FROM inspection_template_items iti
+       JOIN inspection_templates it ON it.id = iti.template_id
+       WHERE it.is_active AND it.kind = 'VEHICLE_INSPECTION'`,
+    );
+    check('inspection checklist items', items >= 1, `${items} item(s)${items >= 1 ? '' : ' — seed has not run'}`);
+  } catch {
+    check('inspection templates', false, 'table missing — run pnpm db:migrate');
+  }
   await tableCheck('user accounts', 'user_accounts', 1, 'seed has not run');
 
   console.log('\nOperational data (produced by the controlled customer import, never by seed):');

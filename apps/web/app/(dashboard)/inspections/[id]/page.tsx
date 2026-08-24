@@ -69,7 +69,7 @@ interface Inspection {
   createdAt: string;
   customer: { firstName: string; lastName: string; phone: string | null } | null;
   vehicle: { plateNumber: string; make: string | null; model: string | null; modelYear: number | null } | null;
-  serviceVisit: { id: string; status: string } | null;
+  serviceVisit: { id: string; status: string; mileageIn: number | null } | null;
   items: Item[];
   wheelMeasurements: Wheel[];
   signatures: Array<{ id: string; role: string; typedName: string | null; signedAt: string }>;
@@ -741,24 +741,42 @@ function WheelCard({
   onChange: (patch: Partial<Wheel>) => void;
 }) {
   const num = (v: string) => (v === '' ? null : Number(v));
-  const line = 'flex-grow border-0 border-b border-slate-400 text-[10px] text-center h-4 bg-transparent focus:outline-none focus:border-slate-900';
+  // Every measurement row is the same three-column grid — label, input, unit — so
+  // the underlines align down the card. `min-w-0 w-full` matters: a number input's
+  // intrinsic minimum width is what pushed these fields off the page.
+  const row = 'grid grid-cols-[58px_minmax(0,1fr)_30px] items-baseline gap-1';
+  const line =
+    'w-full min-w-0 border-0 border-b border-slate-400 text-[10px] text-center h-4 bg-transparent focus:outline-none focus:border-slate-900 disabled:opacity-100';
   return (
-    <div className={`px-2.5 py-2 border-b border-slate-300 ${bordered ? 'sm:border-r' : ''}`}>
+    <div className={`px-2.5 py-2 border-b border-slate-300 min-w-0 ${bordered ? 'sm:border-r' : ''}`}>
       <div className="text-[9.5px] font-extrabold text-slate-900 mb-1">{WHEEL_LABEL[position]}</div>
       <div className="flex flex-col gap-1 text-[9px] text-slate-900">
-        <label className="flex items-baseline gap-1">Brake Lining
-          <input type="number" step="0.5" disabled={!editable} value={wheel.brakeLiningMm ?? ''} onChange={(e) => onChange({ brakeLiningMm: num(e.target.value) })} className={line} />mm
+        <label className={row}>
+          <span>Brake Lining</span>
+          <input type="number" step="0.5" disabled={!editable} value={wheel.brakeLiningMm ?? ''}
+            onChange={(e) => onChange({ brakeLiningMm: num(e.target.value) })} className={line} />
+          <span>mm</span>
         </label>
-        <label className="flex items-baseline gap-1">Tire Tread
-          <input type="number" disabled={!editable} value={wheel.tireTread32nds ?? ''} onChange={(e) => onChange({ tireTread32nds: num(e.target.value) })} className={line} />32nds
+        <label className={row}>
+          <span>Tire Tread</span>
+          <input type="number" disabled={!editable} value={wheel.tireTread32nds ?? ''}
+            onChange={(e) => onChange({ tireTread32nds: num(e.target.value) })} className={line} />
+          <span>32nds</span>
         </label>
-        <label className="flex items-baseline gap-1">Wear Pattern
-          <input disabled={!editable} value={wheel.wearPattern ?? ''} onChange={(e) => onChange({ wearPattern: e.target.value })} className={line} />
+        <label className={row}>
+          <span>Wear Pattern</span>
+          <input disabled={!editable} value={wheel.wearPattern ?? ''}
+            onChange={(e) => onChange({ wearPattern: e.target.value })} className={line} />
+          <span />
         </label>
-        <div className="text-center text-[8.5px]">Tire Pressure PSI</div>
-        <div className="flex items-baseline gap-1 text-[8.5px]">
-          Before<input type="number" disabled={!editable} value={wheel.tirePressureBeforePsi ?? ''} onChange={(e) => onChange({ tirePressureBeforePsi: num(e.target.value) })} className={line} />
-          After<input type="number" disabled={!editable} value={wheel.tirePressureAfterPsi ?? ''} onChange={(e) => onChange({ tirePressureAfterPsi: num(e.target.value) })} className={line} />
+        <div className="text-center text-[8.5px] font-bold mt-0.5">Tire Pressure PSI</div>
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)] items-baseline gap-1 text-[8.5px]">
+          <span>Before</span>
+          <input type="number" disabled={!editable} value={wheel.tirePressureBeforePsi ?? ''}
+            onChange={(e) => onChange({ tirePressureBeforePsi: num(e.target.value) })} className={line} />
+          <span>After</span>
+          <input type="number" disabled={!editable} value={wheel.tirePressureAfterPsi ?? ''}
+            onChange={(e) => onChange({ tirePressureAfterPsi: num(e.target.value) })} className={line} />
         </div>
         <div className="flex items-center gap-2 mt-0.5">
           {(['ROTOR', 'DRUM'] as const).map((rd) => (
@@ -1037,7 +1055,9 @@ function PreInspectionInner({ inspection }: { inspection: Inspection }) {
     itemsLeftInside: inspection.itemsLeftInside ?? '',
     warningLights: inspection.warningLights ?? '',
     fuelLevelNote: inspection.fuelLevelNote ?? '',
-    odometerReading: inspection.odometerReading,
+    // Pre-filled from the mileage the desk captured at check-in; the record's own
+    // saved reading always wins, and the field stays editable either way.
+    odometerReading: inspection.odometerReading ?? inspection.serviceVisit?.mileageIn ?? null,
   });
   const [dirty, setDirty] = useState(false);
   const [noPhotoDialog, setNoPhotoDialog] = useState(false);

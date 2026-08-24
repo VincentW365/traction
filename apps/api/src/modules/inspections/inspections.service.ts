@@ -32,7 +32,9 @@ const DETAIL_INCLUDE = {
   photos: { orderBy: { createdAt: 'asc' as const } },
   customer: { select: { id: true, firstName: true, lastName: true, phone: true } },
   vehicle: { select: { id: true, plateNumber: true, make: true, model: true, modelYear: true } },
-  serviceVisit: { select: { id: true, status: true } },
+  // mileageIn feeds the pre-inspection's odometer prefill — captured at check-in,
+  // so nobody retypes a number the desk already recorded.
+  serviceVisit: { select: { id: true, status: true, mileageIn: true } },
 } satisfies Prisma.VehicleInspectionInclude;
 
 /**
