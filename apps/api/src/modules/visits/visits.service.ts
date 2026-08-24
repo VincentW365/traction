@@ -248,6 +248,16 @@ export class VisitsService {
         : Promise.resolve([]),
     ]);
 
+    // CR-2026-098 — pause/waiting intervals with their measured durations. This is
+    // where "how long did that car sit waiting on parts" survives historically.
+    const pauseRows = orderIds.length
+      ? await this.prisma.serviceOrderPause.findMany({
+          where: { serviceOrderId: { in: orderIds } },
+          orderBy: { startedAt: 'asc' },
+          take: 100,
+        })
+      : [];
+
     const events: TimelineEvent[] = [];
     const push = (at: Date | null | undefined, type: string, label: string, actor?: string | null, detail?: string | null) => {
       if (at) events.push({ at, type, label, actor: actor ?? null, detail: detail ?? null });
@@ -283,6 +293,26 @@ export class VisitsService {
       const where = a.resource?.name ?? a.resource?.code ?? a.bay?.code;
       push(a.assignedAt, 'TECH_ASSIGNED', `Technician assigned: ${tech}${where ? ` (${where})` : ''}${a.isPrimary ? '' : ' (assist)'}`);
       push(a.endedAt, 'TECH_ENDED', `Assignment ended: ${tech}`);
+    }
+
+    // Pause / waiting intervals (reason + measured duration)
+    const PAUSE_LABELS: Record<string, string> = {
+      WAITING_PARTS: 'Waiting for parts',
+      WAITING_TECH: 'Waiting for technician assistance',
+      WAITING_BAY: 'Waiting for bay / equipment',
+      CUSTOMER_AUTHORIZATION: 'Waiting for authorization',
+      FURTHER_DIAGNOSIS: 'Needs further diagnosis',
+      EXTERNAL_MACHINE_SHOP: 'At external machine shop',
+      BREAK_OR_END_OF_DAY: 'Break / end of day',
+      OTHER: 'Paused — other',
+    };
+    for (const p of pauseRows) {
+      const label = PAUSE_LABELS[p.reasonCode] ?? p.reasonCode;
+      push(p.startedAt, `PAUSE_${p.reasonCode}`, `Work stopped: ${label}`, null, p.notes);
+      if (p.endedAt) {
+        const min = Math.round((p.endedAt.getTime() - p.startedAt.getTime()) / 60000);
+        push(p.endedAt, 'PAUSE_ENDED', `Work resumed after ${min} min (${label.toLowerCase()})`);
+      }
     }
 
     // Inspections

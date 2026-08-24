@@ -19,6 +19,11 @@ function buildService() {
       findUnique: vi.fn(async () => ({ id: 'qt-1', displayStatus: 'WAITING' })),
       update: vi.fn(async () => ({})),
     },
+    // CR-2026-098 — waiting states open/close measured intervals in the ledger.
+    serviceOrderPause: {
+      create: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 0 })),
+    },
   };
   prisma.$transaction = vi.fn(async (cb: any) => cb(prisma));
 

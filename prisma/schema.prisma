@@ -83,13 +83,19 @@ enum ServiceOrderStatus {
   CANCELLED
 }
 
-// Reasons a job is paused. NOTE: WAITING_PARTS / WAITING_CUSTOMER are deliberately
-// NOT pause reasons — they remain first-class ServiceOrderStatus states because
-// parts-blocking carries distinct scheduling-eligibility semantics (CR-2026-001).
+// Reasons work stopped. WAITING_PARTS / WAITING_CUSTOMER remain first-class
+// ServiceOrderStatus states (parts-blocking carries scheduling-eligibility
+// semantics, CR-2026-001) — but CR-2026-098 records their INTERVALS in the same
+// append-only pause ledger so every delay has a start, an end, a duration, and
+// an actor. A technician choosing "Waiting for parts" in the pause menu lands
+// the order in the WAITING_PARTS status with a WAITING_PARTS ledger row — one
+// gesture, the correct state underneath.
 enum PauseReason {
+  WAITING_PARTS
   WAITING_TECH
   WAITING_BAY
   CUSTOMER_AUTHORIZATION
+  FURTHER_DIAGNOSIS
   EXTERNAL_MACHINE_SHOP
   BREAK_OR_END_OF_DAY
   OTHER

@@ -137,7 +137,7 @@ const ORDER_ACTIONS: Record<string, Array<{ label: string; toStatus: string; sty
   // the check is the one at the QC stage, which used to say "Ready to Invoice".
   IN_PROGRESS: [
     { label: 'Mark Work Complete', toStatus: 'QC', style: 'btn-primary' },
-    { label: 'Wait Parts', toStatus: 'WAITING_PARTS', style: 'btn-secondary' },
+    { label: 'Waiting for Parts', toStatus: 'WAITING_PARTS', style: 'btn-secondary' },
     { label: 'Wait Customer', toStatus: 'WAITING_CUSTOMER', style: 'btn-secondary' },
   ],
   WAITING_PARTS: [{ label: 'Resume Work', toStatus: 'IN_PROGRESS', style: 'btn-success' }],

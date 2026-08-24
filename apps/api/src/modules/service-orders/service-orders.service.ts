@@ -901,6 +901,44 @@ export class ServiceOrdersService {
         endReason: 'JOB_CANCELLED',
         actorUserId: userId,
       });
+      // CR-2026-098 — an open pause/waiting interval on a cancelled job must also
+      // close, or its "paused time" keeps growing forever against a job nobody is
+      // doing (the same failure mode the labour clock had).
+      await this.prisma.serviceOrderPause.updateMany({
+        where: { serviceOrderId: id, endedAt: null },
+        data: { endedAt: new Date(), resumedByUserId: userId },
+      });
+    }
+
+    // CR-2026-098 — WAITING_PARTS / WAITING_CUSTOMER are measured delays, not just
+    // states: entering one opens an interval in the pause ledger (and stops the
+    // labour clock); leaving one closes it (and restarts labour for everyone still
+    // assigned). This is what the Waiting-for-Parts metric and every duration
+    // calculation read from — the operational state itself, not an approximation.
+    if (toStatus === 'WAITING_PARTS' || toStatus === 'WAITING_CUSTOMER') {
+      await this.prisma.serviceOrderPause.create({
+        data: {
+          serviceOrderId: id,
+          reasonCode: toStatus === 'WAITING_PARTS' ? 'WAITING_PARTS' : 'CUSTOMER_AUTHORIZATION',
+          pausedByUserId: userId,
+          notes: dto.notes,
+        },
+      });
+      await this.segments.endAllForOrder({
+        serviceOrderId: id,
+        endReason: 'PAUSED',
+        actorUserId: userId,
+      });
+    }
+    if (
+      (fromStatus === 'WAITING_PARTS' || fromStatus === 'WAITING_CUSTOMER') &&
+      toStatus === 'IN_PROGRESS'
+    ) {
+      await this.prisma.serviceOrderPause.updateMany({
+        where: { serviceOrderId: id, endedAt: null },
+        data: { endedAt: new Date(), resumedByUserId: userId },
+      });
+      await this.segments.resumeForOrder({ serviceOrderId: id, actorUserId: userId });
     }
 
     // Record status history
@@ -967,6 +1005,18 @@ export class ServiceOrdersService {
   // ---------------------------------------------------------------------------
 
   async pause(id: string, dto: PauseServiceOrderDto, userId: string) {
+    // CR-2026-098 — "Waiting for parts" in the pause menu IS the WAITING_PARTS
+    // state. One gesture for the technician; the correct first-class status (with
+    // its scheduling semantics, visit/queue sync, and measured interval) underneath.
+    // Never PAUSED-with-a-reason, which the parts views would not see.
+    if (dto.reasonCode === 'WAITING_PARTS') {
+      return this.changeStatus(
+        id,
+        { toStatus: 'WAITING_PARTS', reasonCode: 'WAITING_PARTS', notes: dto.notes },
+        userId,
+      );
+    }
+
     const order = await this.findById(id);
     if (!(VALID_TRANSITIONS[order.status] ?? []).includes('PAUSED' as ServiceOrderStatus)) {
       throw new BadRequestException(
@@ -1017,6 +1067,18 @@ export class ServiceOrdersService {
 
   async resume(id: string, dto: ResumeServiceOrderDto, userId: string) {
     const order = await this.findById(id);
+
+    // CR-2026-098 — one Resume gesture regardless of how work stopped. A job
+    // waiting on parts or on the customer resumes through the status machine,
+    // which closes the measured interval and restarts the labour clock.
+    if (order.status === 'WAITING_PARTS' || order.status === 'WAITING_CUSTOMER') {
+      return this.changeStatus(
+        id,
+        { toStatus: 'IN_PROGRESS', reasonCode: 'RESUME', notes: dto.notes },
+        userId,
+      );
+    }
+
     if (order.status !== 'PAUSED') {
       throw new BadRequestException(
         `Cannot resume a service order in status ${order.status} — must be PAUSED`,
@@ -1379,14 +1441,26 @@ export class ServiceOrdersService {
 
     const pauses = await this.prisma.serviceOrderPause.findMany({
       where: { serviceOrderId: orderId },
-      select: { startedAt: true, endedAt: true },
+      select: { startedAt: true, endedAt: true, reasonCode: true, notes: true },
     });
 
     let pausedMs = 0;
     let openPauseStartedAt: Date | null = null;
+    let openPauseReason: string | null = null;
+    let openPauseNotes: string | null = null;
+    // CR-2026-098 — parts delays broken out so the UI and metrics can show
+    // "waiting on parts" distinctly from ordinary pauses.
+    let waitingPartsMs = 0;
     for (const p of pauses) {
-      if (p.endedAt) pausedMs += p.endedAt.getTime() - p.startedAt.getTime();
-      else openPauseStartedAt = p.startedAt;
+      if (p.endedAt) {
+        const ms = p.endedAt.getTime() - p.startedAt.getTime();
+        pausedMs += ms;
+        if (p.reasonCode === 'WAITING_PARTS') waitingPartsMs += ms;
+      } else {
+        openPauseStartedAt = p.startedAt;
+        openPauseReason = p.reasonCode;
+        openPauseNotes = p.notes;
+      }
     }
 
     return {
@@ -1394,7 +1468,10 @@ export class ServiceOrdersService {
       completedAt: order.completedAt,
       status: order.status,
       pausedMs,
+      waitingPartsMs,
       openPauseStartedAt,
+      openPauseReason,
+      openPauseNotes,
     };
   }
 

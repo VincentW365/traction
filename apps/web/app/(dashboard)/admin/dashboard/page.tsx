@@ -15,8 +15,9 @@ interface DashboardStats {
   queueDepth: number;
   avgWaitMinutes: number;
   overridesToday: number;
-  blockedOrders: number;
-  partsPending: number;
+  // CR-2026-098 — counted from the operational states themselves.
+  waitingParts: number;
+  pausedJobs: number;
 }
 
 interface DashboardAlert {
@@ -82,8 +83,8 @@ export default function ManagerDashboardPage() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
             <StatCard value={`${stats.avgWaitMinutes}m`} label="Avg Wait" color={stats.avgWaitMinutes > 45 ? 'red' : 'slate'} />
             <StatCard value={stats.overridesToday} label="Overrides Today" color={stats.overridesToday > 0 ? 'amber' : 'slate'} />
-            <StatCard value={stats.blockedOrders} label="Blocked Orders" color={stats.blockedOrders > 0 ? 'red' : 'slate'} />
-            <StatCard value={stats.partsPending} label="Parts Pending" color={stats.partsPending > 0 ? 'amber' : 'slate'} />
+            <StatCard value={stats.waitingParts} label="Waiting for Parts" color={stats.waitingParts > 0 ? 'red' : 'slate'} />
+            <StatCard value={stats.pausedJobs} label="Paused Jobs" color={stats.pausedJobs > 0 ? 'amber' : 'slate'} />
           </div>
         </>
       )}

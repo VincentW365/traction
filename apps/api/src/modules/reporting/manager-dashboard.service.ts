@@ -9,12 +9,16 @@ export interface DashboardStats {
   queueDepth: number;
   avgWaitMinutes: number;
   overridesToday: number;
-  blockedOrders: number;
-  partsPending: number;
+  /** Orders currently in the WAITING_PARTS state (live visits) — CR-2026-098. */
+  waitingParts: number;
+  /** Orders currently PAUSED (live visits) — delayed work that is not parts. */
+  pausedJobs: number;
 }
 
+// CR-2026-098 — INTEGRATION_ERROR removed: the platform is standalone and no
+// generator ever produced that alert type.
 export interface DashboardAlert {
-  type: 'OVERDUE_JOB' | 'BLOCKED_PARTS' | 'ABSENT_TECH' | 'INTEGRATION_ERROR' | 'READY_FOR_QC';
+  type: 'OVERDUE_JOB' | 'BLOCKED_PARTS' | 'WAITING_PARTS' | 'ABSENT_TECH' | 'READY_FOR_QC';
   severity: 'warning' | 'critical';
   title: string;
   detail: string;
@@ -97,19 +101,23 @@ export class ManagerDashboardService {
       },
     });
 
-    // Blocked orders
-    const blockedOrders = await this.prisma.serviceOrder.count({
+    // CR-2026-098 — Waiting for Parts is counted from the operational state
+    // itself: orders sitting in WAITING_PARTS on live visits. (The old tile pair
+    // was "Blocked Orders" — this same query under a misleading name — plus a
+    // "Parts Pending" count of parts-request rows that no UI flow ever creates,
+    // which read as a permanently-zero metric.)
+    const waitingParts = await this.prisma.serviceOrder.count({
       where: {
         serviceVisit: { siteId, ...serviceVisitIsLive() }, // CR-2026-006: always live
         status: 'WAITING_PARTS',
       },
     });
 
-    // Parts pending
-    const partsPending = await this.prisma.partsRequest.count({
+    // Paused jobs — delayed work that is NOT parts (authorization, assistance, …).
+    const pausedJobs = await this.prisma.serviceOrder.count({
       where: {
-        serviceOrder: { serviceVisit: { siteId, ...serviceVisitIsLive() } }, // CR-2026-006: always live
-        status: { in: ['OPEN', 'RESERVING', 'PARTIAL'] },
+        serviceVisit: { siteId, ...serviceVisitIsLive() },
+        status: 'PAUSED',
       },
     });
 
@@ -120,8 +128,8 @@ export class ManagerDashboardService {
       queueDepth,
       avgWaitMinutes,
       overridesToday,
-      blockedOrders,
-      partsPending,
+      waitingParts,
+      pausedJobs,
     };
   }
 
@@ -187,6 +195,39 @@ export class ManagerDashboardService {
         type: 'READY_FOR_QC',
         severity: 'warning',
         title: `Ready for QC${sv.queueTicket?.ticketNumber ? ` — ${sv.queueTicket.ticketNumber}` : ''}`,
+        detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber}`,
+        entityId: order.id,
+        queueTicketId: sv.queueTicket?.id,
+      });
+    }
+
+    // CR-2026-098 — jobs a technician put into Waiting for Parts, with how long
+    // they have been waiting (from the open ledger interval).
+    const waitingPartsOrders = await this.prisma.serviceOrder.findMany({
+      where: {
+        serviceVisit: { siteId, ...serviceVisitIsLive() },
+        status: 'WAITING_PARTS',
+      },
+      include: {
+        pauses: { where: { endedAt: null, reasonCode: 'WAITING_PARTS' }, select: { startedAt: true } },
+        serviceVisit: {
+          select: {
+            customer: { select: { firstName: true, lastName: true } },
+            vehicle: { select: { plateNumber: true } },
+            queueTicket: { select: { id: true, ticketNumber: true } },
+          },
+        },
+      },
+      take: 10,
+    });
+    for (const order of waitingPartsOrders) {
+      const sv = order.serviceVisit;
+      const since = order.pauses[0]?.startedAt;
+      const waitMin = since ? Math.round((now.getTime() - since.getTime()) / 60000) : null;
+      alerts.push({
+        type: 'WAITING_PARTS',
+        severity: waitMin != null && waitMin > 240 ? 'critical' : 'warning',
+        title: `Waiting for parts${waitMin != null ? ` (${waitMin} min)` : ''}${sv.queueTicket?.ticketNumber ? ` — ${sv.queueTicket.ticketNumber}` : ''}`,
         detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber}`,
         entityId: order.id,
         queueTicketId: sv.queueTicket?.id,

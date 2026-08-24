@@ -65,6 +65,7 @@ export default function TechnicianWorkView() {
   const isPaused = currentJob?.orderStatus === 'PAUSED';
 
   const [pauseReason, setPauseReason] = useState<string>(PAUSE_REASONS[0].value);
+  const [pauseNotes, setPauseNotes] = useState('');
   const [showPause, setShowPause] = useState(false);
 
   const invalidateWork = () => {
@@ -79,8 +80,12 @@ export default function TechnicianWorkView() {
     onSuccess: invalidateWork,
   });
   const pauseMutation = useMutation({
-    mutationFn: () => api.post(`/service-orders/${currentJob!.orderId}/pause`, { reasonCode: pauseReason }),
-    onSuccess: () => { invalidateWork(); setShowPause(false); },
+    mutationFn: () =>
+      api.post(`/service-orders/${currentJob!.orderId}/pause`, {
+        reasonCode: pauseReason,
+        ...(pauseNotes.trim() ? { notes: pauseNotes.trim() } : {}),
+      }),
+    onSuccess: () => { invalidateWork(); setShowPause(false); setPauseNotes(''); },
   });
   const resumeMutation = useMutation({
     mutationFn: () => api.post(`/service-orders/${currentJob!.orderId}/resume`, {}),
@@ -99,7 +104,8 @@ export default function TechnicianWorkView() {
   }, []);
 
   const workTimingQuery = useQuery<{
-    startedAt: string | null; completedAt: string | null; status: string; pausedMs: number; openPauseStartedAt: string | null;
+    startedAt: string | null; completedAt: string | null; status: string; pausedMs: number;
+    waitingPartsMs: number; openPauseStartedAt: string | null; openPauseReason: string | null; openPauseNotes: string | null;
   }>({
     queryKey: ['work-timing', currentJob?.orderId],
     queryFn: () => api.get(`/service-orders/${currentJob!.orderId}/work-timing`),
@@ -216,20 +222,51 @@ export default function TechnicianWorkView() {
                 </div>
               )}
 
-              {/* Held by the front desk — the technician cannot clear these themselves. */}
+              {/* CR-2026-098 — a waiting job shows WHY, since WHEN, and how to
+                  resume the moment the blocker clears (parts arrive at the bench;
+                  the technician is the first to know). */}
               {(currentJob.orderStatus === 'WAITING_PARTS' || currentJob.orderStatus === 'WAITING_CUSTOMER') && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900 text-center">
-                  <span className="font-semibold">
-                    {currentJob.orderStatus === 'WAITING_PARTS' ? 'Waiting on parts' : 'Waiting on the customer'}
-                  </span>
-                  <p className="text-xs mt-1 text-amber-800">The front desk will release this when it is ready.</p>
+                <div className="space-y-2">
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900 text-center">
+                    <span className="font-semibold">
+                      {currentJob.orderStatus === 'WAITING_PARTS' ? 'Waiting for Parts' : 'Waiting on the Customer'}
+                    </span>
+                    {timing?.openPauseStartedAt && (
+                      <p className="text-xs mt-1 text-amber-800">
+                        Since {fmtTime(timing.openPauseStartedAt)} · {fmtClock(openPauseMs)} waiting
+                      </p>
+                    )}
+                    {timing?.openPauseNotes && <p className="text-xs mt-1 text-amber-700 italic">“{timing.openPauseNotes}”</p>}
+                  </div>
+                  {resumeMutation.isError && (
+                    <p className="text-xs text-red-600 text-center">{resumeMutation.error instanceof Error ? resumeMutation.error.message : 'Failed to resume'}</p>
+                  )}
+                  <button
+                    onClick={() => resumeMutation.mutate()}
+                    disabled={resumeMutation.isPending}
+                    className="btn-success w-full py-4 text-lg font-bold rounded-lg active:scale-[0.98] transition-transform"
+                  >
+                    {resumeMutation.isPending
+                      ? 'Resuming…'
+                      : currentJob.orderStatus === 'WAITING_PARTS'
+                        ? 'PARTS ARRIVED — RESUME'
+                        : 'RESUME WORK'}
+                  </button>
                 </div>
               )}
 
               {isPaused && (
                 <div className="space-y-2">
-                  <div className="rounded-lg bg-orange-50 border border-orange-200 px-4 py-2.5 text-sm text-orange-800 text-center font-medium">
-                    Work is paused
+                  <div className="rounded-lg bg-orange-50 border border-orange-200 px-4 py-2.5 text-sm text-orange-800 text-center">
+                    <span className="font-medium">
+                      Paused — {PAUSE_REASONS.find((r) => r.value === timing?.openPauseReason)?.label ?? 'work stopped'}
+                    </span>
+                    {timing?.openPauseStartedAt && (
+                      <p className="text-xs mt-0.5 text-orange-700">
+                        Since {fmtTime(timing.openPauseStartedAt)} · {fmtClock(openPauseMs)}
+                      </p>
+                    )}
+                    {timing?.openPauseNotes && <p className="text-xs mt-0.5 text-orange-700 italic">“{timing.openPauseNotes}”</p>}
                   </div>
                   {resumeMutation.isError && (
                     <p className="text-xs text-red-600 text-center">{resumeMutation.error instanceof Error ? resumeMutation.error.message : 'Failed to resume'}</p>
@@ -248,23 +285,34 @@ export default function TechnicianWorkView() {
                 <div className="space-y-2">
                   {showPause ? (
                     <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50 p-3">
-                      <label className="input-label">Pause reason</label>
+                      <label className="input-label">Why is work stopping?</label>
                       <select value={pauseReason} onChange={(e) => setPauseReason(e.target.value)} className="input-field">
                         {PAUSE_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                       </select>
+                      {/* CR-2026-098 — a short note, optional everywhere but expected
+                          on "Other". Nobody types an essay to take a break. */}
+                      <textarea
+                        value={pauseNotes}
+                        onChange={(e) => setPauseNotes(e.target.value)}
+                        rows={2}
+                        placeholder={pauseReason === 'OTHER' ? 'Briefly, what happened?' : 'Note (optional)'}
+                        className="input-field text-sm"
+                      />
                       {pauseMutation.isError && (
                         <p className="text-xs text-red-700">{pauseMutation.error instanceof Error ? pauseMutation.error.message : 'Failed to pause'}</p>
                       )}
                       <div className="flex gap-2">
                         <button onClick={() => pauseMutation.mutate()} disabled={pauseMutation.isPending} className="btn-primary flex-1 py-3 font-semibold rounded-lg">
-                          {pauseMutation.isPending ? 'Pausing…' : 'Confirm Pause'}
+                          {pauseMutation.isPending
+                            ? 'Stopping…'
+                            : pauseReason === 'WAITING_PARTS' ? 'Mark Waiting for Parts' : 'Confirm Pause'}
                         </button>
-                        <button onClick={() => setShowPause(false)} className="btn-secondary py-3 px-4 rounded-lg">Cancel</button>
+                        <button onClick={() => { setShowPause(false); setPauseNotes(''); }} className="btn-secondary py-3 px-4 rounded-lg">Cancel</button>
                       </div>
                     </div>
                   ) : (
                     <button onClick={() => setShowPause(true)} className="btn-secondary w-full py-3 text-base font-semibold rounded-lg">
-                      Pause Work
+                      Pause / Report a Hold-up
                     </button>
                   )}
 

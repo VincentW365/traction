@@ -128,7 +128,9 @@ describe('the labour clock follows the work', () => {
     const h = buildService();
     vi.spyOn(h.service, 'findById').mockResolvedValue(orderIn('IN_PROGRESS') as never);
 
-    await h.service.pause('so-1', { reasonCode: 'WAITING_PARTS' } as never, 'user-1');
+    // CR-2026-098 — WAITING_PARTS is no longer an ordinary pause (it routes
+    // through the status machine); an ordinary reason exercises this path.
+    await h.service.pause('so-1', { reasonCode: 'WAITING_TECH' } as never, 'user-1');
 
     expect(h.segments.endAllForOrder).toHaveBeenCalledWith(
       expect.objectContaining({ serviceOrderId: 'so-1', endReason: 'PAUSED' }),

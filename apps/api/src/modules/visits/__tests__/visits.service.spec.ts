@@ -63,6 +63,7 @@ function build(overrides?: { visit?: Record<string, unknown> }) {
       ]),
     },
     statusHistory: { findMany: vi.fn(async () => []) },
+    serviceOrderPause: { findMany: vi.fn(async () => []) }, // CR-2026-098 — measured delay intervals
     queueEvent: { findMany: vi.fn(async () => []) },
     auditLog: { findMany: vi.fn(async () => []) },
     notificationLog: { findMany: vi.fn(async () => []) },

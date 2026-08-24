@@ -28,8 +28,9 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; dot: string; lab
   IN_PROGRESS: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500', label: 'In Progress' },
   PAUSED: { bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-500', label: 'Paused' },
   QC: { bg: 'bg-indigo-50', text: 'text-indigo-700', dot: 'bg-indigo-500', label: 'QC' },
-  WAITING_PARTS: { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500', label: 'Wait Parts' },
-  WAITING_CUSTOMER: { bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-500', label: 'Wait Customer' },
+  // CR-2026-098 — one vocabulary for the same condition everywhere.
+  WAITING_PARTS: { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500', label: 'Waiting for Parts' },
+  WAITING_CUSTOMER: { bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-500', label: 'Waiting on Customer' },
   READY_FOR_PICKUP: { bg: 'bg-green-50', text: 'text-green-700', dot: 'bg-green-500', label: 'Ready' },
   READY: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500', label: 'Ready' },
   PENDING: { bg: 'bg-slate-100', text: 'text-slate-600', dot: 'bg-slate-400', label: 'Pending' },
