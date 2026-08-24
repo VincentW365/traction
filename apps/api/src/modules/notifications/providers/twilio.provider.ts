@@ -52,7 +52,9 @@ export class TwilioNotificationProvider implements NotificationProvider {
     }
 
     try {
-      const body = renderSmsBody(input.templateKey, input.templateData);
+      // CR-2026-096 — the composer pipeline pre-renders the exact text (after any
+      // staff edits); legacy flows still render from templateKey.
+      const body = input.body ?? renderSmsBody(input.templateKey, input.templateData);
       const to = toE164Jamaica(input.recipient);
       const msg = await this.client.messages.create({
         to,

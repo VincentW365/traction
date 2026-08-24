@@ -443,6 +443,34 @@ async function main() {
       `${kpi.componentsMapped} service component(s) mapped${skipped}`,
   );
 
+  // CR-2026-096 — customer notification templates. Create-if-missing ONLY: a
+  // manager's edited wording is live configuration and must survive reseeds.
+  const { DEFAULT_TEMPLATES } = await import(
+    '../apps/api/src/modules/notifications/templates/default-templates'
+  );
+  let templatesCreated = 0;
+  for (const t of DEFAULT_TEMPLATES) {
+    const exists = await prisma.notificationTemplate.findUnique({
+      where: { key: t.key },
+      select: { id: true },
+    });
+    if (exists) continue;
+    await prisma.notificationTemplate.create({
+      data: {
+        key: t.key,
+        reason: t.reason,
+        channel: t.channel,
+        name: t.name,
+        subject: t.subject ?? null,
+        body: t.body,
+      },
+    });
+    templatesCreated++;
+  }
+  console.warn(
+    `Notification templates: ${templatesCreated} created, ${DEFAULT_TEMPLATES.length - templatesCreated} already present (admin wording preserved)`,
+  );
+
   console.warn('Seed complete.');
 }
 

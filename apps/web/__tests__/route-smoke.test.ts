@@ -46,6 +46,7 @@ const ROUTE_INVENTORY = [
   { route: '/admin/service-catalogue', file: '(dashboard)/admin/service-catalogue/page.tsx', access: 'auth', description: 'Service catalogue' },
   { route: '/admin/kpi-mapping', file: '(dashboard)/admin/kpi-mapping/page.tsx', access: 'auth', description: 'KPI package-component mapping' },
   { route: '/admin/resources', file: '(dashboard)/admin/resources/page.tsx', access: 'auth', description: 'Resource configuration' },
+  { route: '/admin/notifications', file: '(dashboard)/admin/notifications/page.tsx', access: 'auth', description: 'Notification templates (CR-2026-096)' },
   { route: '/status/[token]', file: 'status/[token]/page.tsx', access: 'public', description: 'Customer status (public)' },
 ];
 
@@ -68,6 +69,7 @@ const SIDEBAR_NAV = [
   { href: '/admin/service-catalogue', file: '(dashboard)/admin/service-catalogue/page.tsx' },
   { href: '/admin/kpi-mapping', file: '(dashboard)/admin/kpi-mapping/page.tsx' },
   { href: '/admin/resources', file: '(dashboard)/admin/resources/page.tsx' },
+  { href: '/admin/notifications', file: '(dashboard)/admin/notifications/page.tsx' },
   { href: '/admin/audit-logs', file: '(dashboard)/admin/audit-logs/page.tsx' },
 ];
 

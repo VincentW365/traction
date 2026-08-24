@@ -665,7 +665,7 @@ export class MaintenanceService {
     );
 
     // Post-filter for odometer proximity
-    return recommendations.filter((rec) => {
+    const due = recommendations.filter((rec) => {
       const dateApproaching =
         rec.nextDueDate != null && rec.nextDueDate <= thresholdDate;
 
@@ -676,5 +676,56 @@ export class MaintenanceService {
 
       return dateApproaching || odometerApproaching;
     });
+
+    // CR-2026-096 — attach last-contact details so the due list can show
+    // "Last contacted: Aug 24 — SMS — Sent" and staff avoid repeat-messaging.
+    const logIds = due.map((r) => r.lastContactLogId).filter((id): id is string => !!id);
+    const logs = logIds.length
+      ? await this.prisma.notificationLog.findMany({
+          where: { id: { in: logIds } },
+          select: { id: true, channel: true, status: true, sentAt: true, createdAt: true },
+        })
+      : [];
+    const logById = new Map(logs.map((l) => [l.id, l]));
+
+    return due.map((rec) => ({
+      ...rec,
+      lastContact: rec.lastContactLogId ? (logById.get(rec.lastContactLogId) ?? null) : null,
+    }));
+  }
+
+  /**
+   * CR-2026-096 — set the follow-up outcome of a due-service customer contact.
+   * Business status only (BOOKED / DEFERRED / DO_NOT_CONTACT / reset); message
+   * delivery status lives on NotificationLog and is never set here.
+   */
+  async setContactStatus(
+    recommendationId: string,
+    contactStatus: 'NOT_CONTACTED' | 'CONTACTED' | 'BOOKED' | 'DEFERRED' | 'DO_NOT_CONTACT',
+    userId: string,
+  ) {
+    const rec = await this.prisma.maintenanceRecommendation.findUnique({
+      where: { id: recommendationId },
+      select: { id: true, contactStatus: true },
+    });
+    if (!rec) {
+      throw new NotFoundException(`Recommendation ${recommendationId} not found`);
+    }
+
+    const updated = await this.prisma.maintenanceRecommendation.update({
+      where: { id: recommendationId },
+      data: { contactStatus },
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: 'SERVICE_DUE_CONTACT_STATUS_CHANGED',
+      entityType: 'MaintenanceRecommendation',
+      entityId: recommendationId,
+      beforeJson: { contactStatus: rec.contactStatus },
+      afterJson: { contactStatus },
+    });
+
+    return { id: updated.id, contactStatus: updated.contactStatus };
   }
 }

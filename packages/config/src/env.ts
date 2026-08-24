@@ -20,6 +20,13 @@ export const envSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_FROM_NUMBER: z.string().optional(),
   TWILIO_MESSAGING_SERVICE_SID: z.string().optional(),
+  // CR-2026-096 — notification routing mode. TEST (the default) redirects every
+  // customer send to the configured test recipients; reaching real customers
+  // requires an EXPLICIT NOTIFICATION_MODE=LIVE in deployment config. With the
+  // stub provider the mode is recorded but nothing real is sent either way.
+  NOTIFICATION_MODE: z.enum(['TEST', 'LIVE']).default('TEST'),
+  NOTIFICATION_TEST_SMS_TO: z.string().optional(),
+  NOTIFICATION_TEST_EMAIL_TO: z.string().optional(),
   // VIN decode: STUB (no outbound calls) by default; LIVE opt-in enables NHTSA vPIC.
   VIN_DECODE_PROVIDER: z.enum(['STUB', 'LIVE']).default('STUB'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),

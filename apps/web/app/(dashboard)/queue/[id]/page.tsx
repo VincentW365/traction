@@ -14,6 +14,11 @@ import { PAUSE_REASONS, REWORK_REASONS } from '../../../../lib/service-order-act
 import { SearchableSelect } from '../../../../components/ui/searchable-select';
 import { ServiceQualifiers } from '../../../../components/service-qualifiers';
 import { qualifierSummary, type QualifierItem } from '../../../../lib/service-qualifiers';
+import {
+  CustomerNotificationComposer,
+  type ComposerContext,
+} from '../../../../components/notification-composer';
+import { CommunicationHistory } from '../../../../components/communication-history';
 
 /* ---------- Types ---------- */
 
@@ -233,17 +238,29 @@ export default function QueueTicketDetailPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['parts-ack', ticket?.serviceVisit?.id] }),
   });
 
-  // CR-2026-064 — notification history + manual send for this visit (endpoints already exist).
-  const notifLogQuery = useQuery<Array<{ id: string; channel: string; templateKey: string; recipient: string | null; status: string; createdAt: string; sentAt: string | null }>>({
-    queryKey: ['notif-log', ticket?.serviceVisit?.id],
-    queryFn: () => api.get(`/notifications/log?entityId=${ticket!.serviceVisit.id}`),
-    enabled: !!ticket?.serviceVisit?.id,
+  // CR-2026-096 — customer contact goes through the shared composer; "Log Call"
+  // records a manual outreach without sending anything.
+  const [composerCtx, setComposerCtx] = useState<ComposerContext | null>(null);
+  const logCall = useMutation({
+    mutationFn: () =>
+      api.post('/notifications/manual-contact', {
+        customerId: ticket!.serviceVisit.customer.id,
+        vehicleId: ticket!.serviceVisit.vehicle.id,
+        serviceVisitId: ticket!.serviceVisit.id,
+        reason: ticket!.serviceVisit.status === 'READY_FOR_PICKUP' ? 'PICKUP_READY' : 'QUEUE_UPDATE',
+        method: 'PHONE_CALL',
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notification-history'] }),
   });
-  const sendNotification = useMutation({
-    mutationFn: (channels: string[]) =>
-      api.post('/notifications/send-pickup-ready', { serviceVisitId: ticket!.serviceVisit.id, channels }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notif-log', ticket?.serviceVisit?.id] }),
-  });
+  const openComposer = () => {
+    const sv = ticket!.serviceVisit;
+    setComposerCtx({
+      reason: sv.status === 'READY_FOR_PICKUP' ? 'PICKUP_READY' : 'QUEUE_UPDATE',
+      customerId: sv.customer.id,
+      vehicleId: sv.vehicle.id,
+      serviceVisitId: sv.id,
+    });
+  };
 
   // CR-2026-093 — the inspection workspace opens straight from the queue: existing
   // records open, missing ones are created on the spot, and the workspace's tabs
@@ -1268,41 +1285,20 @@ export default function QueueTicketDetailPage() {
         </div>
       </div>
 
-      {/* Notifications (CR-2026-064) — history + manual send for this visit */}
+      {/* CR-2026-096 — customer contact via the shared composer + history */}
       <div className="card mb-6">
         <div className="card-header flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-900">Notifications</h2>
+          <h2 className="text-sm font-semibold text-slate-900">Customer Communication</h2>
           <div className="flex items-center gap-1.5">
-            <button onClick={() => sendNotification.mutate(['SMS'])} disabled={sendNotification.isPending} className="btn-secondary text-xs py-1 px-2">Send SMS</button>
-            <button onClick={() => sendNotification.mutate(['EMAIL'])} disabled={sendNotification.isPending} className="btn-secondary text-xs py-1 px-2">Send Email</button>
-            <button onClick={() => sendNotification.mutate(['MANUAL_CALL'])} disabled={sendNotification.isPending} className="btn-secondary text-xs py-1 px-2">Log Call</button>
+            <button onClick={openComposer} className="btn-primary text-xs py-1 px-3">Contact Customer</button>
+            <button onClick={() => logCall.mutate()} disabled={logCall.isPending} className="btn-secondary text-xs py-1 px-2" title="Record that the customer was called — nothing is sent">
+              {logCall.isPending ? 'Logging…' : 'Log Call'}
+            </button>
           </div>
         </div>
-        <div className="card-body">
-          {sendNotification.isError && <p className="text-xs text-red-600 mb-2">{sendNotification.error instanceof Error ? sendNotification.error.message : 'Failed to send'}</p>}
-          {notifLogQuery.isLoading ? (
-            <p className="text-sm text-slate-500">Loading…</p>
-          ) : (notifLogQuery.data ?? []).length === 0 ? (
-            <p className="text-sm text-slate-500">No notifications sent for this visit yet.</p>
-          ) : (
-            <div className="table-container border-0 shadow-none">
-              <table className="w-full text-sm">
-                <thead className="table-header"><tr><th>When</th><th>Type</th><th>Channel</th><th>To</th><th>Status</th></tr></thead>
-                <tbody>
-                  {notifLogQuery.data!.map((n) => (
-                    <tr key={n.id} className="table-row">
-                      <td className="text-xs text-slate-500 whitespace-nowrap">{new Date(n.sentAt ?? n.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
-                      <td className="text-slate-700">{n.templateKey.replace(/_/g, ' ')}</td>
-                      <td className="text-xs text-slate-500">{n.channel}</td>
-                      <td className="text-xs text-slate-500 break-all">{n.recipient ?? '—'}</td>
-                      <td><StatusBadge status={n.status} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <p className="text-[10px] text-slate-400 mt-2">Manual send uses the ready-for-pickup template. SMS/email require the configured provider; “Log Call” records a manual outreach.</p>
+        <div className="card-body p-0">
+          {logCall.isError && <p className="text-xs text-red-600 px-4 pt-3">{logCall.error instanceof Error ? logCall.error.message : 'Failed to log call'}</p>}
+          <CommunicationHistory serviceVisitId={sv.id} bare />
         </div>
       </div>
 
@@ -1318,11 +1314,39 @@ export default function QueueTicketDetailPage() {
                 Closing takes one step. Mileage out and notes are optional.
               </p>
             </div>
-            <button onClick={() => setShowCompletion(true)} className="btn-success text-sm px-5 py-2.5 font-semibold">
-              Close Visit
-            </button>
+            <div className="flex items-center gap-2">
+              {sv.status === 'READY_FOR_PICKUP' && (
+                <button
+                  onClick={() =>
+                    setComposerCtx({
+                      reason: 'PICKUP_READY',
+                      customerId: sv.customer.id,
+                      vehicleId: sv.vehicle.id,
+                      serviceVisitId: sv.id,
+                    })
+                  }
+                  className="btn-primary text-sm px-4 py-2.5"
+                >
+                  Notify Customer
+                </button>
+              )}
+              <button onClick={() => setShowCompletion(true)} className="btn-success text-sm px-5 py-2.5 font-semibold">
+                Close Visit
+              </button>
+            </div>
           </div>
         </div>
+      )}
+
+      {/* CR-2026-096 — shared customer notification composer */}
+      {composerCtx && (
+        <CustomerNotificationComposer
+          open
+          context={composerCtx}
+          allowReasonChoice={composerCtx.reason !== 'PICKUP_READY'}
+          onClose={() => setComposerCtx(null)}
+          onSent={() => queryClient.invalidateQueries({ queryKey: ['notification-history'] })}
+        />
       )}
 
       {/* Close-out modal */}

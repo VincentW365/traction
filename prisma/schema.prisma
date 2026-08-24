@@ -149,6 +149,27 @@ enum NotificationDeliveryStatus {
   MANUAL
 }
 
+// CR-2026-096 — why a customer notification was sent. Legacy rows (pre-CR) have null.
+enum NotificationReason {
+  SERVICE_DUE
+  QUEUE_CHECKED_IN
+  QUEUE_WORK_STARTED
+  QUEUE_UPDATE
+  PICKUP_READY
+  CUSTOM
+}
+
+// CR-2026-096 — follow-up status of a due-for-service customer. This is the BUSINESS
+// outcome and is tracked separately from notification delivery status: a message can
+// be DELIVERED while the follow-up stays CONTACTED until the customer actually books.
+enum ServiceDueContactStatus {
+  NOT_CONTACTED
+  CONTACTED
+  BOOKED
+  DEFERRED
+  DO_NOT_CONTACT
+}
+
 enum PaymentStatus {
   UNPAID
   PENDING
@@ -732,6 +753,7 @@ model UserAccount {
   technician              Technician?
   queueEventActions       QueueEvent[]                @relation("QueueEventActor")
   initiatedNotifications  NotificationLog[]           @relation("NotificationInitiatedBy")
+  notificationTemplates   NotificationTemplate[]      @relation("NotificationTemplateUpdatedBy") // CR-2026-096
   reviewedClassifications VehicleClassification[]     @relation("ClassificationReviewedBy") // CR-2026-008
 
   @@map("user_accounts")
@@ -758,6 +780,7 @@ model Customer {
   maintenanceReminders MaintenanceReminder[]
   complaints           Complaint[] // CR-2026-032 — customer complaints
   inspections          VehicleInspection[] // CR-2026-034 — visual inspections
+  notificationLogs     NotificationLog[]   @relation("CustomerNotifications") // CR-2026-096
 
   // CR-2026-020 — nullable test-data run tag (null for all real & imported rows)
   testDataRunId String?      @map("test_data_run_id") @db.Uuid
@@ -799,6 +822,7 @@ model Vehicle {
   fluidSpecs                 FluidSpecSnapshot[]
   maintenanceRecommendations MaintenanceRecommendation[]
   maintenanceReminders       MaintenanceReminder[]
+  notificationLogs           NotificationLog[]           @relation("VehicleNotifications") // CR-2026-096
   classification             VehicleClassification? // CR-2026-008
   inspections                VehicleInspection[] // CR-2026-034 — visual inspections
 
@@ -1492,11 +1516,52 @@ model NotificationLog {
   createdAt         DateTime                   @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime                   @updatedAt @map("updated_at") @db.Timestamptz
 
+  // CR-2026-096 — unified customer notifications. All nullable/defaulted so legacy
+  // rows and legacy send paths stay valid.
+  reason            NotificationReason? // why this message went out (null on pre-CR rows)
+  subject           String? // email subject exactly as sent
+  body              String? // final message text exactly as sent (after staff edits)
+  generatedBody     String?             @map("generated_body") // template output before staff edits
+  intendedRecipient String?             @map("intended_recipient") // original recipient when test routing redirected
+  testRouted        Boolean             @default(false) @map("test_routed") // TEST mode redirected this send
+  simulated         Boolean             @default(false) @map("simulated") // no real provider configured; recorded only
+  customerId        String?             @map("customer_id") @db.Uuid
+  vehicleId         String?             @map("vehicle_id") @db.Uuid
+  clientRequestId   String?             @unique @map("client_request_id") // idempotency key against double-click sends
+
   initiatedBy UserAccount? @relation("NotificationInitiatedBy", fields: [initiatedByUserId], references: [id])
+  customer    Customer?    @relation("CustomerNotifications", fields: [customerId], references: [id])
+  vehicle     Vehicle?     @relation("VehicleNotifications", fields: [vehicleId], references: [id])
 
   @@index([entityType, entityId])
   @@index([status])
+  @@index([customerId])
+  @@index([vehicleId])
   @@map("notification_logs")
+}
+
+// CR-2026-096 — admin-editable notification templates. Wording lives here (not in
+// code) so managers change it without redeployment. Version increments on every
+// edit; sent messages snapshot their final text on NotificationLog, so editing a
+// template never rewrites history.
+model NotificationTemplate {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key             String              @unique // e.g. SERVICE_DUE_SMS
+  reason          NotificationReason
+  channel         NotificationChannel
+  name            String // human label shown in admin UI
+  subject         String? // email templates only
+  body            String
+  enabled         Boolean             @default(true)
+  version         Int                 @default(1)
+  updatedByUserId String?             @map("updated_by_user_id") @db.Uuid
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz
+
+  updatedBy UserAccount? @relation("NotificationTemplateUpdatedBy", fields: [updatedByUserId], references: [id])
+
+  @@index([reason])
+  @@map("notification_templates")
 }
 
 model PosReference {
@@ -1631,6 +1696,12 @@ model MaintenanceRecommendation {
   notes                      String?
   createdByUserId            String?                  @map("created_by_user_id") @db.Uuid
   createdAt                  DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+
+  // CR-2026-096 — customer-contact follow-up workflow (business outcome, tracked
+  // separately from notification DELIVERY status which lives on NotificationLog).
+  contactStatus     ServiceDueContactStatus @default(NOT_CONTACTED) @map("contact_status")
+  lastContactedAt   DateTime?               @map("last_contacted_at") @db.Timestamptz
+  lastContactLogId  String?                 @map("last_contact_log_id") @db.Uuid
 
   vehicle                  Vehicle                     @relation(fields: [vehicleId], references: [id])
   serviceVisit             ServiceVisit?               @relation(fields: [serviceVisitId], references: [id])

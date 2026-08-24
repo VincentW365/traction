@@ -124,6 +124,17 @@ if (dbOk) {
   } catch {
     check('inspection templates', false, 'table missing — run pnpm db:migrate');
   }
+  // CR-2026-096 — customer notification templates. The API self-heals a missing
+  // template from factory wording at compose time, so this is warn-only context,
+  // but a fresh deploy should have them seeded.
+  try {
+    const [{ nt }] = await prisma.$queryRawUnsafe(
+      `SELECT count(*)::int AS nt FROM notification_templates`,
+    );
+    check('notification templates', nt >= 10, `${nt} present${nt >= 10 ? '' : ' — run pnpm db:seed (API will self-heal from factory wording)'}`);
+  } catch {
+    check('notification templates', false, 'table missing — run pnpm db:migrate');
+  }
   await tableCheck('user accounts', 'user_accounts', 1, 'seed has not run');
 
   console.log('\nOperational data (produced by the controlled customer import, never by seed):');

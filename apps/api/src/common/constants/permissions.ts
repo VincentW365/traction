@@ -87,6 +87,10 @@ export const PERMISSIONS = {
   COMPLAINT_MANAGE: 'complaint:manage',
   COMPLAINT_RESOLVE: 'complaint:resolve',
 
+  // Customer Notifications (CR-2026-096) — composing/sending SMS & email to
+  // customers. Template management stays behind CONFIG_VIEW/CONFIG_EDIT.
+  NOTIFY_SEND: 'notify:send',
+
   // Visual Inspections (CR-2026-034)
   INSPECTION_VIEW: 'inspection:view',
   INSPECTION_CREATE: 'inspection:create',
@@ -117,6 +121,9 @@ const FRONT_DESK_PERMISSIONS: PermissionKey[] = [
   // Inspections: front desk can view + record customer decisions/sign-off (CR-2026-034)
   PERMISSIONS.INSPECTION_VIEW,
   PERMISSIONS.INSPECTION_DECISION,
+  // CR-2026-096 — front desk sends due-service reminders, queue updates, and
+  // pickup notices (with message editing) through the shared composer.
+  PERMISSIONS.NOTIFY_SEND,
 ];
 
 const SERVICE_ADVISOR_PERMISSIONS: PermissionKey[] = [

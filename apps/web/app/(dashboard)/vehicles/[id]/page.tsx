@@ -7,6 +7,8 @@ import Link from 'next/link';
 import { api } from '../../../../lib/api-client';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
+import { CustomerNotificationComposer } from '../../../../components/notification-composer';
+import { CommunicationHistory } from '../../../../components/communication-history';
 
 interface VehicleDetail {
   id: string;
@@ -39,6 +41,7 @@ export default function VehicleDetailPage() {
 
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
+  const [showComposer, setShowComposer] = useState(false);
   const [editMake, setEditMake] = useState('');
   const [editModel, setEditModel] = useState('');
   const [editYear, setEditYear] = useState('');
@@ -151,6 +154,7 @@ export default function VehicleDetailPage() {
             {!isEditing && (
               <button onClick={startEdit} className="btn-secondary text-xs">Edit</button>
             )}
+            <button onClick={() => setShowComposer(true)} className="btn-primary text-xs">Contact Customer</button>
           </div>
         }
       />
@@ -305,6 +309,11 @@ export default function VehicleDetailPage() {
         </div>
       </div>
 
+      {/* CR-2026-096 — messages sent about THIS vehicle (service-history context) */}
+      <div className="mb-6">
+        <CommunicationHistory vehicleId={vehicle.id} />
+      </div>
+
       {/* Quick Actions */}
       <div className="flex items-center gap-3">
         <Link href="/check-in" className="btn-primary">
@@ -314,6 +323,14 @@ export default function VehicleDetailPage() {
           Schedule Appointment
         </Link>
       </div>
+
+      {showComposer && (
+        <CustomerNotificationComposer
+          open
+          context={{ reason: 'CUSTOM', customerId: vehicle.customer.id, vehicleId: vehicle.id }}
+          onClose={() => setShowComposer(false)}
+        />
+      )}
     </div>
   );
 }

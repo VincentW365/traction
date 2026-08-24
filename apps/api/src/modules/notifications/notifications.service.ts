@@ -1,7 +1,9 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import {
+  NOTIFICATION_CAPABILITIES,
   NOTIFICATION_PROVIDER,
+  NotificationCapabilities,
   NotificationProvider,
 } from './providers/notification-provider.interface';
 import { NotificationChannel, NotificationDeliveryStatus } from '@prisma/client';
@@ -24,25 +26,69 @@ export class NotificationsService {
     private prisma: PrismaService,
     @Inject(NOTIFICATION_PROVIDER)
     private provider: NotificationProvider,
+    @Inject(NOTIFICATION_CAPABILITIES)
+    private caps: NotificationCapabilities,
   ) {}
 
+  /**
+   * CR-2026-096 — test routing applies to EVERY send path, including these legacy
+   * background flows: in TEST mode a customer recipient is replaced by the
+   * configured test recipient (recorded, never concealed). A real provider in
+   * TEST mode with no test recipient refuses rather than reaching a customer.
+   */
+  private routeRecipient(
+    channel: 'SMS' | 'EMAIL',
+    intended: string,
+  ): { to: string; testRouted: boolean; simulated: boolean; blocked?: string } {
+    const configured = channel === 'SMS' ? this.caps.smsConfigured : this.caps.emailConfigured;
+    if (this.caps.mode === 'LIVE') {
+      return { to: intended, testRouted: false, simulated: !configured };
+    }
+    const testTo = channel === 'SMS' ? this.caps.testSmsTo : this.caps.testEmailTo;
+    if (testTo) return { to: testTo, testRouted: true, simulated: !configured };
+    if (configured) {
+      return {
+        to: intended,
+        testRouted: false,
+        simulated: false,
+        blocked: `TEST mode without ${channel === 'SMS' ? 'NOTIFICATION_TEST_SMS_TO' : 'NOTIFICATION_TEST_EMAIL_TO'} — refused to contact a real customer`,
+      };
+    }
+    return { to: intended, testRouted: false, simulated: true };
+  }
+
   async queue(input: QueueNotificationInput): Promise<string> {
+    const routing = this.routeRecipient(input.channel, input.recipient);
+
     const log = await this.prisma.notificationLog.create({
       data: {
         entityType: input.entityType,
         entityId: input.entityId,
         channel: input.channel as NotificationChannel,
         templateKey: input.templateKey,
-        recipient: input.recipient,
+        recipient: routing.to,
+        intendedRecipient: routing.testRouted ? input.recipient : null,
+        testRouted: routing.testRouted,
+        simulated: routing.simulated,
         status: input.scheduledAt ? 'SCHEDULED' : 'PENDING',
         scheduledAt: input.scheduledAt,
       },
     });
 
+    if (routing.blocked) {
+      await this.prisma.notificationLog.update({
+        where: { id: log.id },
+        data: { status: 'FAILED', failureReason: routing.blocked },
+      });
+      this.logger.warn(`Notification ${log.id} blocked: ${routing.blocked}`);
+      return log.id;
+    }
+
     // In Phase 1, process immediately (no BullMQ queue yet)
     // Phase 4 will replace this with BullMQ job scheduling
     if (!input.scheduledAt) {
-      await this.processNotification(log.id, input);
+      // The provider must see the ROUTED recipient (test redirect applied).
+      await this.processNotification(log.id, { ...input, recipient: routing.to });
     }
 
     return log.id;

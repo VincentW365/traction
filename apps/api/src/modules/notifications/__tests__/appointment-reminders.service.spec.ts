@@ -43,7 +43,7 @@ function build(opts: {
     notificationLog: { count: vi.fn(async () => opts.alreadySent ?? 0) },
   };
   const provider: any = { send: vi.fn() };
-  const service = new NotificationsService(prisma, provider);
+  const service = new NotificationsService(prisma, provider, { smsConfigured: false, emailConfigured: false, mode: 'LIVE' });
   const queueSpy = vi.spyOn(service, 'queue').mockResolvedValue('log-1');
   return { service, prisma, queueSpy };
 }

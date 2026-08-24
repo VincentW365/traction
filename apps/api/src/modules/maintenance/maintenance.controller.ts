@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   Controller,
   Get,
+  Patch,
   Post,
   Param,
   Body,
@@ -194,5 +196,24 @@ export class MaintenanceDueController {
       query.thresholdMiles,
       query.thresholdDays,
     );
+  }
+
+  // CR-2026-096 — follow-up outcome of a due-service contact (business status,
+  // separate from notification delivery). Advisors work this list, so it sits on
+  // MAINTENANCE_OVERRIDE rather than a manager-only permission.
+  @Patch('recommendations/:id/contact-status')
+  @RequirePermission(PERMISSIONS.MAINTENANCE_OVERRIDE)
+  @ApiOperation({ summary: 'Set follow-up status for a due-service customer contact' })
+  async setContactStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body()
+    body: { contactStatus: 'NOT_CONTACTED' | 'CONTACTED' | 'BOOKED' | 'DEFERRED' | 'DO_NOT_CONTACT' },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const allowed = ['NOT_CONTACTED', 'CONTACTED', 'BOOKED', 'DEFERRED', 'DO_NOT_CONTACT'];
+    if (!allowed.includes(body?.contactStatus)) {
+      throw new BadRequestException(`contactStatus must be one of ${allowed.join(', ')}`);
+    }
+    return this.maintenanceService.setContactStatus(id, body.contactStatus, user.sub);
   }
 }

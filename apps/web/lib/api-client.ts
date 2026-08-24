@@ -42,6 +42,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** Parsed error body from the API (e.g. a structured 409 with a `code`). */
+    readonly body?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -148,7 +150,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ message: res.statusText }));
-    throw new ApiError(error.message || `API error: ${res.status}`, res.status);
+    throw new ApiError(error.message || `API error: ${res.status}`, res.status, error);
   }
 
   if (res.status === 204) return {} as T;

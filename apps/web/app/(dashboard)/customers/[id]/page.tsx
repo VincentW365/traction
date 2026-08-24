@@ -9,6 +9,8 @@ import { useSiteId } from '../../../../hooks/use-site';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../components/status-badge';
+import { CustomerNotificationComposer } from '../../../../components/notification-composer';
+import { CommunicationHistory } from '../../../../components/communication-history';
 
 interface Vehicle {
   id: string;
@@ -113,6 +115,7 @@ export default function CustomerDetailPage() {
   const queryClient = useQueryClient();
 
   const [showAddVehicle, setShowAddVehicle] = useState(false);
+  const [showComposer, setShowComposer] = useState(false);
   const [vPlate, setVPlate] = useState('');
   const [vVin, setVVin] = useState('');
   const [vMake, setVMake] = useState('');
@@ -289,6 +292,7 @@ export default function CustomerDetailPage() {
           <div className="flex items-center gap-2">
             {customer.hasLoyalty && <span className="badge bg-amber-50 text-amber-700">★ Loyalty</span>}
             <span className="badge bg-slate-100 text-slate-700 font-mono text-xs">{customer.customerNumber}</span>
+            <button onClick={() => setShowComposer(true)} className="btn-primary text-sm">Contact Customer</button>
           </div>
         }
       />
@@ -744,6 +748,11 @@ export default function CustomerDetailPage() {
         </details>
       )}
 
+      {/* CR-2026-096 — every message this customer has been sent, with delivery state */}
+      <div className="mb-6">
+        <CommunicationHistory customerId={customer.id} />
+      </div>
+
       {/* Quick Actions — booking always available; check-in only when there is a
           CONFIRMED appointment for this customer today (check-in is per-appointment). */}
       <div className="flex items-center gap-3">
@@ -752,6 +761,14 @@ export default function CustomerDetailPage() {
           <Link href="/check-in" className="btn-secondary">Check In Today&apos;s Appointment</Link>
         )}
       </div>
+
+      {showComposer && (
+        <CustomerNotificationComposer
+          open
+          context={{ reason: 'CUSTOM', customerId: customer.id, vehicleId: customer.vehicles?.[0]?.id }}
+          onClose={() => setShowComposer(false)}
+        />
+      )}
     </div>
   );
 }
