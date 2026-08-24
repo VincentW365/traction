@@ -11,7 +11,7 @@ const qcOrder = {
   serviceVisit: {
     customer: { firstName: 'Ann', lastName: 'Lee' },
     vehicle: { plateNumber: 'ABC123' },
-    queueTicket: { ticketNumber: 'A007' },
+    queueTicket: { id: 'qt-1', ticketNumber: 'A007' },
   },
 };
 
@@ -35,6 +35,9 @@ describe('getAlerts — READY_FOR_QC (CR-2026-074)', () => {
     expect(qc!.title).toContain('A007');
     expect(qc!.detail).toContain('Ann Lee');
     expect(qc!.entityId).toBe('so-1');
+    // The alert must carry the queue ticket so the Control Center can link
+    // straight to the visit workspace where QC gets approved or reworked.
+    expect(qc!.queueTicketId).toBe('qt-1');
   });
 
   it('emits no READY_FOR_QC alert when nothing is in QC', async () => {

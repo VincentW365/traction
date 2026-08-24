@@ -19,6 +19,8 @@ export interface DashboardAlert {
   title: string;
   detail: string;
   entityId?: string;
+  /** Queue ticket behind the alert, so the UI can link straight to the visit workspace. */
+  queueTicketId?: string;
 }
 
 @Injectable()
@@ -140,6 +142,7 @@ export class ManagerDashboardService {
           select: {
             customer: { select: { firstName: true, lastName: true } },
             vehicle: { select: { plateNumber: true } },
+            queueTicket: { select: { id: true } },
           },
         },
       },
@@ -155,6 +158,7 @@ export class ManagerDashboardService {
         title: `Job overdue (${elapsed} min)`,
         detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber}`,
         entityId: order.id,
+        queueTicketId: sv.queueTicket?.id,
       });
     }
 
@@ -169,7 +173,7 @@ export class ManagerDashboardService {
           select: {
             customer: { select: { firstName: true, lastName: true } },
             vehicle: { select: { plateNumber: true } },
-            queueTicket: { select: { ticketNumber: true } },
+            queueTicket: { select: { id: true, ticketNumber: true } },
           },
         },
       },
@@ -185,6 +189,7 @@ export class ManagerDashboardService {
         title: `Ready for QC${sv.queueTicket?.ticketNumber ? ` — ${sv.queueTicket.ticketNumber}` : ''}`,
         detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber}`,
         entityId: order.id,
+        queueTicketId: sv.queueTicket?.id,
       });
     }
 
@@ -214,6 +219,7 @@ export class ManagerDashboardService {
         title: `Blocked by parts — ${ticket.ticketNumber}`,
         detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber}`,
         entityId: ticket.id,
+        queueTicketId: ticket.id,
       });
     }
 

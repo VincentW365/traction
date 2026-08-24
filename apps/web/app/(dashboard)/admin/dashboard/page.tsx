@@ -25,6 +25,16 @@ interface DashboardAlert {
   title: string;
   detail: string;
   entityId?: string;
+  queueTicketId?: string;
+}
+
+// Every alert should take the manager to the screen where it gets corrected:
+// job alerts land on the visit workspace (QC approve/rework, unblock, dispatch),
+// absences land on the availability planner.
+function alertHref(alert: DashboardAlert): string | undefined {
+  if (alert.queueTicketId) return `/queue/${alert.queueTicketId}`;
+  if (alert.type === 'ABSENT_TECH') return '/admin/availability';
+  return undefined;
 }
 
 export default function ManagerDashboardPage() {
@@ -91,18 +101,35 @@ export default function ManagerDashboardPage() {
             </div>
           </div>
           <div className="divide-y divide-slate-100">
-            {alerts.map((alert, i) => (
-              <div key={i} className="px-5 py-3 flex items-center gap-3">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${alert.severity === 'critical' ? 'bg-red-500' : 'bg-amber-500'}`} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-slate-900">{alert.title}</p>
-                  <p className="text-xs text-slate-500 truncate">{alert.detail}</p>
+            {alerts.map((alert, i) => {
+              const href = alertHref(alert);
+              const row = (
+                <>
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${alert.severity === 'critical' ? 'bg-red-500' : 'bg-amber-500'}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-slate-900">{alert.title}</p>
+                    <p className="text-xs text-slate-500 truncate">{alert.detail}</p>
+                  </div>
+                  <span className={`badge text-[10px] ${alert.severity === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {alert.type.replace(/_/g, ' ')}
+                  </span>
+                  {href && (
+                    <svg className="w-4 h-4 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
+                    </svg>
+                  )}
+                </>
+              );
+              return href ? (
+                <Link key={i} href={href} className="px-5 py-3 flex items-center gap-3 hover:bg-blue-50/40 transition-colors">
+                  {row}
+                </Link>
+              ) : (
+                <div key={i} className="px-5 py-3 flex items-center gap-3">
+                  {row}
                 </div>
-                <span className={`badge text-[10px] ${alert.severity === 'critical' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                  {alert.type.replace(/_/g, ' ')}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
