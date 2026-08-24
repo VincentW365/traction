@@ -59,13 +59,26 @@ const SERVICE_TICKS: Array<{ key: string; label: string; codes: string[] }> = [
   { key: 'shocksKyb', label: 'KYB', codes: [] },
 ];
 
-function Line({ label, value, grow = 1 }: { label: string; value?: string | null; grow?: number }) {
+/**
+ * A ruled fill-in line, and genuinely fillable: the underline is an input. It
+ * prints exactly as typed, and an empty one prints as the blank line a pen expects.
+ */
+function Line({
+  label, value, onChange, grow = 1,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  grow?: number;
+}) {
   return (
     <div className="flex items-baseline gap-1.5 min-w-0" style={{ flexGrow: grow }}>
       <span className="text-[11px] font-extrabold text-slate-900 whitespace-nowrap">{label}</span>
-      <span className="border-b border-slate-900 flex-grow px-1 text-[11px] text-slate-900 min-h-[16px] truncate">
-        {value ?? ''}
-      </span>
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="border-0 border-b border-slate-900 flex-grow min-w-0 px-1 text-[11px] text-slate-900 bg-transparent focus:outline-none focus:bg-amber-50"
+      />
     </div>
   );
 }
@@ -100,6 +113,8 @@ export default function JobSheetPage() {
   });
 
   const [ticks, setTicks] = useState<Record<string, boolean>>({});
+  const [fields, setFields] = useState<Record<string, string>>({});
+  const setField = (key: string) => (v: string) => setFields((prev) => ({ ...prev, [key]: v }));
   const [pair, setPair] = useState<Record<string, boolean>>({}); // ATM/MTM, 4WD/2WD, fuel
   const [directive, setDirective] = useState('');
   const [initialised, setInitialised] = useState(false);
@@ -120,6 +135,26 @@ export default function JobSheetPage() {
     if (v?.fuelType) p[v.fuelType.toUpperCase().startsWith('D') ? 'DSL' : 'GAS'] = true;
     setPair(p);
     setDirective(d.serviceOrders.map((o) => o.notes).filter(Boolean).join('\n'));
+    const cu = d.customer;
+    setFields({
+      date: new Date(d.createdAt).toLocaleDateString(),
+      name: cu ? `${cu.firstName} ${cu.lastName}` : '',
+      contact: cu?.phone ?? '',
+      email: cu?.email ?? '',
+      year: v?.modelYear ? String(v.modelYear) : '',
+      make: v?.make ?? '',
+      model: v?.model ?? '',
+      licence: v?.plateNumber ?? '',
+      engineNo: v?.engineNo ?? '',
+      chassisNo: v?.vin ?? '',
+      mileage: d.mileageIn != null ? d.mileageIn.toLocaleString() : '',
+      nextMileage: '',
+      nextDate: '',
+      customerNo: cu?.customerNumber ?? '',
+      preparedBy: '',
+      mechanic: d.serviceOrders[0]?.assignments[0]?.technician?.userAccount?.fullName ?? '',
+      salesInv: '',
+    });
   }
 
   if (q.isLoading) return <div className="page-container"><LoadingState message="Loading job sheet..." /></div>;
@@ -135,7 +170,6 @@ export default function JobSheetPage() {
 
   const c = d.customer;
   const v = d.vehicle;
-  const mechanic = d.serviceOrders[0]?.assignments[0]?.technician?.userAccount?.fullName ?? '';
   const togglePair = (group: string[], key: string) =>
     setPair((p) => {
       const next = { ...p };
@@ -167,7 +201,7 @@ export default function JobSheetPage() {
         <div className="flex items-baseline justify-between gap-5 mt-3">
           <h1 className="text-lg font-extrabold tracking-wide text-slate-900">SERVICE CENTRE JOB CARD</h1>
           <div className="min-w-[220px]">
-            <Line label="DATE:" value={new Date(d.createdAt).toLocaleDateString()} />
+            <Line label="DATE:" value={fields.date ?? ''} onChange={setField('date')} />
           </div>
         </div>
         {d.queueTicket && (
@@ -176,27 +210,27 @@ export default function JobSheetPage() {
 
         <SectionHeading>PERSONAL DATA</SectionHeading>
         <div className="flex flex-col gap-2.5 pt-3 px-0.5">
-          <Line label="NAME:" value={c ? `${c.firstName} ${c.lastName}` : ''} />
+          <Line label="NAME:" value={fields.name ?? ''} onChange={setField('name')} />
           <div className="flex gap-3">
-            <Line label="CONTACT NUMBER(S):" value={c?.phone} />
-            <Line label="EMAIL ADDRESS:" value={c?.email} grow={1.6} />
+            <Line label="CONTACT NUMBER(S):" value={fields.contact ?? ''} onChange={setField('contact')} />
+            <Line label="EMAIL ADDRESS:" value={fields.email ?? ''} onChange={setField('email')} grow={1.6} />
           </div>
         </div>
 
         <SectionHeading>VEHICLE DETAILS</SectionHeading>
         <div className="flex flex-col gap-2.5 pt-3 px-0.5">
           <div className="flex gap-3">
-            <Line label="YEAR:" value={v?.modelYear ? String(v.modelYear) : ''} grow={0.5} />
-            <Line label="MAKE:" value={v?.make} />
-            <Line label="MODEL:" value={v?.model} grow={1.4} />
+            <Line label="YEAR:" value={fields.year ?? ''} onChange={setField('year')} grow={0.5} />
+            <Line label="MAKE:" value={fields.make ?? ''} onChange={setField('make')} />
+            <Line label="MODEL:" value={fields.model ?? ''} onChange={setField('model')} grow={1.4} />
           </div>
           <div className="flex gap-3">
-            <Line label="LICENCE:" value={v?.plateNumber} />
-            <Line label="ENGINE #:" value={v?.engineNo} />
-            <Line label="CHASSIS #:" value={v?.vin} grow={1.3} />
+            <Line label="LICENCE:" value={fields.licence ?? ''} onChange={setField('licence')} />
+            <Line label="ENGINE #:" value={fields.engineNo ?? ''} onChange={setField('engineNo')} />
+            <Line label="CHASSIS #:" value={fields.chassisNo ?? ''} onChange={setField('chassisNo')} grow={1.3} />
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            <Line label="MILEAGE:" value={d.mileageIn != null ? d.mileageIn.toLocaleString() : ''} grow={0.4} />
+            <Line label="MILEAGE:" value={fields.mileage ?? ''} onChange={setField('mileage')} grow={0.4} />
             <span className="text-[11px] font-extrabold text-slate-900">KM/ML</span>
             <span className="w-3" />
             <TickBox label="ATM" on={!!pair.ATM} onToggle={() => togglePair(['ATM', 'MTM'], 'ATM')} />
@@ -208,9 +242,9 @@ export default function JobSheetPage() {
             <TickBox label="Gas" on={!!pair.GAS} onToggle={() => togglePair(['DSL', 'GAS'], 'GAS')} />
           </div>
           <div className="flex items-baseline gap-3">
-            <Line label="NEXT SERVICE MILEAGE:" grow={0.6} />
+            <Line label="NEXT SERVICE MILEAGE:" value={fields.nextMileage ?? ''} onChange={setField('nextMileage')} grow={0.6} />
             <span className="text-[11px] font-extrabold text-slate-900">KM/ML</span>
-            <Line label="DATE:" />
+            <Line label="DATE:" value={fields.nextDate ?? ''} onChange={setField('nextDate')} />
           </div>
         </div>
 
@@ -262,10 +296,10 @@ export default function JobSheetPage() {
             OFFICE USE ONLY
           </div>
           <div className="flex flex-col gap-2.5 p-3.5">
-            <Line label="CUSTOMER NO.:" value={c?.customerNumber} />
-            <Line label="PREPARED BY:" />
-            <Line label="ASSIGNED MECHANIC:" value={mechanic} />
-            <Line label="SALES INV. #:" />
+            <Line label="CUSTOMER NO.:" value={fields.customerNo ?? ''} onChange={setField('customerNo')} />
+            <Line label="PREPARED BY:" value={fields.preparedBy ?? ''} onChange={setField('preparedBy')} />
+            <Line label="ASSIGNED MECHANIC:" value={fields.mechanic ?? ''} onChange={setField('mechanic')} />
+            <Line label="SALES INV. #:" value={fields.salesInv ?? ''} onChange={setField('salesInv')} />
           </div>
         </div>
 
@@ -279,8 +313,9 @@ export default function JobSheetPage() {
       </div>
 
       <p className="text-[11px] text-slate-400 mt-3 print:hidden">
-        Ticks and the directive are editable here and print as shown; blank lines stay blank for pen.
-        Printing does not change the visit&apos;s booked services.
+        Every line, tick and the directive are editable here and print exactly as shown — anything
+        left empty prints as a blank line for pen, and the signature line always stays for pen.
+        Filling in the sheet does not change the visit&apos;s booked services.
       </p>
     </div>
   );
