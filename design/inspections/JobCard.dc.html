@@ -137,8 +137,10 @@
     </div>
 
     <div style="margin-top: 4px;">
-      <div style="font-size: 12px; font-weight: 800; color: #0f172a; margin-bottom: 7px;">CUSTOMER&#39;S DIRECTIVE</div>
-      <div style="border: 1px solid #cbd5e1; background: #f8fafc; padding: 9px 11px; min-height: 96px; font-size: 12px; line-height: 24px; color: #0f172a; white-space: pre-line;">{{directive}}</div>
+      <div style="font-size: 12px; font-weight: 800; color: #0f172a; margin-bottom: 2px;">CUSTOMER&#39;S DIRECTIVE</div>
+      <!-- Ruled lines, as on the card — the directive is handwriting space, not a
+           form field in a shaded box. -->
+      <div style="font-size: 12px; line-height: 26px; color: #0f172a; white-space: pre-line; background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 25px, #94a3b8 25px, #94a3b8 26px); min-height: 104px; padding: 0 2px;">{{directive}}</div>
     </div>
   </div>
 
@@ -186,14 +188,14 @@
   "preparedBy": {"editor": "text", "default": "S. Advisor"},
   "assignedMechanic": {"editor": "text", "default": "A. Technician"},
   "salesInv": {"editor": "text", "default": "INV-019204"},
-  "$preview": {"width": 842, "height": 1180}
+  "$preview": {"width": 842, "height": 1240}
 }'>
 class Component extends DCLogic {
   constructor(props) {
     super(props);
     // Nothing pre-ticked: the paper card arrives blank and the digital one has to
     // mean the same thing. A pre-ticked service is work nobody asked for.
-    this.state = { transmission: null, fuel: null, services: {} };
+    this.state = { transmission: null, drivetrain: null, fuel: null, services: {} };
   }
 
   box(on) {
@@ -245,19 +247,21 @@ class Component extends DCLogic {
       nextDate: this.props.nextDate ?? '',
       directive: this.props.directive ?? '',
 
+      // Two independent axes, two groups: a vehicle is automatic OR manual, and
+      // separately 4WD OR 2WD. One radio group across all four made ticking 4WD
+      // silently untick ATM.
       transmission: [
         this.exclusive('transmission', 'ATM', 'ATM'),
         this.exclusive('transmission', 'MTM', 'MTM'),
-        this.exclusive('transmission', '4WD', '4WD'),
-        this.exclusive('transmission', '2WD', '2WD'),
+        this.exclusive('drivetrain', '4WD', '4WD'),
+        this.exclusive('drivetrain', '2WD', '2WD'),
       ],
       fuel: [
         this.exclusive('fuel', 'DSL', 'Dsl'),
         this.exclusive('fuel', 'GAS', 'Gas'),
       ],
 
-      // Row 1 mirrors the card exactly: DISC PADS carries its own FR and RR boxes,
-      // which is the same front/rear split the KPI benchmark already depends on.
+      // Row 1 mirrors the card: DISC PADS carries its own FR and RR boxes.
       servicesRow1: [
         { label: 'OIL & FILTER CHANGE', boxes: [this.serviceBox('oil')] },
         { label: 'ENGINE TUNE-UP', boxes: [this.serviceBox('tuneup')] },

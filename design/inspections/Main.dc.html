@@ -120,8 +120,9 @@
         <div style="background: #e02020; color: #ffffff; font-size: 11px; font-weight: 800; padding: 3px 8px; padding-left: 44px; letter-spacing: 0.02em;">REQUIRES IMMEDIATE ATTENTION</div>
       </div>
 
-      <!-- Battery -->
-      <div style="background: #0f172a; color: #ffffff; text-align: center; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: 0.06em;">BATTERY</div>
+      <!-- Battery rows sit under a continuing INTERIOR/EXTERIOR bar, exactly as the
+           paper column does — the black BATTERY bar is our invention, not the form's. -->
+      <div style="background: #0f172a; color: #ffffff; text-align: center; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: 0.06em;">INTERIOR/EXTERIOR</div>
       <sc-for list="{{batteryItems}}" as="item" hint-placeholder-count="2">
         <div style="display: flex; align-items: stretch; border-bottom: 1px solid #cbd5e1;">
           <div style="display: flex; gap: 4px; padding: 5px 6px; align-items: center; border-right: 1px solid #cbd5e1;">
@@ -159,38 +160,52 @@
       <div style="background: #0f172a; color: #ffffff; text-align: center; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: 0.06em;">BRAKE AND TIRE</div>
 
       <div style="position: relative; padding: 0;">
-        <img src="tire.webp" alt="" style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 92px; height: auto; opacity: 0.92; pointer-events: none;">
+        <!-- Faint enough that the measurement text over it stays readable — this is
+             the paper form's centre ornament, not content. -->
+        <img src="tire.webp" alt="" style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 92px; height: auto; opacity: 0.14; pointer-events: none;">
 
         <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0;">
           <sc-for list="{{wheels}}" as="w" hint-placeholder-count="4">
             <div style="{{w.cellStyle}}">
               <div style="font-size: 9.5px; font-weight: 800; color: #0f172a; text-align: {{w.align}}; margin-bottom: 3px;">{{w.title}}</div>
-              <div style="display: flex; gap: 5px; align-items: flex-start;">
-                <div style="display: flex; flex-direction: column; gap: 3px; padding-top: 1px;">
-                  <sc-for list="{{w.dots}}" as="d" hint-placeholder-count="3">
-                    <div style="display: flex; gap: 2px;">
-                      <div onClick="{{d.pickOk}}" style="{{d.okStyle}}"></div>
-                      <div onClick="{{d.pickFuture}}" style="{{d.futureStyle}}"></div>
-                      <div onClick="{{d.pickImmediate}}" style="{{d.immediateStyle}}"></div>
-                    </div>
-                  </sc-for>
-                </div>
-                <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px; font-size: 9px; color: #0f172a;">
-                  <div style="display: flex; align-items: baseline; gap: 3px;"><span>Brake Lining</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.lining}}</span><span>mm</span></div>
-                  <div style="display: flex; align-items: baseline; gap: 3px;"><span>Tire Tread</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.tread}}</span><span>32nds</span></div>
-                  <div style="display: flex; align-items: baseline; gap: 3px;"><span>Wear Pattern</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.wear}}</span></div>
-                  <div style="text-align: center; font-size: 8.5px;">Tire Pressure PSI</div>
-                  <div style="display: flex; align-items: baseline; gap: 4px; font-size: 8.5px;">
-                    <span>Before</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.psiBefore}}</span>
-                    <span>After</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.psiAfter}}</span>
+              <!-- Each measurement row carries its own O/F/I cluster, so the mark and
+                   the figure it judges can never drift apart. -->
+              <div style="display: flex; flex-direction: column; gap: 3px; font-size: 9px; color: #0f172a;">
+                <div style="display: flex; align-items: center; gap: 3px;">
+                  <div style="display: flex; gap: 2px;">
+                    <div onClick="{{w.liningDots.pickOk}}" title="Checked and Okay" style="{{w.liningDots.okStyle}}">{{w.liningDots.okMark}}</div>
+                    <div onClick="{{w.liningDots.pickFuture}}" title="May Need Future Attention" style="{{w.liningDots.futureStyle}}">{{w.liningDots.futureMark}}</div>
+                    <div onClick="{{w.liningDots.pickImmediate}}" title="Requires Immediate Attention" style="{{w.liningDots.immediateStyle}}">{{w.liningDots.immediateMark}}</div>
                   </div>
+                  <span>Brake Lining</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.lining}}</span><span>mm</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 3px;">
+                  <div style="display: flex; gap: 2px;">
+                    <div onClick="{{w.treadDots.pickOk}}" title="Checked and Okay" style="{{w.treadDots.okStyle}}">{{w.treadDots.okMark}}</div>
+                    <div onClick="{{w.treadDots.pickFuture}}" title="May Need Future Attention" style="{{w.treadDots.futureStyle}}">{{w.treadDots.futureMark}}</div>
+                    <div onClick="{{w.treadDots.pickImmediate}}" title="Requires Immediate Attention" style="{{w.treadDots.immediateStyle}}">{{w.treadDots.immediateMark}}</div>
+                  </div>
+                  <span>Tire Tread</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.tread}}</span><span>32nds</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 3px;">
+                  <div style="display: flex; gap: 2px;">
+                    <div onClick="{{w.wearDots.pickOk}}" title="Checked and Okay" style="{{w.wearDots.okStyle}}">{{w.wearDots.okMark}}</div>
+                    <div onClick="{{w.wearDots.pickFuture}}" title="May Need Future Attention" style="{{w.wearDots.futureStyle}}">{{w.wearDots.futureMark}}</div>
+                    <div onClick="{{w.wearDots.pickImmediate}}" title="Requires Immediate Attention" style="{{w.wearDots.immediateStyle}}">{{w.wearDots.immediateMark}}</div>
+                  </div>
+                  <span>Wear Pattern</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.wear}}</span>
+                </div>
+                <div style="text-align: center; font-size: 8.5px;">Tire Pressure PSI</div>
+                <div style="display: flex; align-items: baseline; gap: 4px; font-size: 8.5px;">
+                  <span>Before</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.psiBefore}}</span>
+                  <span>After</span><span style="flex-grow: 1; border-bottom: 1px solid #64748b; text-align: center;">{{w.psiAfter}}</span>
                 </div>
               </div>
               <div style="display: flex; align-items: center; gap: 4px; margin-top: 4px; justify-content: {{w.justify}};">
                 <div style="display: flex; gap: 2px;">
-                  <div onClick="{{w.rotorPickOk}}" style="{{w.rotorOkStyle}}"></div>
-                  <div onClick="{{w.rotorPickFuture}}" style="{{w.rotorFutureStyle}}"></div>
-                  <div onClick="{{w.rotorPickImmediate}}" style="{{w.rotorImmediateStyle}}"></div>
+                  <div onClick="{{w.rotorDots.pickOk}}" title="Checked and Okay" style="{{w.rotorDots.okStyle}}">{{w.rotorDots.okMark}}</div>
+                  <div onClick="{{w.rotorDots.pickFuture}}" title="May Need Future Attention" style="{{w.rotorDots.futureStyle}}">{{w.rotorDots.futureMark}}</div>
+                  <div onClick="{{w.rotorDots.pickImmediate}}" title="Requires Immediate Attention" style="{{w.rotorDots.immediateStyle}}">{{w.rotorDots.immediateMark}}</div>
                 </div>
                 <span style="font-size: 9px; font-weight: 700; color: #0f172a;">Rotor / Drum</span>
               </div>
@@ -273,7 +288,7 @@
   "vin": {"editor": "text", "default": "JTDBR32E1B0000000"},
   "factoryCca": {"editor": "text", "default": "550"},
   "actualCca": {"editor": "text", "default": "512"},
-  "$preview": {"width": 1048, "height": 1560}
+  "$preview": {"width": 1048, "height": 1620}
 }'>
 class Component extends DCLogic {
   constructor(props) {
@@ -307,7 +322,9 @@ class Component extends DCLogic {
       IMMEDIATE: ['#e02020', '#e02020'],
       NOT_APPLICABLE: ['#94a3b8', '#64748b'],
     }[value];
-    const mark = value === 'FUTURE' ? '✓' : value === 'NOT_APPLICABLE' ? 'N' : '✓';
+    // Letters, not ticks: on a black-and-white print a green tick and a red tick
+    // are the same tick. O/F/I/N is the paper form's own vocabulary.
+    const mark = { OK: 'O', FUTURE: 'F', IMMEDIATE: 'I', NOT_APPLICABLE: 'N' }[value];
     return {
       style: this.cellBase(palette[0], palette[1], on) + (value === 'FUTURE' && on ? ' color: #0f172a;' : ''),
       mark: on ? mark : '',
@@ -422,48 +439,31 @@ class Component extends DCLogic {
       ['LR', 'Left Rear', 'left', 'flex-start'],
       ['RR', 'Right Rear', 'right', 'flex-end'],
     ];
-    const sample = {
-      LF: ['8.5', '7', 'Even', '32', '34'],
-      RF: ['8.0', '7', 'Even', '32', '34'],
-      LR: ['6.5', '5', 'Outer', '30', '33'],
-      RR: ['6.5', '6', 'Even', '30', '33'],
-    };
-    const wheels = WHEELS.map(([code, title, align, justify], idx) => {
-      const dots = [0, 1, 2].map((row) => {
-        const key = 'wheel-' + code + '-' + row;
-        const cur = this.state.results[key];
-        const ok = this.resultCell(key, 'OK', cur);
-        const fu = this.resultCell(key, 'FUTURE', cur);
-        const im = this.resultCell(key, 'IMMEDIATE', cur);
-        return {
-          okStyle: ok.style.replace('15px', '11px').replace('15px', '11px'),
-          pickOk: ok.pick,
-          futureStyle: fu.style.replace('15px', '11px').replace('15px', '11px'),
-          pickFuture: fu.pick,
-          immediateStyle: im.style.replace('15px', '11px').replace('15px', '11px'),
-          pickImmediate: im.pick,
-        };
-      });
-      const rotorKey = 'rotor-' + code;
-      const rc = this.state.results[rotorKey];
-      const rok = this.resultCell(rotorKey, 'OK', rc);
-      const rfu = this.resultCell(rotorKey, 'FUTURE', rc);
-      const rim = this.resultCell(rotorKey, 'IMMEDIATE', rc);
-      const s = sample[code];
+    // The same rule as every checklist row: measurements start BLANK. A pre-filled
+    // lining depth is a reading nobody took.
+    const shrink = (style) =>
+      style.replace('15px', '11px').replace('15px', '11px').replace('font-size: 10px', 'font-size: 8px');
+    const dotCluster = (key) => {
+      const cur = this.state.results[key];
+      const ok = this.resultCell(key, 'OK', cur);
+      const fu = this.resultCell(key, 'FUTURE', cur);
+      const im = this.resultCell(key, 'IMMEDIATE', cur);
       return {
-        title, align, justify,
-        cellStyle: 'padding: 6px 8px; border-bottom: 1px solid #cbd5e1;' +
-          (idx % 2 === 0 ? ' border-right: 1px solid #cbd5e1;' : ''),
-        dots,
-        lining: s[0], tread: s[1], wear: s[2], psiBefore: s[3], psiAfter: s[4],
-        rotorOkStyle: rok.style.replace('15px', '11px').replace('15px', '11px'),
-        rotorPickOk: rok.pick,
-        rotorFutureStyle: rfu.style.replace('15px', '11px').replace('15px', '11px'),
-        rotorPickFuture: rfu.pick,
-        rotorImmediateStyle: rim.style.replace('15px', '11px').replace('15px', '11px'),
-        rotorPickImmediate: rim.pick,
+        okStyle: shrink(ok.style), okMark: ok.mark, pickOk: ok.pick,
+        futureStyle: shrink(fu.style), futureMark: fu.mark, pickFuture: fu.pick,
+        immediateStyle: shrink(im.style), immediateMark: im.mark, pickImmediate: im.pick,
       };
-    });
+    };
+    const wheels = WHEELS.map(([code, title, align, justify], idx) => ({
+      title, align, justify,
+      cellStyle: 'padding: 6px 8px; border-bottom: 1px solid #cbd5e1;' +
+        (idx % 2 === 0 ? ' border-right: 1px solid #cbd5e1;' : ''),
+      liningDots: dotCluster('wheel-' + code + '-lining'),
+      treadDots: dotCluster('wheel-' + code + '-tread'),
+      wearDots: dotCluster('wheel-' + code + '-wear'),
+      rotorDots: dotCluster('rotor-' + code),
+      lining: '', tread: '', wear: '', psiBefore: '', psiAfter: '',
+    }));
 
     const damageChoices = ['No prior damage observed', 'Prior damage observed'].map((label, i) => {
       const on = this.state.damage === i;

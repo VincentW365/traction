@@ -1,9 +1,9 @@
 {
   "artboards": [
-    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1048, "h": 1300, "title": "Vehicle Inspection Report", "print": "fixed" },
-    { "file": "JobCard.dc.html", "x": 1160, "y": 0, "w": 842, "h": 990, "title": "Service Centre Job Card", "print": "fixed" },
-    { "file": "InspectionsHub.dc.html", "x": 0, "y": 1450, "w": 1248, "h": 780, "title": "Inspections Hub" },
-    { "file": "PreInspection.dc.html", "x": 1360, "y": 1450, "w": 390, "h": 1290, "title": "Pre-Inspection (mobile)" }
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1048, "h": 1620, "title": "Vehicle Inspection Report", "print": "fixed" },
+    { "file": "JobCard.dc.html", "x": 1160, "y": 0, "w": 842, "h": 1240, "title": "Service Centre Job Card", "print": "fixed" },
+    { "file": "InspectionsHub.dc.html", "x": 0, "y": 1770, "w": 1248, "h": 940, "title": "Inspections Hub" },
+    { "file": "PreInspection.dc.html", "x": 1360, "y": 1770, "w": 390, "h": 1290, "title": "Pre-Inspection (mobile)" }
   ],
   "annotations": [
     {
@@ -11,14 +11,14 @@
       "x": 0,
       "y": -150,
       "w": 420,
-      "text": "The two paper forms, rebuilt.\n\nEvery result starts blank — nothing is pre-ticked. Click a box to set it, click it again to clear it back to Not Inspected.\n\nColour is never the only signal: the key at the foot of the inspection carries O / F / I / N / — so it survives a black-and-white print."
+      "text": "The two paper forms, rebuilt.\n\nEvery result starts blank — nothing is pre-ticked and no measurement is pre-filled. Click a box to set it, click it again to clear it back to Not Inspected.\n\nColour is never the only signal: a selected box shows its letter (O / F / I / N), so the form survives a black-and-white print."
     },
     {
       "id": "screens-note",
       "x": 0,
-      "y": 1310,
+      "y": 1630,
       "w": 420,
-      "text": "The screens around them.\n\nHub tabs and filters are live. The pre-inspection is drawn at phone width and shown full-length — on a device it scrolls under the sticky action bar."
+      "text": "The screens around them.\n\nHub tabs and the two toggle filters really filter the rows; the dropdown filters are drawn only. The pre-inspection is phone width, shown full length — on a device it scrolls under the sticky action bar."
     }
   ],
   "launch": { "view": "canvas" }

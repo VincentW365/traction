@@ -130,7 +130,7 @@
 </x-dc>
 
 <script data-dc-script data-props='{
-  "$preview": {"width": 1248, "height": 900}
+  "$preview": {"width": 1248, "height": 940}
 }'>
 class Component extends DCLogic {
   constructor(props) {
@@ -139,17 +139,42 @@ class Component extends DCLogic {
   }
 
   renderVals() {
-    const TABS = [
-      ['Active', '12'],
-      ['Vehicle Inspections', '48'],
-      ['Pre-Inspections', '96'],
-      ['History', '211'],
+    // Each record carries its lane: ACTIVE (drafts, completed awaiting optional
+    // sign-off, records on live visits) or HISTORY (signed off, closed, skipped,
+    // incomplete after the visit closed). Tabs and toggles genuinely filter — a tab
+    // that only restyles itself is a drawing of a tab.
+    const DATA = [
+      ['INS-004821', 'VEHICLE', 'Sample Customer', '2019 Toyota Corolla · SAMPLE-01', 'DRAFT', 'A. Technician', 3, 0, 'ACTIVE'],
+      ['PRE-001902', 'PRE', 'Second Sample', '2021 Honda CR-V · SAMPLE-02', 'COMPLETED', 'S. Advisor', 0, 6, 'ACTIVE'],
+      ['INS-004820', 'VEHICLE', 'Third Sample', '2017 Nissan X-Trail · SAMPLE-03', 'COMPLETED', 'A. Technician', 1, 2, 'ACTIVE'],
+      ['PRE-001901', 'PRE', 'Fourth Sample', '2015 Mazda 3 · SAMPLE-04', 'COMPLETED', 'S. Advisor', 0, 4, 'HISTORY'],
+      ['INS-004819', 'VEHICLE', 'Fifth Sample', '2020 Suzuki Vitara · SAMPLE-05', 'SIGNED_OFF', 'Senior Tech', 2, 0, 'HISTORY'],
+      ['INS-004818', 'VEHICLE', 'Sixth Sample', '2013 Toyota Hilux · SAMPLE-06', 'INCOMPLETE', 'A. Technician', 0, 0, 'HISTORY'],
+      ['INS-004817', 'VEHICLE', 'Seventh Sample', '2018 Kia Sportage · SAMPLE-07', 'SKIPPED', 'S. Advisor', 0, 0, 'HISTORY'],
     ];
-    const tabs = TABS.map(([label, count], i) => {
+
+    const matchesTab = (row, tab) => {
+      const [, kind, , , , , , , lane] = row;
+      if (tab === 0) return lane === 'ACTIVE';
+      if (tab === 1) return kind === 'VEHICLE';
+      if (tab === 2) return kind === 'PRE';
+      return lane === 'HISTORY';
+    };
+    const matchesToggles = (row) => {
+      const [, , , , , , findings, photos] = row;
+      if (this.state.withPhotos && photos === 0) return false;
+      if (this.state.withFindings && findings === 0) return false;
+      return true;
+    };
+
+    const TABS = ['Active', 'Vehicle Inspections', 'Pre-Inspections', 'History'];
+    const tabs = TABS.map((label, i) => {
       const on = this.state.tab === i;
       return {
         label,
-        count,
+        // Counts are computed from the same rows the tab shows, so the pill and the
+        // table can never disagree.
+        count: String(DATA.filter((r) => matchesTab(r, i)).length),
         pick: () => this.setState({ tab: i }),
         style: 'display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px;' +
           ' font-size: 13px; cursor: pointer; border-bottom: 2px solid ' +
@@ -196,16 +221,9 @@ class Component extends DCLogic {
       SKIPPED: ['Skipped', badge('#f1f5f9', '#64748b')],
     };
 
-    const DATA = [
-      ['INS-004821', 'VEHICLE', 'Sample Customer', '2019 Toyota Corolla · SAMPLE-01', 'DRAFT', 'A. Technician', 3, 0],
-      ['PRE-001902', 'PRE', 'Second Sample', '2021 Honda CR-V · SAMPLE-02', 'COMPLETED', 'S. Advisor', 0, 6],
-      ['INS-004820', 'VEHICLE', 'Third Sample', '2017 Nissan X-Trail · SAMPLE-03', 'COMPLETED', 'A. Technician', 1, 2],
-      ['PRE-001901', 'PRE', 'Fourth Sample', '2015 Mazda 3 · SAMPLE-04', 'COMPLETED', 'S. Advisor', 0, 4],
-      ['INS-004819', 'VEHICLE', 'Fifth Sample', '2020 Suzuki Vitara · SAMPLE-05', 'SIGNED_OFF', 'Senior Tech', 2, 0],
-      ['INS-004818', 'VEHICLE', 'Sixth Sample', '2013 Toyota Hilux · SAMPLE-06', 'INCOMPLETE', 'A. Technician', 0, 0],
-    ];
-
-    const rows = DATA.map(([number, kind, customer, vehicle, status, staff, findings, photos]) => ({
+    const rows = DATA.filter((r) => matchesTab(r, this.state.tab))
+      .filter(matchesToggles)
+      .map(([number, kind, customer, vehicle, status, staff, findings, photos]) => ({
       number,
       kind: KIND[kind][0],
       kindStyle: KIND[kind][1],

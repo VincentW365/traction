@@ -117,8 +117,10 @@
 </div>
 </div>
 
-<!-- Sticky action bar -->
-<div style="position: fixed; left: 0; right: 0; bottom: 0; background: #ffffff; border-top: 1px solid #e2e8f0; box-shadow: 0 -1px 3px rgba(15,23,42,0.07); padding: 11px 14px; display: flex; gap: 10px; align-items: center;">
+<!-- Sticky action bar: in flow, pinned only while content scrolls past it. Fixed
+     positioning resolved against the frame, not the phone viewport, and floated the
+     bar over the middle of the page when the full length was shown. -->
+<div style="position: sticky; bottom: 0; margin-top: 14px; background: #ffffff; border-top: 1px solid #e2e8f0; box-shadow: 0 -1px 3px rgba(15,23,42,0.07); padding: 11px 14px; display: flex; gap: 10px; align-items: center;">
   <button style="border-radius: 6px; border: 1px solid #cbd5e1; background: #ffffff; padding: 0 15px; min-height: 46px; font-size: 13.5px; font-weight: 500; color: #334155; cursor: pointer;">Cancel</button>
   <button style="flex-grow: 1; border-radius: 6px; border: 1px solid #cbd5e1; background: #ffffff; padding: 0 15px; min-height: 46px; font-size: 13.5px; font-weight: 500; color: #334155; cursor: pointer;">Save Draft</button>
   <button style="flex-grow: 1.3; border-radius: 6px; background: #16a34a; border: none; padding: 0 15px; min-height: 46px; font-size: 13.5px; font-weight: 600; color: #ffffff; cursor: pointer;">Complete</button>
@@ -129,12 +131,14 @@
   "vehicle": {"editor": "text", "default": "2021 Honda CR-V"},
   "customer": {"editor": "text", "default": "Second Sample · SAMPLE-02"},
   "notes": {"editor": "text", "default": "Scuff on front bumper, driver side.\nRear passenger door has a shallow dent."},
-  "$preview": {"width": 390, "height": 844}
+  "$preview": {"width": 390, "height": 1290}
 }'>
 class Component extends DCLogic {
   constructor(props) {
     super(props);
-    this.state = { damage: 0, primary: 0 };
+    // The worked example answers Yes because its notes describe a scuff and a dent —
+    // an example that contradicts itself teaches the form wrong.
+    this.state = { damage: 1, primary: 0 };
   }
 
   renderVals() {
@@ -183,7 +187,7 @@ class Component extends DCLogic {
         { label: 'Fuel level', value: 'Half', colour: '#0f172a' },
         { label: 'Warning lights', value: 'None visible', colour: '#0f172a' },
         { label: 'Items left inside', value: 'Child seat', colour: '#0f172a' },
-        { label: 'Odometer', value: '41,208', colour: '#0f172a' },
+        { label: 'Odometer', value: '41,208 KM', colour: '#0f172a' },
       ],
     };
   }
