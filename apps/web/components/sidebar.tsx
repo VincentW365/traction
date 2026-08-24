@@ -79,11 +79,12 @@ const NAV_ITEMS: NavItem[] = [
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.488 9A9.004 9.004 0 0015 3.512V9h5.488z" /></svg>,
   },
-  {
-    href: '/reports/benchmark-review', label: 'Benchmark Review', section: 'Management',
-    roles: ['ADMIN'],
-    icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>,
-  },
+  // Benchmark Review deliberately has no nav entry. Since CR-2026-092 every service
+  // carries a contribution policy before it can be booked, so the held-jobs queue
+  // should stay empty for good — the page still exists at /reports/benchmark-review
+  // as a safety net, and the KPI dashboard shows an amber banner linking to it the
+  // moment anything is actually held. An always-visible menu item for an always-empty
+  // queue would only teach people to ignore it.
   {
     href: '/reports/shared-jobs', label: 'Shared Jobs', section: 'Management',
     roles: ['ADMIN'],
@@ -101,47 +102,47 @@ const NAV_ITEMS: NavItem[] = [
   },
   // Admin section
   {
-    href: '/admin/staff', label: 'Staff', section: 'Admin',
+    href: '/admin/staff', label: 'Staff', section: 'Setup',
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>,
   },
   {
-    href: '/admin/availability', label: 'Availability', section: 'Admin',
+    href: '/admin/availability', label: 'Availability', section: 'Setup',
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>,
   },
   {
-    href: '/admin/performance', label: 'Performance', section: 'Admin',
+    href: '/admin/performance', label: 'Performance', section: 'Setup',
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>,
   },
   {
-    href: '/admin/assignments', label: 'Assignments', section: 'Admin',
+    href: '/admin/assignments', label: 'Assignments', section: 'Setup',
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>,
   },
   {
-    href: '/admin/service-catalogue', label: 'Services', section: 'Admin',
+    href: '/admin/service-catalogue', label: 'Services', section: 'Setup',
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>,
   },
   {
-    href: '/admin/kpi-mapping', label: 'KPI Mapping', section: 'Admin',
+    href: '/admin/kpi-mapping', label: 'KPI Mapping', section: 'Setup',
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2zM10 7h4a3 3 0 013 3v4" /></svg>,
   },
   {
-    href: '/admin/resources', label: 'Resources', section: 'Admin',
+    href: '/admin/resources', label: 'Resources', section: 'Setup',
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>,
   },
   {
-    href: '/admin/integrations', label: 'Integrations', section: 'Admin',
+    href: '/admin/integrations', label: 'Integrations', section: 'Setup',
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>,
   },
   {
-    href: '/admin/audit-logs', label: 'Audit Logs', section: 'Admin',
+    href: '/admin/audit-logs', label: 'Audit Logs', section: 'Setup',
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>,
   },

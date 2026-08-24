@@ -21,11 +21,9 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api-client';
 import {
-  KpiCalculationPanel,
   type KpiCalculationBreakdown,
   type KpiCalculationLine,
 } from './kpi-calculation-panel';
-import { KPI_PACKAGE_LABEL } from './kpi-strip';
 import {
   AXLE_LABEL,
   BRAKE_AXLE_OPTIONS,
@@ -73,37 +71,12 @@ export function useBenchmarkReadiness(orderId: string) {
   });
 }
 
-/**
- * The endpoint hands back the calculation engine's own shape; the panel asks for a
- * display shape. Vehicle class is not on the readiness response at all, so it comes
- * from the live KPI endpoint — which reads the started job's frozen class where
- * there is one, and the vehicle's current class before that.
- */
-function toBreakdown(
-  readiness: BenchmarkReadiness,
-  vehicleClass: string | null,
-): KpiCalculationBreakdown {
-  const calc = readiness.calculation;
-  return {
-    // A catalogue composite has no package allowance to name. Labelling it
-    // "Custom (not benchmarked)" against a blank figure reads as a fault rather
-    // than as the ordinary way a non-package job is measured.
-    packageLabel:
-      calc.basePackageMinutes != null
-        ? (KPI_PACKAGE_LABEL[calc.packageType] ?? calc.packageType)
-        : null,
-    basePackageMinutes: calc.basePackageMinutes,
-    lines: calc.contributions,
-    additiveMinutes: calc.additiveMinutes,
-    finalStandardMinutes: calc.finalStandardMinutes,
-    benchmarkSource: calc.benchmarkSource,
-    vehicleClass,
-    provisionalDurationsUsed: calc.provisionalDurationsUsed,
-    missingQualifiers: calc.missingQualifiers.map((m) => ({
-      serviceCode: m.serviceCode,
-      message: m.message,
-    })),
-  };
+/** "90" is a database value; "about 1 h 30 min" is what a person plans around. */
+function formatApproxMinutes(minutes: number): string {
+  if (minutes < 60) return `about ${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `about ${h} h` : `about ${h} h ${m} min`;
 }
 
 interface Props {
@@ -128,15 +101,6 @@ export function ServiceQualifiers({
     queryKey: ['service-order-lines', orderId],
     queryFn: () => api.get(`/service-orders/${orderId}`),
     enabled: !items,
-  });
-
-  // Same cache key the technician's job card already uses, so the class costs a
-  // request only on screens that were not reading the live position anyway.
-  const live = useQuery<{ vehicleClass: string | null }>({
-    queryKey: ['kpi-live', orderId],
-    queryFn: () => api.get(`/kpi/orders/${orderId}/live`),
-    enabled: showCalculation,
-    retry: false,
   });
 
   const save = useMutation({
@@ -264,17 +228,27 @@ export function ServiceQualifiers({
 
       {showCalculation && (
         <>
-          <KpiCalculationPanel breakdown={toBreakdown(data, live.data?.vehicleClass ?? null)} />
+          {/* Just how long the job should take. The full benchmark arithmetic and the
+              ratings it feeds are management material and live on the dispatch board
+              and the KPI reports — front-of-house needs a time, not a scorecard. */}
+          {data.calculation.finalStandardMinutes != null && (
+            <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              Approximate job time:{' '}
+              <span className="font-semibold text-slate-900">
+                {formatApproxMinutes(data.calculation.finalStandardMinutes)}
+              </span>
+            </p>
+          )}
 
           {/* Nobody on this screen can fix an unmapped service, so the note says who
-              can rather than leaving the reader to guess at the blank standard. */}
+              can rather than leaving the reader to guess at the blank estimate. */}
           {data.unmappedServiceTypeIds.length > 0 && (
             <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
               {data.unmappedServiceTypeIds.length === 1
-                ? 'One service on this job has no KPI mapping'
-                : `${data.unmappedServiceTypeIds.length} services on this job have no KPI mapping`}
-              , so it cannot be measured yet. An administrator sets this under Admin →
-              KPI Mapping.
+                ? 'One service on this job has no time standard configured'
+                : `${data.unmappedServiceTypeIds.length} services on this job have no time standard configured`}
+              , so an approximate job time cannot be shown yet. An administrator sets
+              this under Admin → KPI Mapping.
             </p>
           )}
         </>

@@ -249,11 +249,14 @@ export default function DisplayBoardPage() {
           {data.inService.map((item) => (
             <TicketCard key={item.ticketNumber} ticket={item.ticketNumber} accent={ACCENTS.amber}>
               <div className="text-right leading-none">
+                {/* This lane is for vehicles already under work. "Called — please
+                    proceed" belonged to the waiting lane's vocabulary and told a
+                    customer whose car was on the lift to come forward for nothing. */}
                 <div className="text-[clamp(1.1rem,1.8vw,2.1rem)] font-semibold text-amber-200">
-                  {item.bay ?? 'Called'}
+                  {item.bay ?? 'In Workshop'}
                 </div>
                 <div className="mt-1 text-[clamp(0.7rem,0.95vw,1.05rem)] font-medium uppercase tracking-wider text-amber-400/70">
-                  {item.bay ? 'Service Bay' : 'Please proceed'}
+                  {item.bay ? 'Service Bay' : 'Vehicle being worked on'}
                 </div>
               </div>
             </TicketCard>

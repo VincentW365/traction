@@ -276,7 +276,9 @@ export default function TechnicianWorkView() {
                     disabled={readyForQcMutation.isPending}
                     className="btn-success w-full py-4 text-lg font-bold rounded-lg active:scale-[0.98] transition-transform"
                   >
-                    {readyForQcMutation.isPending ? 'Sending…' : 'READY FOR QC'}
+                    {/* Says "review" to the technician while still routing to QC —
+                        finishing your work reads better than invoking a process. */}
+                    {readyForQcMutation.isPending ? 'Sending…' : 'FINISHED AND READY FOR REVIEW'}
                   </button>
                   <p className="text-[11px] text-slate-400 text-center">Marks your work finished and notifies the manager for a quality check.</p>
                 </div>
