@@ -945,16 +945,9 @@ function SignOffTab({ inspectionId }: { inspectionId: string }) {
       api.post(`/inspections/${inspectionId}/signoff`, { type: 'TYPED', typedName }),
     onSuccess: invalidate,
   });
-  const customerAck = useMutation({
-    mutationFn: (typedName: string) =>
-      api.post(`/inspections/${inspectionId}/customer-signoff`, { type: 'TYPED', typedName }),
-    onSuccess: invalidate,
-  });
-
   if (q.isLoading || !q.data) return <LoadingState message="Loading sign-off..." />;
   const inspection = q.data;
   const senior = inspection.signatures.find((s) => s.role === 'SENIOR_TECH');
-  const cust = inspection.signatures.find((s) => s.role === 'CUSTOMER');
   const canSign = inspection.status === 'COMPLETED' || inspection.status === 'SIGNED_OFF';
 
   return (
@@ -962,7 +955,7 @@ function SignOffTab({ inspectionId }: { inspectionId: string }) {
       <div className="card">
         <div className="card-header">
           <h2 className="text-sm font-semibold text-slate-900">
-            Sign-off &amp; acknowledgement — {inspection.inspectionNumber}
+            Sign-off — {inspection.inspectionNumber}
           </h2>
         </div>
         <div className="card-body space-y-5 text-xs">
@@ -988,24 +981,10 @@ function SignOffTab({ inspectionId }: { inspectionId: string }) {
             {signoff.isError && <p className="text-red-600 mt-1">{errText(signoff.error, 'Could not sign off.')}</p>}
           </div>
 
-          <div>
-            <div className="input-label">Customer acknowledgement</div>
-            <p className="text-[10.5px] text-slate-500 mb-1.5">
-              &ldquo;I acknowledge that the conditions recorded above were presented to me. This
-              acknowledgement does not by itself authorize additional repairs.&rdquo;
-            </p>
-            {cust ? (
-              <p className="text-slate-800">
-                Acknowledged by <span className="font-medium">{cust.typedName ?? 'signature on record'}</span> ·{' '}
-                {new Date(cust.signedAt).toLocaleString()}
-              </p>
-            ) : canSign ? (
-              <SignInput placeholder="Customer name" cta="Record" onSubmit={(n) => customerAck.mutate(n)} />
-            ) : (
-              <p className="text-slate-400">Waiting for completion.</p>
-            )}
-            {customerAck.isError && <p className="text-red-600 mt-1">{errText(customerAck.error, 'Could not record.')}</p>}
-          </div>
+          {/* Customer acknowledgement removed from this tab at the owner's direction
+              (2026-08-24). The customer signs on the JOB SHEET; the inspection's
+              sign-off is the senior technician's alone. The API endpoint remains for
+              historical records that already carry a customer signature. */}
         </div>
       </div>
     </div>
