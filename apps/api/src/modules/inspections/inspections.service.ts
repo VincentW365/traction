@@ -59,6 +59,44 @@ export class InspectionsService {
     }
   }
 
+  /**
+   * CR-2026-093 — technicians see the inspections for THEIR work, not the whole
+   * shop's. Managers and advisors keep full site visibility; a technician's view is
+   * limited to visits carrying an assignment that resolves to their own account.
+   *
+   * Expressed as a where-fragment so the list query and the by-id check enforce the
+   * same rule from one definition.
+   */
+  private technicianScope(actor: InspectionActor): Prisma.VehicleInspectionWhereInput | null {
+    if (actor.role !== 'TECHNICIAN') return null;
+    return {
+      OR: [
+        {
+          serviceVisit: {
+            serviceOrders: {
+              some: { assignments: { some: { technician: { userAccountId: actor.sub } } } },
+            },
+          },
+        },
+        // Their own records regardless of assignment: a pre-inspection is often taken
+        // at the car BEFORE the assignment exists, and a technician must not lose
+        // sight of a record they just created.
+        { performedByUserId: actor.sub },
+        { createdByUserId: actor.sub },
+      ],
+    };
+  }
+
+  private async assertTechnicianCanSee(inspectionId: string, actor: InspectionActor): Promise<void> {
+    const scope = this.technicianScope(actor);
+    if (!scope) return;
+    const visible = await this.prisma.vehicleInspection.findFirst({
+      where: { id: inspectionId, ...scope },
+      select: { id: true },
+    });
+    if (!visible) throw new NotFoundException('Inspection not found');
+  }
+
   async create(dto: CreateInspectionDto, actor: InspectionActor) {
     const visit = await this.prisma.serviceVisit.findUnique({
       where: { id: dto.serviceVisitId },
@@ -158,6 +196,8 @@ export class InspectionsService {
     if (query.serviceVisitId) where.serviceVisitId = query.serviceVisitId;
     if (query.customerId) where.customerId = query.customerId;
     if (query.kind) where.kind = query.kind;
+    const techScope = this.technicianScope(actor);
+    if (techScope) Object.assign(where, techScope);
 
     // Explicit status wins; otherwise `active` narrows to the work-still-needed set
     // (DRAFT/COMPLETED/SIGNED_OFF), dropping CLOSED/CANCELLED off the worklist.
@@ -230,6 +270,7 @@ export class InspectionsService {
     const inspection = await this.prisma.vehicleInspection.findUnique({ where: { id }, include: DETAIL_INCLUDE });
     if (!inspection) throw new NotFoundException('Inspection not found');
     this.assertSameSite(inspection.siteId, actor);
+    await this.assertTechnicianCanSee(id, actor);
     const timeline = await this.statusHistory.findByEntity(ENTITY, id);
     return { ...inspection, timeline };
   }

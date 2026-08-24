@@ -8,18 +8,15 @@ import { api, getToken } from '../../../../lib/api-client';
 import { LoadingState } from '../../../../components/ui/loading-state';
 
 /**
- * CR-2026-093 — the inspection record itself.
+ * CR-2026-093 — the inspection workspace for one visit.
  *
- * Two kinds share this route. A VEHICLE_INSPECTION renders as a digital adaptation
- * of the shop's paper Visual Vehicle Inspection Report — same section order, same
- * green/amber/red language, same four-wheel grid, document-styled — backed by the
- * item rows the API snapshotted from the template. A PRE_INSPECTION renders as the
- * photo-first condition record.
+ * One vehicle, three tabs: the Visual Inspection Form, the photo-first
+ * Pre-Inspection, and Sign Off. All three stay mounted while you switch, so a
+ * technician can be halfway through the checklist, flip to Pre-Inspection to add an
+ * arrival photo, and come back without losing a single unsaved tick.
  *
- * The honest-form rules carry through from the API: nothing starts ticked, a
- * selected result shows its LETTER (O/F/I/N) so a black-and-white print still
- * reads, clicking a selected box clears it back to Not Inspected, and completing
- * with untouched items warns with the exact count instead of silently passing them.
+ * Print, Skip and Cancel sit UNDER the form — the document reads first, the
+ * paperwork actions follow it, and only Save/Complete ride the sticky bar.
  */
 
 // ---------------------------------------------------------------------------
@@ -42,13 +39,6 @@ interface Wheel {
   tirePressureBeforePsi: number | null;
   tirePressureAfterPsi: number | null;
   rotorOrDrum: string | null;
-}
-interface Recommendation {
-  id: string;
-  severity: string;
-  description: string;
-  customerDecision: string;
-  suggestedServiceTypeCode: string | null;
 }
 interface Photo {
   id: string;
@@ -82,13 +72,18 @@ interface Inspection {
   serviceVisit: { id: string; status: string } | null;
   items: Item[];
   wheelMeasurements: Wheel[];
-  recommendations: Recommendation[];
   signatures: Array<{ id: string; role: string; typedName: string | null; signedAt: string }>;
   photos: Photo[];
 }
+interface SiblingRow {
+  id: string;
+  kind: 'VEHICLE_INSPECTION' | 'PRE_INSPECTION';
+  status: string;
+  createdAt: string;
+}
 
 // ---------------------------------------------------------------------------
-// Result vocabulary — the paper form's own letters, never colour alone
+// Result vocabulary — the form's letters, never colour alone
 // ---------------------------------------------------------------------------
 
 const RESULTS = [
@@ -128,14 +123,17 @@ function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
-/** Photographs are behind an authenticated endpoint; an <img src> cannot carry the token. */
+function apiBase(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? `${window.location.protocol}//${window.location.hostname}:3001/api/v1`;
+}
+
+/** Photographs sit behind an authenticated endpoint; an <img src> cannot carry the token. */
 function usePhotoUrl(inspectionId: string, photoId: string): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     let objectUrl: string | null = null;
-    const base = process.env.NEXT_PUBLIC_API_URL ?? `${window.location.protocol}//${window.location.hostname}:3001/api/v1`;
-    fetch(`${base}/inspections/${inspectionId}/photos/${photoId}/file`, {
+    fetch(`${apiBase()}/inspections/${inspectionId}/photos/${photoId}/file`, {
       headers: { Authorization: `Bearer ${getToken() ?? ''}` },
     })
       .then((r) => (r.ok ? r.blob() : null))
@@ -155,18 +153,44 @@ function usePhotoUrl(inspectionId: string, photoId: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Page
+// Workspace shell
 // ---------------------------------------------------------------------------
 
-export default function InspectionDetailPage() {
+type TabKey = 'form' | 'pre' | 'signoff';
+
+const TABS: Array<{ key: TabKey; label: string }> = [
+  { key: 'form', label: 'Visual Inspection Form' },
+  { key: 'pre', label: 'Pre-Inspection' },
+  { key: 'signoff', label: 'Sign Off' },
+];
+
+export default function InspectionWorkspacePage() {
   const { id } = useParams<{ id: string }>();
-  const q = useQuery<Inspection>({
+  const qc = useQueryClient();
+
+  const opened = useQuery<Inspection>({
     queryKey: ['inspection', id],
     queryFn: () => api.get(`/inspections/${id}`),
   });
 
-  if (q.isLoading) return <div className="page-container"><LoadingState message="Loading inspection..." /></div>;
-  if (q.isError || !q.data) {
+  const visitId = opened.data?.serviceVisit?.id;
+
+  // Everything this visit carries, so the tabs can address both kinds at once.
+  const siblings = useQuery<{ items: SiblingRow[] }>({
+    queryKey: ['visit-inspections', visitId],
+    queryFn: () => api.get(`/inspections?serviceVisitId=${visitId}&take=50`),
+    enabled: !!visitId,
+  });
+
+  const [tab, setTab] = useState<TabKey | null>(null);
+  useEffect(() => {
+    if (tab === null && opened.data) {
+      setTab(opened.data.kind === 'PRE_INSPECTION' ? 'pre' : 'form');
+    }
+  }, [tab, opened.data]);
+
+  if (opened.isLoading) return <div className="page-container"><LoadingState message="Loading inspection..." /></div>;
+  if (opened.isError || !opened.data) {
     return (
       <div className="page-container">
         <div className="card p-6 text-center border-red-200 bg-red-50">
@@ -175,21 +199,148 @@ export default function InspectionDetailPage() {
       </div>
     );
   }
-  return q.data.kind === 'PRE_INSPECTION'
-    ? <PreInspectionView inspection={q.data} />
-    : <VehicleInspectionForm inspection={q.data} />;
+
+  const live = (kind: SiblingRow['kind']) =>
+    (siblings.data?.items ?? [])
+      .filter((s) => s.kind === kind && !['CANCELLED'].includes(s.status))
+      .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))[0] ??
+    (opened.data!.kind === kind ? { id: opened.data!.id, kind, status: opened.data!.status, createdAt: opened.data!.createdAt } : undefined);
+
+  const vehicleRec = live('VEHICLE_INSPECTION');
+  const preRec = live('PRE_INSPECTION');
+  const v = opened.data.vehicle;
+  const c = opened.data.customer;
+
+  const refreshSiblings = () => qc.invalidateQueries({ queryKey: ['visit-inspections', visitId] });
+
+  return (
+    <div className="page-container max-w-5xl">
+      {/* Vehicle strip + tabs */}
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+        <div className="flex items-center gap-3 min-w-0">
+          <Link href="/inspections" className="text-xs text-blue-600 hover:underline shrink-0">← Inspections</Link>
+          <span className="text-sm font-semibold text-slate-900 truncate">
+            {v ? `${v.modelYear ?? ''} ${v.make ?? ''} ${v.model ?? ''}`.trim() : 'Vehicle'} · {v?.plateNumber ?? '—'}
+          </span>
+          <span className="text-xs text-slate-500 truncate">{c ? `${c.firstName} ${c.lastName}` : ''}</span>
+        </div>
+        {visitId && (
+          <Link href={`/inspections/job-sheet/${visitId}`} className="btn-secondary text-xs shrink-0">Job Sheet</Link>
+        )}
+      </div>
+
+      <div className="flex gap-1 border-b border-slate-200 mb-4 sticky top-0 bg-slate-50 z-10 pt-1">
+        {TABS.map((t) => {
+          const rec = t.key === 'pre' ? preRec : vehicleRec;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`px-4 py-2 text-sm border-b-2 -mb-px flex items-center gap-2 ${
+                tab === t.key
+                  ? 'border-blue-600 text-blue-700 font-semibold'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              {t.label}
+              {t.key !== 'signoff' && rec && (
+                <span className="badge bg-slate-100 text-slate-500 text-[9px]">{STATUS_LABEL[rec.status] ?? rec.status}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* All panels stay mounted — switching tabs must never cost unsaved work. */}
+      <div className={tab === 'form' ? '' : 'hidden'}>
+        {vehicleRec ? (
+          <VehicleInspectionForm inspectionId={vehicleRec.id} />
+        ) : (
+          <StartStub
+            kind="VEHICLE_INSPECTION"
+            visitId={visitId!}
+            label="No vehicle inspection exists for this visit yet."
+            cta="Start Vehicle Inspection"
+            onCreated={refreshSiblings}
+          />
+        )}
+      </div>
+      <div className={tab === 'pre' ? '' : 'hidden'}>
+        {preRec ? (
+          <PreInspectionView inspectionId={preRec.id} />
+        ) : (
+          <StartStub
+            kind="PRE_INSPECTION"
+            visitId={visitId!}
+            label="No pre-inspection exists for this visit yet."
+            cta="Start Pre-Inspection"
+            onCreated={refreshSiblings}
+          />
+        )}
+      </div>
+      <div className={tab === 'signoff' ? '' : 'hidden'}>
+        {vehicleRec ? (
+          <SignOffTab inspectionId={vehicleRec.id} />
+        ) : (
+          <div className="card p-6 text-center">
+            <p className="text-sm text-slate-500">Sign-off belongs to the vehicle inspection — start one first.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StartStub({
+  kind, visitId, label, cta, onCreated,
+}: {
+  kind: 'VEHICLE_INSPECTION' | 'PRE_INSPECTION';
+  visitId: string;
+  label: string;
+  cta: string;
+  onCreated: () => void;
+}) {
+  const create = useMutation({
+    mutationFn: () => api.post<{ id: string }>('/inspections', { serviceVisitId: visitId, kind }),
+    onSuccess: onCreated,
+  });
+  return (
+    <div className="card p-8 text-center">
+      <p className="text-sm text-slate-500 mb-3">{label} Inspections are optional — start one only when it is wanted.</p>
+      <button onClick={() => create.mutate()} disabled={create.isPending} className="btn-primary text-sm">
+        {create.isPending ? 'Starting…' : cta}
+      </button>
+      {create.isError && <p className="text-xs text-red-600 mt-2">{errText(create.error, 'Could not start the record.')}</p>}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
-// The Vehicle Inspection — document-styled, from the paper form
+// The Vehicle Inspection — the document
 // ---------------------------------------------------------------------------
 
-function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
+function VehicleInspectionForm({ inspectionId }: { inspectionId: string }) {
   const qc = useQueryClient();
   const router = useRouter();
+
+  const q = useQuery<Inspection>({
+    queryKey: ['inspection', inspectionId],
+    queryFn: () => api.get(`/inspections/${inspectionId}`),
+  });
+
+  if (q.isLoading || !q.data) return <LoadingState message="Loading form..." />;
+  return <VehicleInspectionFormInner key={inspectionId} inspection={q.data} qc={qc} router={router} />;
+}
+
+function VehicleInspectionFormInner({
+  inspection, qc, router,
+}: {
+  inspection: Inspection;
+  qc: ReturnType<typeof useQueryClient>;
+  router: ReturnType<typeof useRouter>;
+}) {
   const editable = inspection.status === 'DRAFT';
 
-  // Local editing state, initialised once from the record.
   const [results, setResults] = useState<Record<string, string>>(() =>
     Object.fromEntries(inspection.items.map((i) => [i.id, i.result])),
   );
@@ -236,7 +387,6 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
       invalidate();
     },
   });
-
   const complete = useMutation({
     mutationFn: () => api.post(`/inspections/${inspection.id}/complete`, {}),
     onSuccess: invalidate,
@@ -248,16 +398,6 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
   const cancel = useMutation({
     mutationFn: () => api.post(`/inspections/${inspection.id}/cancel`, {}),
     onSuccess: () => router.push('/inspections'),
-  });
-  const signoff = useMutation({
-    mutationFn: (typedName: string) =>
-      api.post(`/inspections/${inspection.id}/signoff`, { type: 'TYPED', typedName }),
-    onSuccess: invalidate,
-  });
-  const customerAck = useMutation({
-    mutationFn: (typedName: string) =>
-      api.post(`/inspections/${inspection.id}/customer-signoff`, { type: 'TYPED', typedName }),
-    onSuccess: invalidate,
   });
 
   const notInspectedCount = useMemo(
@@ -288,8 +428,6 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
     setDirty(true);
   };
 
-  // Sections in the paper form's order: Battery moves to the right column; the
-  // rest keep the template's own sequence on the left.
   const grouped = useMemo(() => {
     const map = new Map<string, Item[]>();
     for (const it of inspection.items) {
@@ -298,49 +436,22 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
     }
     return map;
   }, [inspection.items]);
-  const leftSections = [...grouped.entries()].filter(([c]) => c !== 'Battery');
+  const leftSections = [...grouped.entries()].filter(([cat]) => cat !== 'Battery');
   const batteryItems = grouped.get('Battery') ?? [];
 
   const v = inspection.vehicle;
   const c = inspection.customer;
 
   return (
-    <div className="page-container max-w-5xl">
-      {/* Toolbar — deliberately outside the document */}
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <div className="flex items-center gap-3">
-          <Link href="/inspections" className="text-xs text-blue-600 hover:underline">← Inspections</Link>
-          <span className="badge bg-indigo-50 text-indigo-700 text-[11px]">Vehicle Inspection</span>
-          <span className="badge bg-slate-100 text-slate-600 text-[11px]">{STATUS_LABEL[inspection.status] ?? inspection.status}</span>
-          {dirty && <span className="text-[11px] text-amber-600">Unsaved changes</span>}
-        </div>
-        <div className="flex gap-2">
-          <Link href={`/inspections/${inspection.id}/print`} className="btn-secondary text-xs">Print</Link>
-          {editable && (
-            <>
-              <button
-                onClick={() => {
-                  const reason = prompt('Mark this inspection as deliberately skipped. Reason:');
-                  if (reason?.trim()) skip.mutate(reason.trim());
-                }}
-                className="btn-secondary text-xs"
-              >
-                Skip
-              </button>
-              <button
-                onClick={() => confirm('Cancel this inspection record? Use this only for records created in error.') && cancel.mutate()}
-                className="btn-secondary text-xs text-red-600"
-              >
-                Cancel Record
-              </button>
-            </>
-          )}
-        </div>
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="badge bg-indigo-50 text-indigo-700 text-[11px]">Vehicle Inspection</span>
+        <span className="badge bg-slate-100 text-slate-600 text-[11px]">{STATUS_LABEL[inspection.status] ?? inspection.status}</span>
+        {dirty && <span className="text-[11px] text-amber-600">Unsaved changes</span>}
       </div>
 
       {/* The document */}
       <div className="bg-white border border-slate-400 shadow-sm">
-        {/* Letterhead */}
         <div className="flex items-center justify-between gap-4 px-5 pt-4 pb-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/berts-logo.png" alt="Bert's Auto Parts" className="h-11 w-auto" />
@@ -353,7 +464,6 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
           <div className="h-[3px] bg-slate-900 mt-1.5" />
         </div>
 
-        {/* Header fields — auto-filled, never retyped */}
         <div className="px-5 pb-3 grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1.5 text-[11px]">
           <HeaderField label="Customer" value={c ? `${c.firstName} ${c.lastName}` : '—'} />
           <HeaderField label="Yr./Make/Model" value={v ? `${v.modelYear ?? ''} ${v.make ?? ''} ${v.model ?? ''}`.trim() || '—' : '—'} />
@@ -361,9 +471,7 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
           <HeaderField label="Date" value={new Date(inspection.createdAt).toLocaleDateString()} />
         </div>
 
-        {/* Two-column body */}
         <div className="grid grid-cols-1 lg:grid-cols-2 border-t-2 border-slate-900">
-          {/* LEFT */}
           <div className="lg:border-r-2 lg:border-slate-900">
             <Legend />
             {leftSections.map(([category, items]) => (
@@ -376,7 +484,6 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
             ))}
           </div>
 
-          {/* RIGHT */}
           <div className="border-t-2 border-slate-900 lg:border-t-0">
             <div className="hidden lg:block"><Legend /></div>
             <SectionBar title="Battery" />
@@ -384,7 +491,6 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
               <ItemRow key={it.id} item={it} value={results[it.id]} editable={editable} onPick={setResult} />
             ))}
 
-            {/* Battery test + CCA */}
             <div className="flex items-center gap-4 px-3 py-2 border-b border-slate-300 flex-wrap">
               {(
                 [
@@ -422,26 +528,21 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
               </div>
             </div>
 
-            {/* Brake and tire */}
             <SectionBar title="Brake and Tire" />
-            <div className="relative">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/tire-decor.png" alt="" aria-hidden className="hidden" />
-              <div className="grid grid-cols-1 sm:grid-cols-2">
-                {(['LEFT_FRONT', 'RIGHT_FRONT', 'LEFT_REAR', 'RIGHT_REAR'] as const).map((pos, idx) => (
-                  <WheelCard
-                    key={pos}
-                    position={pos}
-                    wheel={wheels[pos] ?? {}}
-                    editable={editable}
-                    bordered={idx % 2 === 0}
-                    onChange={(patch) => {
-                      setWheels((w) => ({ ...w, [pos]: { ...w[pos], ...patch } }));
-                      setDirty(true);
-                    }}
-                  />
-                ))}
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2">
+              {(['LEFT_FRONT', 'RIGHT_FRONT', 'LEFT_REAR', 'RIGHT_REAR'] as const).map((pos, idx) => (
+                <WheelCard
+                  key={pos}
+                  position={pos}
+                  wheel={wheels[pos] ?? {}}
+                  editable={editable}
+                  bordered={idx % 2 === 0}
+                  onChange={(patch) => {
+                    setWheels((w) => ({ ...w, [pos]: { ...w[pos], ...patch } }));
+                    setDirty(true);
+                  }}
+                />
+              ))}
             </div>
             <div className="flex flex-wrap justify-between gap-2 px-3 py-2 border-y border-slate-300 text-[10.5px] font-bold text-slate-900">
               <Tick label="Alignment Check Needed" on={flags.alignmentCheckNeeded} editable={editable}
@@ -452,7 +553,6 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
                 onToggle={() => { setFlags((f) => ({ ...f, brakeInspectionPerformed: !f.brakeInspectionPerformed })); setDirty(true); }} />
             </div>
 
-            {/* Prior body damage */}
             <SectionBar title="Prior Body Damage" />
             <div className="p-3 bg-slate-50">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -467,7 +567,6 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
               />
             </div>
 
-            {/* Comments */}
             <SectionBar title="Comments / Estimates" />
             <div className="p-3">
               <textarea
@@ -482,7 +581,6 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
           </div>
         </div>
 
-        {/* Result key — letters, never colour alone */}
         <div className="border-t-2 border-slate-900 px-5 py-2.5 flex flex-wrap gap-4 items-center bg-slate-50">
           <span className="text-[10px] font-extrabold tracking-wider text-slate-900">RESULT KEY</span>
           {RESULTS.map((r) => (
@@ -499,14 +597,29 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
         </div>
       </div>
 
-      {/* Photographs */}
-      <PhotoSection inspection={inspection} editable={editable || inspection.status === 'COMPLETED'} onChanged={invalidate} />
-
-      {/* Findings and recommendations */}
-      <RecommendationSection inspection={inspection} editable={editable} onChanged={invalidate} />
-
-      {/* Sign-off — optional, never blocking */}
-      <SignatureSection inspection={inspection} onSignoff={(n) => signoff.mutate(n)} onAck={(n) => customerAck.mutate(n)} />
+      {/* Paperwork actions — under the form, as asked */}
+      <div className="flex items-center gap-2 mt-3">
+        <Link href={`/inspections/${inspection.id}/print`} className="btn-secondary text-xs">Print</Link>
+        {editable && (
+          <>
+            <button
+              onClick={() => {
+                const reason = prompt('Mark this inspection as deliberately skipped. Reason:');
+                if (reason?.trim()) skip.mutate(reason.trim());
+              }}
+              className="btn-secondary text-xs"
+            >
+              Skip
+            </button>
+            <button
+              onClick={() => confirm('Cancel this inspection record? Use this only for records created in error.') && cancel.mutate()}
+              className="btn-secondary text-xs text-red-600"
+            >
+              Cancel Record
+            </button>
+          </>
+        )}
+      </div>
 
       {(save.isError || complete.isError || skip.isError) && (
         <p className="text-xs text-red-600 mt-3">
@@ -514,7 +627,6 @@ function VehicleInspectionForm({ inspection }: { inspection: Inspection }) {
         </p>
       )}
 
-      {/* Sticky actions */}
       {editable && (
         <div className="sticky bottom-0 mt-4 -mx-4 px-4 py-3 bg-white border-t border-slate-200 shadow-[0_-1px_3px_rgba(15,23,42,0.08)] flex gap-2 justify-end">
           <span className="mr-auto self-center text-[11px] text-slate-500">
@@ -675,7 +787,7 @@ function Tick({ label, on, editable, onToggle }: { label: string; on: boolean; e
 }
 
 // ---------------------------------------------------------------------------
-// Photographs (shared by both kinds)
+// Photographs (the pre-inspection's substance)
 // ---------------------------------------------------------------------------
 
 function PhotoThumb({ inspectionId, photo, editable, onDelete }: {
@@ -731,11 +843,10 @@ function PhotoSection({ inspection, editable, onChanged }: {
     setUploading(true);
     setUploadError(null);
     try {
-      const base = process.env.NEXT_PUBLIC_API_URL ?? `${window.location.protocol}//${window.location.hostname}:3001/api/v1`;
       const form = new FormData();
       form.append('file', file);
       form.append('category', category);
-      const res = await fetch(`${base}/inspections/${inspection.id}/photos/upload`, {
+      const res = await fetch(`${apiBase()}/inspections/${inspection.id}/photos/upload`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${getToken() ?? ''}` },
         body: form,
@@ -800,114 +911,83 @@ function PhotoSection({ inspection, editable, onChanged }: {
 }
 
 // ---------------------------------------------------------------------------
-// Recommendations
+// Sign Off tab
 // ---------------------------------------------------------------------------
 
-function RecommendationSection({ inspection, editable, onChanged }: {
-  inspection: Inspection;
-  editable: boolean;
-  onChanged: () => void;
-}) {
-  const [desc, setDesc] = useState('');
-  const [severity, setSeverity] = useState('FUTURE');
-
-  const add = useMutation({
-    mutationFn: () => api.post(`/inspections/${inspection.id}/recommendations`, { severity, description: desc.trim() }),
-    onSuccess: () => { setDesc(''); onChanged(); },
+function SignOffTab({ inspectionId }: { inspectionId: string }) {
+  const qc = useQueryClient();
+  const q = useQuery<Inspection>({
+    queryKey: ['inspection', inspectionId],
+    queryFn: () => api.get(`/inspections/${inspectionId}`),
   });
-  const decide = useMutation({
-    mutationFn: (v: { rid: string; decision: string }) =>
-      api.patch(`/inspections/${inspection.id}/recommendations/${v.rid}/decision`, { decision: v.decision }),
-    onSuccess: onChanged,
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['inspection', inspectionId] });
+
+  const signoff = useMutation({
+    mutationFn: (typedName: string) =>
+      api.post(`/inspections/${inspectionId}/signoff`, { type: 'TYPED', typedName }),
+    onSuccess: invalidate,
+  });
+  const customerAck = useMutation({
+    mutationFn: (typedName: string) =>
+      api.post(`/inspections/${inspectionId}/customer-signoff`, { type: 'TYPED', typedName }),
+    onSuccess: invalidate,
   });
 
-  return (
-    <div className="card mt-4">
-      <div className="card-header">
-        <h2 className="text-sm font-semibold text-slate-900">Findings &amp; Recommendations ({inspection.recommendations.length})</h2>
-      </div>
-      <div className="card-body space-y-2">
-        {inspection.recommendations.map((r) => (
-          <div key={r.id} className="flex items-center gap-3 border-b border-slate-100 pb-2 last:border-0 text-xs">
-            <span className={`badge text-[10px] ${r.severity === 'IMMEDIATE' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
-              {r.severity === 'IMMEDIATE' ? 'Immediate' : 'Future'}
-            </span>
-            <span className="flex-grow text-slate-800">{r.description}</span>
-            <span className="badge bg-slate-100 text-slate-600 text-[10px]">{r.customerDecision.toLowerCase()}</span>
-            {r.customerDecision === 'PENDING' && (
-              <div className="flex gap-1">
-                {['APPROVED', 'DECLINED', 'DEFERRED'].map((d) => (
-                  <button key={d} onClick={() => decide.mutate({ rid: r.id, decision: d })}
-                    className="btn-secondary text-[10px] py-0.5 px-1.5">
-                    {d.charAt(0) + d.slice(1).toLowerCase()}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-        {inspection.recommendations.length === 0 && (
-          <p className="text-xs text-slate-500">No findings recorded.</p>
-        )}
-        {editable && (
-          <div className="flex gap-2 pt-1">
-            <select value={severity} onChange={(e) => setSeverity(e.target.value)} className="input-field w-auto text-xs">
-              <option value="FUTURE">Future attention</option>
-              <option value="IMMEDIATE">Immediate</option>
-            </select>
-            <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Describe the finding…" className="input-field text-xs flex-grow" />
-            <button onClick={() => desc.trim() && add.mutate()} disabled={add.isPending} className="btn-secondary text-xs">Add</button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Signatures — optional by design
-// ---------------------------------------------------------------------------
-
-function SignatureSection({ inspection, onSignoff, onAck }: {
-  inspection: Inspection;
-  onSignoff: (name: string) => void;
-  onAck: (name: string) => void;
-}) {
+  if (q.isLoading || !q.data) return <LoadingState message="Loading sign-off..." />;
+  const inspection = q.data;
   const senior = inspection.signatures.find((s) => s.role === 'SENIOR_TECH');
   const cust = inspection.signatures.find((s) => s.role === 'CUSTOMER');
   const canSign = inspection.status === 'COMPLETED' || inspection.status === 'SIGNED_OFF';
 
   return (
-    <div className="card mt-4">
-      <div className="card-header">
-        <h2 className="text-sm font-semibold text-slate-900">Sign-off &amp; Acknowledgement (optional)</h2>
-      </div>
-      <div className="card-body grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-        <div>
-          <div className="input-label">Advisor / Senior Technician</div>
-          {senior ? (
-            <p className="text-slate-800">Signed by <span className="font-medium">{senior.typedName ?? 'signature on record'}</span> · {new Date(senior.signedAt).toLocaleString()}</p>
-          ) : canSign ? (
-            <SignInput placeholder="Type name to sign off" cta="Sign Off" onSubmit={onSignoff} />
-          ) : (
-            <p className="text-slate-400">Available once the inspection is completed.</p>
-          )}
+    <div className="max-w-2xl">
+      <div className="card">
+        <div className="card-header">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Sign-off &amp; acknowledgement — {inspection.inspectionNumber}
+          </h2>
         </div>
-        <div>
-          <div className="input-label">Customer acknowledgement</div>
-          {cust ? (
-            <p className="text-slate-800">Acknowledged by <span className="font-medium">{cust.typedName ?? 'signature on record'}</span> · {new Date(cust.signedAt).toLocaleString()}</p>
-          ) : canSign ? (
-            <>
-              <p className="text-[10.5px] text-slate-500 mb-1.5">
-                &ldquo;I acknowledge that the conditions recorded above were presented to me. This
-                acknowledgement does not by itself authorize additional repairs.&rdquo;
-              </p>
-              <SignInput placeholder="Customer name" cta="Record" onSubmit={onAck} />
-            </>
-          ) : (
-            <p className="text-slate-400">Available once the inspection is completed.</p>
+        <div className="card-body space-y-5 text-xs">
+          {!canSign && (
+            <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">
+              Sign-off becomes available once the inspection is completed. It stays optional — the
+              visit never waits for a signature.
+            </p>
           )}
+
+          <div>
+            <div className="input-label">Advisor / Senior Technician</div>
+            {senior ? (
+              <p className="text-slate-800">
+                Signed by <span className="font-medium">{senior.typedName ?? 'signature on record'}</span> ·{' '}
+                {new Date(senior.signedAt).toLocaleString()}
+              </p>
+            ) : canSign ? (
+              <SignInput placeholder="Type name to sign off" cta="Sign Off" onSubmit={(n) => signoff.mutate(n)} />
+            ) : (
+              <p className="text-slate-400">Waiting for completion.</p>
+            )}
+            {signoff.isError && <p className="text-red-600 mt-1">{errText(signoff.error, 'Could not sign off.')}</p>}
+          </div>
+
+          <div>
+            <div className="input-label">Customer acknowledgement</div>
+            <p className="text-[10.5px] text-slate-500 mb-1.5">
+              &ldquo;I acknowledge that the conditions recorded above were presented to me. This
+              acknowledgement does not by itself authorize additional repairs.&rdquo;
+            </p>
+            {cust ? (
+              <p className="text-slate-800">
+                Acknowledged by <span className="font-medium">{cust.typedName ?? 'signature on record'}</span> ·{' '}
+                {new Date(cust.signedAt).toLocaleString()}
+              </p>
+            ) : canSign ? (
+              <SignInput placeholder="Customer name" cta="Record" onSubmit={(n) => customerAck.mutate(n)} />
+            ) : (
+              <p className="text-slate-400">Waiting for completion.</p>
+            )}
+            {customerAck.isError && <p className="text-red-600 mt-1">{errText(customerAck.error, 'Could not record.')}</p>}
+          </div>
         </div>
       </div>
     </div>
@@ -935,7 +1015,16 @@ const NO_PHOTO_REASONS = [
   ['OTHER', 'Other'],
 ] as const;
 
-function PreInspectionView({ inspection }: { inspection: Inspection }) {
+function PreInspectionView({ inspectionId }: { inspectionId: string }) {
+  const q = useQuery<Inspection>({
+    queryKey: ['inspection', inspectionId],
+    queryFn: () => api.get(`/inspections/${inspectionId}`),
+  });
+  if (q.isLoading || !q.data) return <LoadingState message="Loading pre-inspection..." />;
+  return <PreInspectionInner key={inspectionId} inspection={q.data} />;
+}
+
+function PreInspectionInner({ inspection }: { inspection: Inspection }) {
   const qc = useQueryClient();
   const router = useRouter();
   const editable = inspection.status === 'DRAFT';
@@ -953,8 +1042,8 @@ function PreInspectionView({ inspection }: { inspection: Inspection }) {
   const [dirty, setDirty] = useState(false);
   const [noPhotoDialog, setNoPhotoDialog] = useState(false);
   const [noPhotoReason, setNoPhotoReason] = useState<string>('CAMERA_UNAVAILABLE');
-  const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => {
-    setForm((f) => ({ ...f, [k]: v }));
+  const set = <K extends keyof typeof form>(k: K, val: (typeof form)[K]) => {
+    setForm((f) => ({ ...f, [k]: val }));
     setDirty(true);
   };
 
@@ -995,63 +1084,22 @@ function PreInspectionView({ inspection }: { inspection: Inspection }) {
   };
 
   const confirmNoPhoto = async () => {
-    // The reason rides the same draft update, then completion proceeds.
     await save.mutateAsync({ noPhotoReason });
     setNoPhotoDialog(false);
     complete.mutate();
   };
 
-  const v = inspection.vehicle;
-  const c = inspection.customer;
-
   return (
-    <div className="page-container max-w-2xl">
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <div className="flex items-center gap-3">
-          <Link href="/inspections" className="text-xs text-blue-600 hover:underline">← Inspections</Link>
-          <span className="badge bg-cyan-50 text-cyan-700 text-[11px]">Pre-Inspection</span>
-          <span className="badge bg-slate-100 text-slate-600 text-[11px]">{STATUS_LABEL[inspection.status] ?? inspection.status}</span>
-          {dirty && <span className="text-[11px] text-amber-600">Unsaved changes</span>}
-        </div>
-        {editable && (
-          <div className="flex gap-2">
-            <button
-              onClick={() => {
-                const reason = prompt('Mark this pre-inspection as deliberately skipped. Reason:');
-                if (reason?.trim()) skip.mutate(reason.trim());
-              }}
-              className="btn-secondary text-xs"
-            >
-              Skip
-            </button>
-            <button
-              onClick={() => confirm('Cancel this record? Only for records created in error.') && cancel.mutate()}
-              className="btn-secondary text-xs text-red-600"
-            >
-              Cancel Record
-            </button>
-          </div>
-        )}
+    <div className="max-w-2xl">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="badge bg-cyan-50 text-cyan-700 text-[11px]">Pre-Inspection</span>
+        <span className="badge bg-slate-100 text-slate-600 text-[11px]">{STATUS_LABEL[inspection.status] ?? inspection.status}</span>
+        <span className="text-[11px] text-slate-400">{inspection.inspectionNumber}</span>
+        {dirty && <span className="text-[11px] text-amber-600">Unsaved changes</span>}
       </div>
 
-      {/* Vehicle summary */}
-      <div className="card p-4 mb-4">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <div className="text-sm font-semibold text-slate-900">
-              {v ? `${v.modelYear ?? ''} ${v.make ?? ''} ${v.model ?? ''}`.trim() : 'Vehicle'} · {v?.plateNumber ?? '—'}
-            </div>
-            <div className="text-xs text-slate-500 mt-0.5">
-              {c ? `${c.firstName} ${c.lastName}` : ''} · {inspection.inspectionNumber} · {new Date(inspection.createdAt).toLocaleString()}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Photo-first */}
       <PhotoSection inspection={inspection} editable={editable} onChanged={invalidate} />
 
-      {/* Condition record */}
       <div className="card mt-4">
         <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Condition on arrival</h2></div>
         <div className="card-body space-y-3 text-xs">
@@ -1117,6 +1165,27 @@ function PreInspectionView({ inspection }: { inspection: Inspection }) {
         </div>
       </div>
 
+      {/* Paperwork actions under the content, as on the form tab */}
+      {editable && (
+        <div className="flex items-center gap-2 mt-3">
+          <button
+            onClick={() => {
+              const reason = prompt('Mark this pre-inspection as deliberately skipped. Reason:');
+              if (reason?.trim()) skip.mutate(reason.trim());
+            }}
+            className="btn-secondary text-xs"
+          >
+            Skip
+          </button>
+          <button
+            onClick={() => confirm('Cancel this record? Only for records created in error.') && cancel.mutate()}
+            className="btn-secondary text-xs text-red-600"
+          >
+            Cancel Record
+          </button>
+        </div>
+      )}
+
       {(save.isError || complete.isError) && (
         <p className="text-xs text-red-600 mt-3">{errText(save.error ?? complete.error, 'Could not save.')}</p>
       )}
@@ -1132,7 +1201,6 @@ function PreInspectionView({ inspection }: { inspection: Inspection }) {
         </div>
       )}
 
-      {/* No-photo confirmation */}
       {noPhotoDialog && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center">
           <div className="card w-full max-w-sm mx-4">
@@ -1142,8 +1210,8 @@ function PreInspectionView({ inspection }: { inspection: Inspection }) {
                 Complete this pre-inspection without photographic evidence? A reason is recorded.
               </p>
               <select value={noPhotoReason} onChange={(e) => setNoPhotoReason(e.target.value)} className="input-field text-xs">
-                {NO_PHOTO_REASONS.map(([v2, l]) => (
-                  <option key={v2} value={v2}>{l}</option>
+                {NO_PHOTO_REASONS.map(([val, l]) => (
+                  <option key={val} value={val}>{l}</option>
                 ))}
               </select>
               <div className="flex justify-end gap-2">
