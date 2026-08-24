@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../../../../lib/api-client';
+import { SignaturePad } from '../../../../../components/signature-pad';
 import { LoadingState } from '../../../../../components/ui/loading-state';
 
 /**
@@ -40,6 +41,16 @@ interface JobSheetData {
     drivetrain: string | null;
   } | null;
   queueTicket: { ticketNumber: string } | null;
+  jobSheetDraft: {
+    data: {
+      fields?: Record<string, string>;
+      ticks?: Record<string, boolean>;
+      pair?: Record<string, boolean>;
+      directive?: string;
+    };
+    signatureImage: string | null;
+    updatedAt: string;
+  } | null;
   serviceOrders: Array<{
     id: string;
     notes: string | null;
@@ -114,16 +125,34 @@ export default function JobSheetPage() {
 
   const [ticks, setTicks] = useState<Record<string, boolean>>({});
   const [fields, setFields] = useState<Record<string, string>>({});
-  const setField = (key: string) => (v: string) => setFields((prev) => ({ ...prev, [key]: v }));
+  const [signature, setSignature] = useState<string | null>(null);
+  const [signing, setSigning] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const setField = (key: string) => (v: string) => {
+    setFields((prev) => ({ ...prev, [key]: v }));
+    setDirty(true);
+  };
   const [pair, setPair] = useState<Record<string, boolean>>({}); // ATM/MTM, 4WD/2WD, fuel
   const [directive, setDirective] = useState('');
   const [initialised, setInitialised] = useState(false);
 
   const d = q.data;
 
-  // Pre-tick from the real order once, then leave the person in charge.
+  // A saved sheet is restored exactly as it was left; only a visit with no saved
+  // sheet is pre-filled from what the system knows.
   if (d && !initialised) {
     setInitialised(true);
+    if (d.jobSheetDraft?.data) {
+      const saved = d.jobSheetDraft.data;
+      setFields(saved.fields ?? {});
+      setTicks(saved.ticks ?? {});
+      setPair(saved.pair ?? {});
+      setDirective(saved.directive ?? '');
+      setSignature(d.jobSheetDraft.signatureImage);
+      setSavedAt(d.jobSheetDraft.updatedAt);
+      // eslint-disable-next-line no-constant-condition
+    } else {
     const codes = new Set(d.serviceOrders.flatMap((o) => o.items.map((i) => i.serviceType.code)));
     const auto: Record<string, boolean> = {};
     for (const t of SERVICE_TICKS) if (t.codes.some((c) => codes.has(c))) auto[t.key] = true;
@@ -154,7 +183,11 @@ export default function JobSheetPage() {
       preparedBy: '',
       mechanic: d.serviceOrders[0]?.assignments[0]?.technician?.userAccount?.fullName ?? '',
       salesInv: '',
+      // The signature date pre-fills like the header date — today is when the
+      // customer is standing at the desk signing.
+      sigDate: new Date().toLocaleDateString(),
     });
+    }
   }
 
   if (q.isLoading) return <div className="page-container"><LoadingState message="Loading job sheet..." /></div>;
@@ -170,8 +203,9 @@ export default function JobSheetPage() {
 
   const c = d.customer;
   const v = d.vehicle;
-  const togglePair = (group: string[], key: string) =>
-    setPair((p) => {
+  const togglePair = (group: string[], key: string) => {
+    setDirty(true);
+    return setPair((p) => {
       const next = { ...p };
       // One per group, and clicking the ticked one clears it.
       const was = next[key];
@@ -179,13 +213,43 @@ export default function JobSheetPage() {
       if (!was) next[key] = true;
       return next;
     });
+  };
+
+  const saveDraft = useMutation({
+    mutationFn: () =>
+      api.put<{ saved: boolean; updatedAt: string }>(`/service-visits/${visitId}/job-sheet-draft`, {
+        data: { fields, ticks, pair, directive },
+        signatureImage: signature,
+      }),
+    onSuccess: (r: { updatedAt: string }) => {
+      setDirty(false);
+      setSavedAt(r.updatedAt);
+    },
+  });
 
   return (
     <div className="page-container max-w-3xl">
       <div className="flex items-center justify-between mb-3 print:hidden">
-        <Link href="/inspections" className="text-xs text-blue-600 hover:underline">← Inspections</Link>
-        <button onClick={() => window.print()} className="btn-primary text-sm">Print</button>
+        <div className="flex items-center gap-3">
+          <Link href="/inspections" className="text-xs text-blue-600 hover:underline">← Inspections</Link>
+          {dirty ? (
+            <span className="text-[11px] text-amber-600">Unsaved changes</span>
+          ) : savedAt ? (
+            <span className="text-[11px] text-slate-400">Saved {new Date(savedAt).toLocaleTimeString()}</span>
+          ) : null}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => saveDraft.mutate()} disabled={saveDraft.isPending} className="btn-secondary text-sm">
+            {saveDraft.isPending ? 'Saving…' : 'Save'}
+          </button>
+          <button onClick={() => window.print()} className="btn-primary text-sm">Print</button>
+        </div>
       </div>
+      {saveDraft.isError && (
+        <p className="text-xs text-red-600 mb-2 print:hidden">
+          {saveDraft.error instanceof Error ? saveDraft.error.message : 'Could not save the sheet.'}
+        </p>
+      )}
 
       {/* The card */}
       <div className="bg-white border border-slate-400 shadow-sm px-7 py-6 print:border-0 print:shadow-none">
@@ -303,14 +367,56 @@ export default function JobSheetPage() {
           </div>
         </div>
 
-        {/* Signature */}
-        <div className="flex items-baseline justify-center gap-3 mt-6">
+        {/* Signature — drawn in a pop-up, shown on the line, printed as ink */}
+        <div className="flex items-end justify-center gap-3 mt-6">
           <span className="text-[11px] font-extrabold text-slate-900">CUSTOMER&apos;S SIGNATURE:</span>
-          <span className="border-b border-slate-900 w-52" />
-          <span className="text-[11px] font-extrabold text-slate-900">DATE:</span>
-          <span className="border-b border-slate-900 w-36" />
+          <button
+            type="button"
+            onClick={() => setSigning(true)}
+            className="border-b border-slate-900 w-52 h-10 flex items-end justify-center print:pointer-events-none"
+            title={signature ? 'Redraw signature' : 'Tap to sign'}
+          >
+            {signature ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={signature} alt="Customer signature" className="max-h-9 max-w-full object-contain" />
+            ) : (
+              <span className="text-[9px] text-slate-300 pb-0.5 print:hidden">tap to sign</span>
+            )}
+          </button>
+          <div className="w-36">
+            <Line label="DATE:" value={fields.sigDate ?? ''} onChange={setField('sigDate')} />
+          </div>
         </div>
       </div>
+
+      {signing && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center print:hidden">
+          <div className="card w-full max-w-md mx-4">
+            <div className="card-header flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-900">Customer signature</h3>
+              <button onClick={() => setSigning(false)} className="text-slate-400 hover:text-slate-600 text-lg leading-none">×</button>
+            </div>
+            <div className="card-body space-y-3">
+              <p className="text-[11px] text-slate-500">Sign in the box below — finger or stylus both work.</p>
+              <SignaturePad
+                onChange={(dataUrl) => {
+                  setSignature(dataUrl);
+                  setDirty(true);
+                }}
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => { setSignature(null); setDirty(true); }}
+                  className="btn-secondary text-xs"
+                >
+                  Remove signature
+                </button>
+                <button onClick={() => setSigning(false)} className="btn-primary text-xs">Done</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <p className="text-[11px] text-slate-400 mt-3 print:hidden">
         Every line, tick and the directive are editable here and print exactly as shown — anything

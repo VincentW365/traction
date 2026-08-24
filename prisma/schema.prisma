@@ -915,6 +915,29 @@ model AppointmentService {
   @@map("appointment_services")
 }
 
+/// CR-2026-093 — the saved state of a visit's job sheet.
+///
+/// The sheet is a fill-and-print artefact, so its draft is ONE document per visit:
+/// typed lines, ticks, the directive and the drawn signature, stored whole rather
+/// than modelled field-by-field. Deliberately not operational data — filling the
+/// sheet never changes the visit's booked services.
+model JobSheetDraft {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceVisitId  String   @unique @map("service_visit_id") @db.Uuid
+  /// Lines, ticks, pair selections and the directive, as one JSON document.
+  data            Json
+  /// Drawn customer signature as a data URL, following the inspection-signature
+  /// precedent (CR-2026-046) for this deployment without an object store.
+  signatureImage  String?  @map("signature_image")
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  serviceVisit ServiceVisit @relation(fields: [serviceVisitId], references: [id], onDelete: Cascade)
+
+  @@map("job_sheet_drafts")
+}
+
 model ServiceVisit {
   id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   siteId               String              @map("site_id") @db.Uuid
@@ -964,6 +987,8 @@ model ServiceVisit {
 
   complaints  Complaint[] // CR-2026-032 — customer complaints
   inspections VehicleInspection[] // CR-2026-034 — visual inspections
+
+  jobSheetDraft JobSheetDraft?
 
   @@index([siteId, status])
   @@index([customerId, vehicleId])

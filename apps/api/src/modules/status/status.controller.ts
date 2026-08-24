@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, NotFoundException, BadRequestException, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Put, Param, Body, NotFoundException, BadRequestException, UseGuards, ParseUUIDPipe } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -236,6 +236,10 @@ export class ServiceVisitCompletionController {
             },
           },
         },
+        // The saved sheet, when one exists — the page restores it over the prefill.
+        jobSheetDraft: {
+          select: { data: true, signatureImage: true, updatedAt: true },
+        },
       },
     });
     if (!visit) throw new NotFoundException(`ServiceVisit ${id} not found`);
@@ -243,6 +247,66 @@ export class ServiceVisitCompletionController {
       throw new NotFoundException(`ServiceVisit ${id} not found`);
     }
     return visit;
+  }
+
+  /**
+   * CR-2026-093 — save the sheet as filled.
+   *
+   * Upsert of one document per visit: whoever saves last owns the sheet, which
+   * matches how the paper card works on a clipboard. The audit entry records who
+   * and when, never the signature image itself.
+   */
+  @Put(':id/job-sheet-draft')
+  @RequirePermission(PERMISSIONS.QUEUE_VIEW)
+  @ApiOperation({ summary: 'Save the filled job sheet for a visit (fields, ticks, directive, signature)' })
+  async saveJobSheetDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { data?: Record<string, unknown>; signatureImage?: string | null },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const visit = await this.prisma.serviceVisit.findUnique({
+      where: { id },
+      select: { id: true, siteId: true },
+    });
+    if (!visit) throw new NotFoundException(`ServiceVisit ${id} not found`);
+    if (user.role !== 'ADMIN' && user.siteId !== visit.siteId) {
+      throw new NotFoundException(`ServiceVisit ${id} not found`);
+    }
+    if (!body?.data || typeof body.data !== 'object') {
+      throw new BadRequestException('Nothing to save.');
+    }
+    if (body.signatureImage && !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(body.signatureImage)) {
+      throw new BadRequestException('The signature payload is not a valid image.');
+    }
+    if (body.signatureImage && body.signatureImage.length > 500_000) {
+      throw new BadRequestException('The signature image is unexpectedly large — clear and redraw it.');
+    }
+
+    const draft = await this.prisma.jobSheetDraft.upsert({
+      where: { serviceVisitId: id },
+      update: {
+        data: body.data as never,
+        signatureImage: body.signatureImage ?? null,
+        updatedByUserId: user.sub,
+      },
+      create: {
+        serviceVisitId: id,
+        data: body.data as never,
+        signatureImage: body.signatureImage ?? null,
+        updatedByUserId: user.sub,
+      },
+      select: { updatedAt: true },
+    });
+
+    await this.audit.log({
+      actorUserId: user.sub,
+      action: 'JOB_SHEET_SAVED',
+      entityType: 'ServiceVisit',
+      entityId: id,
+      afterJson: { hasSignature: !!body.signatureImage },
+      notes: 'Job sheet draft saved',
+    });
+    return { saved: true, updatedAt: draft.updatedAt };
   }
 
   @Patch(':id/completion')
