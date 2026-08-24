@@ -185,7 +185,12 @@ export class TechniciansService {
       include: {
         userAccount: { select: { fullName: true } },
         skills: { select: { skillCode: true } },
-        assignments: { where: { status: { in: OPEN_ASSIGNMENT_STATUSES }, endedAt: null }, select: { id: true } },
+        assignments: {
+          where: { status: { in: OPEN_ASSIGNMENT_STATUSES }, endedAt: null },
+          // CR-2026-098b — the order status decides how much an assignment weighs:
+          // a job parked in WAITING_PARTS is not the same load as active work.
+          select: { id: true, serviceOrder: { select: { status: true } } },
+        },
         availability: { where: { date: today }, select: { status: true, shiftStart: true, shiftEnd: true } },
       },
       orderBy: { employeeCode: 'asc' },
@@ -215,10 +220,18 @@ export class TechniciansService {
       .filter((t) => candidates.has(t.id))
       .map((t) => {
         const openAssignments = t.assignments.length;
+        // CR-2026-098b — split load by what the underlying job is doing. A
+        // technician whose only job sits in WAITING_PARTS/WAITING_CUSTOMER/PAUSED
+        // is standing at an idle bench: dispatchable now, still responsible for
+        // resuming the held job later. Active work carries the full penalty;
+        // held work a reduced one.
+        const HELD = new Set(['PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER']);
+        const activeAssignments = t.assignments.filter((a) => !HELD.has(a.serviceOrder.status)).length;
+        const heldAssignments = openAssignments - activeAssignments;
         const shiftStatus = t.availability[0]?.status ?? 'NOT_SCHEDULED';
         const availabilityBonus =
           shiftStatus === 'AVAILABLE' ? 50 : shiftStatus === 'ON_BREAK' ? 10 : shiftStatus === 'NOT_SCHEDULED' ? 0 : -50;
-        const loadPenalty = openAssignments * 40;
+        const loadPenalty = activeAssignments * 40 + heldAssignments * 15;
         const skillBreadthBonus = t.skills.length;
         const score = 100 + availabilityBonus - loadPenalty + skillBreadthBonus;
         return {
@@ -227,9 +240,11 @@ export class TechniciansService {
           fullName: t.userAccount.fullName,
           skillCodes: t.skills.map((s) => s.skillCode),
           openAssignments,
+          activeAssignments,
+          heldAssignments,
           shiftStatus,
           shift: t.availability[0] ? { start: t.availability[0].shiftStart, end: t.availability[0].shiftEnd } : null,
-          available: openAssignments === 0 && (shiftStatus === 'AVAILABLE' || shiftStatus === 'NOT_SCHEDULED'),
+          available: activeAssignments === 0 && (shiftStatus === 'AVAILABLE' || shiftStatus === 'NOT_SCHEDULED'),
           score,
           scoreBreakdown: { base: 100, availabilityBonus, loadPenalty: -loadPenalty, skillBreadthBonus },
         };

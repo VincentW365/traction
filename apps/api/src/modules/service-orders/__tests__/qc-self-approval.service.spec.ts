@@ -15,7 +15,7 @@ function buildService(opts: { techId?: string | null; hasOwnAssignment?: boolean
   const { techId = null, hasOwnAssignment = false } = opts;
 
   const prisma: any = {
-    serviceOrder: { update: vi.fn(async ({ data }: any) => ({ id: 'so-1', ...data })) },
+    serviceOrder: (() => { let last = 'IN_PROGRESS'; return { update: vi.fn(async ({ data }: any) => { if (data.status) last = data.status; return { id: 'so-1', ...data }; }), findMany: vi.fn(async () => [{ status: last }]) }; })(),
     serviceVisit: { update: vi.fn(async () => ({})) },
     queueTicket: {
       findUnique: vi.fn(async () => ({ id: 'qt-1', displayStatus: 'IN_SERVICE' })),

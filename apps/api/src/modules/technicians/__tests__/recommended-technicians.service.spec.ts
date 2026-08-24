@@ -13,7 +13,7 @@ function build(over: { order?: unknown; technicians?: unknown[]; bays?: unknown[
   };
   const technicians = over.technicians ?? [
     { id: 'tA', employeeCode: 'E-A', userAccount: { fullName: 'Tech A' }, skills: [{ skillCode: 'BRK' }], assignments: [], availability: [{ status: 'AVAILABLE', shiftStart: '08:00', shiftEnd: '17:00' }] },
-    { id: 'tB', employeeCode: 'E-B', userAccount: { fullName: 'Tech B' }, skills: [{ skillCode: 'BRK' }], assignments: [{ id: 'a1' }], availability: [{ status: 'AVAILABLE', shiftStart: '08:00', shiftEnd: '17:00' }] },
+    { id: 'tB', employeeCode: 'E-B', userAccount: { fullName: 'Tech B' }, skills: [{ skillCode: 'BRK' }], assignments: [{ id: 'a1', serviceOrder: { status: 'IN_PROGRESS' } }], availability: [{ status: 'AVAILABLE', shiftStart: '08:00', shiftEnd: '17:00' }] },
     { id: 'tC', employeeCode: 'E-C', userAccount: { fullName: 'Tech C' }, skills: [{ skillCode: 'OIL' }], assignments: [], availability: [] },
   ];
   const bays = over.bays ?? [{ id: 'b1', code: 'B1', bayType: 'STANDARD' }, { id: 'b2', code: 'B2', bayType: 'HEAVY' }];
@@ -36,10 +36,29 @@ describe('TechniciansService.getRecommendedTechnicians (CR-2026-035)', () => {
     expect(r.requiredSkillCodes).toEqual(['BRK']);
   });
 
+  it('a technician whose only job waits for parts is dispatchable (CR-2026-098b)', async () => {
+    // A held job (WAITING_PARTS/PAUSED/WAITING_CUSTOMER) is an idle bench, not
+    // active load: reduced penalty, still available for new work.
+    const h = build({
+      technicians: [
+        { id: 'held', employeeCode: 'E-H', userAccount: { fullName: 'Held' }, skills: [{ skillCode: 'BRK' }], assignments: [{ id: 'h1', serviceOrder: { status: 'WAITING_PARTS' } }], availability: [{ status: 'AVAILABLE', shiftStart: '08:00', shiftEnd: '17:00' }] },
+        { id: 'busy', employeeCode: 'E-B', userAccount: { fullName: 'Busy' }, skills: [{ skillCode: 'BRK' }], assignments: [{ id: 'b1', serviceOrder: { status: 'IN_PROGRESS' } }], availability: [{ status: 'AVAILABLE', shiftStart: '08:00', shiftEnd: '17:00' }] },
+      ],
+    });
+    const res = await h.service.getRecommendedTechnicians('so1');
+    const held = res.technicians.find((r: any) => r.technicianId === 'held');
+    const busy = res.technicians.find((r: any) => r.technicianId === 'busy');
+    expect(held.available).toBe(true);
+    expect(held.heldAssignments).toBe(1);
+    expect(held.activeAssignments).toBe(0);
+    expect(busy.available).toBe(false);
+    expect(held.score).toBeGreaterThan(busy.score);
+  });
+
   it('ranks AVAILABLE + idle above ABSENT + loaded', async () => {
     const r = await build({
       technicians: [
-        { id: 'busy', employeeCode: 'E-1', userAccount: { fullName: 'Busy' }, skills: [{ skillCode: 'BRK' }], assignments: [{ id: 'x' }], availability: [{ status: 'ABSENT', shiftStart: '', shiftEnd: '' }] },
+        { id: 'busy', employeeCode: 'E-1', userAccount: { fullName: 'Busy' }, skills: [{ skillCode: 'BRK' }], assignments: [{ id: 'x', serviceOrder: { status: 'IN_PROGRESS' } }], availability: [{ status: 'ABSENT', shiftStart: '', shiftEnd: '' }] },
         { id: 'free', employeeCode: 'E-2', userAccount: { fullName: 'Free' }, skills: [{ skillCode: 'BRK' }], assignments: [], availability: [{ status: 'AVAILABLE', shiftStart: '08:00', shiftEnd: '17:00' }] },
       ],
     }).service.getRecommendedTechnicians('so1');

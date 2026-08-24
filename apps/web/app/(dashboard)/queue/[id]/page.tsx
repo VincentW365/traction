@@ -138,7 +138,7 @@ const ORDER_ACTIONS: Record<string, Array<{ label: string; toStatus: string; sty
   IN_PROGRESS: [
     { label: 'Mark Work Complete', toStatus: 'QC', style: 'btn-primary' },
     { label: 'Waiting for Parts', toStatus: 'WAITING_PARTS', style: 'btn-secondary' },
-    { label: 'Wait Customer', toStatus: 'WAITING_CUSTOMER', style: 'btn-secondary' },
+    { label: 'Waiting on Customer', toStatus: 'WAITING_CUSTOMER', style: 'btn-secondary' },
   ],
   WAITING_PARTS: [{ label: 'Resume Work', toStatus: 'IN_PROGRESS', style: 'btn-success' }],
   WAITING_CUSTOMER: [{ label: 'Resume Work', toStatus: 'IN_PROGRESS', style: 'btn-success' }],

@@ -12,7 +12,7 @@ import { ServiceOrdersService } from '../service-orders.service';
  */
 function buildService() {
   const prisma: any = {
-    serviceOrder: { update: vi.fn(async ({ data }: any) => ({ id: 'so-1', ...data })) },
+    serviceOrder: (() => { let last = 'IN_PROGRESS'; return { update: vi.fn(async ({ data }: any) => { if (data.status) last = data.status; return { id: 'so-1', ...data }; }), findMany: vi.fn(async () => [{ status: last }]) }; })(),
     serviceVisit: { update: vi.fn(async () => ({})) },
     technicianAssignment: { updateMany: vi.fn(async () => ({ count: 0 })) },
     queueTicket: {
@@ -128,13 +128,31 @@ describe('CR-2026-084 — QueueTicket stays in step with the work', () => {
     expect(h.prisma.queueTicket.update).not.toHaveBeenCalled();
   });
 
-  it('leaves the ticket alone for statuses that have no queue meaning', async () => {
+  it('a car waiting on parts stays IN_SERVICE — it is in a bay, not back in line', async () => {
+    // CR-2026-098b — the ticket status derives from all orders. A WAITING_PARTS
+    // order is still a working state: the car must not rejoin the waiting queue.
+    // (Fixture ticket reads WAITING, so the derive also self-heals it.)
     vi.spyOn(h.service, 'findById').mockResolvedValue(order('IN_PROGRESS') as any);
 
     await h.service.changeStatus('so-1', { toStatus: 'WAITING_PARTS' } as any, 'user-1');
 
-    // Parts blocking is the scheduler's job, driven by parts readiness — not a
-    // display-status write from here.
+    expect(h.prisma.queueTicket.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ displayStatus: 'IN_SERVICE' }) }),
+    );
+  });
+
+  it('a rework on ONE job does not send an actively-worked car back to the line', async () => {
+    // CR-2026-098b — sibling orders: one goes back to APPROVED (rework) while
+    // another is still IN_PROGRESS. Aggregate says the car is being worked.
+    h.prisma.serviceOrder.findMany.mockResolvedValueOnce([
+      { status: 'APPROVED' }, { status: 'IN_PROGRESS' },
+    ]);
+    h.prisma.queueTicket.findUnique.mockResolvedValueOnce({ id: 'qt-1', displayStatus: 'IN_SERVICE' });
+    vi.spyOn(h.service, 'findById').mockResolvedValue(order('QC') as any);
+
+    await h.service.changeStatus('so-1', { toStatus: 'APPROVED' } as any, 'user-1');
+
+    // Already IN_SERVICE and stays IN_SERVICE — no write back to WAITING.
     expect(h.prisma.queueTicket.update).not.toHaveBeenCalled();
   });
 });

@@ -43,13 +43,30 @@ const VALID_TRANSITIONS: Record<string, ServiceOrderStatus[]> = {
   CANCELLED: [],
 };
 
-// Map ServiceOrder status to the corresponding ServiceVisit status
-const ORDER_TO_VISIT_STATUS: Partial<Record<ServiceOrderStatus, string>> = {
-  IN_PROGRESS: 'IN_SERVICE',
-  WAITING_PARTS: 'WAITING_PARTS',
-  QC: 'QC',
-  READY_TO_INVOICE: 'READY_FOR_PICKUP',
-};
+// CR-2026-098b — the visit status derives from ALL of the visit's orders, not
+// from whichever order transitioned last. With one job waiting on parts and
+// another passing QC, last-write-wins drove the visit to READY_FOR_PICKUP —
+// telling the customer the car was ready while work sat blocked. Priority:
+// active work > parts block > quality check > ready. A single-order visit
+// reduces exactly to the old per-transition mapping (no behaviour change).
+function deriveVisitStatus(orderStatuses: ServiceOrderStatus[]): string | null {
+  const live = orderStatuses.filter((s) => s !== 'CANCELLED');
+  if (live.length === 0) return null;
+  if (live.some((s) => s === 'IN_PROGRESS')) return 'IN_SERVICE';
+  if (live.some((s) => s === 'WAITING_PARTS')) return 'WAITING_PARTS';
+  // PAUSED / WAITING_CUSTOMER carry no visit-level state of their own: the car
+  // is still in the service flow; the order badge carries the detail.
+  if (live.some((s) => s === 'PAUSED' || s === 'WAITING_CUSTOMER')) return 'IN_SERVICE';
+  if (live.some((s) => s === 'QC')) return 'QC';
+  if (live.every((s) => s === 'READY_TO_INVOICE' || s === 'CLOSED')) return 'READY_FOR_PICKUP';
+  // Only DRAFT/APPROVED/ASSIGNED remain — the queue owns the visit status.
+  return null;
+}
+
+// Order statuses whose transitions should re-derive the visit status.
+const VISIT_SYNC_TRIGGERS = new Set<ServiceOrderStatus>([
+  'IN_PROGRESS', 'WAITING_PARTS', 'WAITING_CUSTOMER', 'PAUSED', 'QC', 'READY_TO_INVOICE', 'CANCELLED',
+] as ServiceOrderStatus[]);
 
 /**
  * CR-2026-084 — map ServiceOrder status to the QueueTicket's display status.
@@ -64,14 +81,19 @@ const ORDER_TO_VISIT_STATUS: Partial<Record<ServiceOrderStatus, string>> = {
  * IN_SERVICE on the ticket until it is closed; the richer ServiceVisit status is
  * surfaced alongside it on the board instead.
  */
-const ORDER_TO_TICKET_STATUS: Partial<Record<ServiceOrderStatus, string>> = {
-  IN_PROGRESS: 'IN_SERVICE',
-  QC: 'IN_SERVICE',
-  READY_TO_INVOICE: 'IN_SERVICE',
-  // Back out of the working states: the car rejoins the waiting line and the next
-  // recompute gives it a position again.
-  APPROVED: 'WAITING',
-};
+// CR-2026-098b — like the visit status, the ticket's display status derives from
+// ALL orders: a rework sending ONE job back to APPROVED must not put a car that
+// is still actively being worked back into the waiting line.
+const WORKING_ORDER_STATUSES = new Set<ServiceOrderStatus>([
+  'IN_PROGRESS', 'PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER', 'QC', 'READY_TO_INVOICE',
+] as ServiceOrderStatus[]);
+
+function deriveTicketStatus(orderStatuses: ServiceOrderStatus[]): string | null {
+  const live = orderStatuses.filter((s) => s !== 'CANCELLED' && s !== 'CLOSED');
+  if (live.some((s) => WORKING_ORDER_STATUSES.has(s))) return 'IN_SERVICE';
+  if (live.some((s) => s === 'APPROVED' || s === 'ASSIGNED')) return 'WAITING';
+  return null;
+}
 
 // Transitions that should trigger a queue recompute
 const RECOMPUTE_TRIGGERS = new Set<ServiceOrderStatus>([
@@ -952,23 +974,29 @@ export class ServiceOrdersService {
       notes: dto.notes,
     });
 
-    // Update the ServiceVisit status to match when applicable
-    const visitStatus = ORDER_TO_VISIT_STATUS[toStatus];
-    if (visitStatus) {
-      await this.prisma.serviceVisit.update({
-        where: { id: order.serviceVisitId },
-        data: { status: visitStatus as any },
+    // Update the ServiceVisit status from the AGGREGATE of all its orders.
+    if (VISIT_SYNC_TRIGGERS.has(toStatus)) {
+      const siblingOrders = await this.prisma.serviceOrder.findMany({
+        where: { serviceVisitId: order.serviceVisitId },
+        select: { status: true },
       });
+      const visitStatus = deriveVisitStatus(siblingOrders.map((o) => o.status));
+      if (visitStatus && visitStatus !== order.serviceVisit.status) {
+        await this.prisma.serviceVisit.update({
+          where: { id: order.serviceVisitId },
+          data: { status: visitStatus as any },
+        });
 
-      await this.statusHistory.record({
-        entityType: 'ServiceVisit',
-        entityId: order.serviceVisitId,
-        fromStatus: order.serviceVisit.status,
-        toStatus: visitStatus,
-        changedByUserId: userId,
-        reasonCode: 'ORDER_STATUS_SYNC',
-        notes: `Synced from ServiceOrder ${id} transition to ${toStatus}`,
-      });
+        await this.statusHistory.record({
+          entityType: 'ServiceVisit',
+          entityId: order.serviceVisitId,
+          fromStatus: order.serviceVisit.status,
+          toStatus: visitStatus,
+          changedByUserId: userId,
+          reasonCode: 'ORDER_STATUS_SYNC',
+          notes: `Derived from all orders after ServiceOrder ${id} → ${toStatus}`,
+        });
+      }
     }
 
     // CR-2026-084 — keep the queue ticket in step with the work.
@@ -1009,10 +1037,19 @@ export class ServiceOrdersService {
     // state. One gesture for the technician; the correct first-class status (with
     // its scheduling semantics, visit/queue sync, and measured interval) underneath.
     // Never PAUSED-with-a-reason, which the parts views would not see.
-    if (dto.reasonCode === 'WAITING_PARTS') {
+    //
+    // CR-2026-098b — CUSTOMER_AUTHORIZATION is unified the same way: picking
+    // "Waiting for authorization" lands the order in the first-class
+    // WAITING_CUSTOMER state. Before this, the same operational condition lived
+    // in two places (a PAUSED reason and a status), and a ledger row reading
+    // CUSTOMER_AUTHORIZATION could have meant either. Now: the STATUS is always
+    // WAITING_CUSTOMER, and a CUSTOMER_AUTHORIZATION ledger row is always its
+    // measured interval — one condition, one representation.
+    if (dto.reasonCode === 'WAITING_PARTS' || dto.reasonCode === 'CUSTOMER_AUTHORIZATION') {
+      const toStatus = dto.reasonCode === 'WAITING_PARTS' ? 'WAITING_PARTS' : 'WAITING_CUSTOMER';
       return this.changeStatus(
         id,
-        { toStatus: 'WAITING_PARTS', reasonCode: 'WAITING_PARTS', notes: dto.notes },
+        { toStatus, reasonCode: dto.reasonCode, notes: dto.notes },
         userId,
       );
     }
@@ -1643,7 +1680,12 @@ export class ServiceOrdersService {
     serviceVisitId: string,
     toStatus: ServiceOrderStatus,
   ): Promise<void> {
-    const target = ORDER_TO_TICKET_STATUS[toStatus];
+    // CR-2026-098b — derive from ALL of the visit's orders (see deriveTicketStatus).
+    const siblings = await this.prisma.serviceOrder.findMany({
+      where: { serviceVisitId },
+      select: { status: true },
+    });
+    const target = deriveTicketStatus(siblings.map((o) => o.status));
     if (!target) return;
 
     const ticket = await this.prisma.queueTicket.findUnique({

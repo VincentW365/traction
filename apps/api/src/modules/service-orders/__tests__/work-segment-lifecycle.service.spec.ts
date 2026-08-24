@@ -20,6 +20,8 @@ function buildService(overrides: Record<string, any> = {}) {
       })),
       findUnique: vi.fn(async () => ({ id: 'so-1', status: 'ASSIGNED', isPrimary: true })),
       count: vi.fn(async () => 0),
+      // CR-2026-098b — the aggregate visit/ticket sync reads all sibling orders.
+      findMany: vi.fn(async () => [{ status: 'IN_PROGRESS' }]),
     },
     serviceOrderItem: {
       findFirst: vi.fn(async () => ({

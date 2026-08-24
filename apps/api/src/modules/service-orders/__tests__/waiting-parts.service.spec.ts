@@ -22,10 +22,15 @@ function orderIn(status: string) {
 
 function buildService() {
   const prisma: any = {
-    serviceOrder: {
-      update: vi.fn(async ({ data }: any) => ({ id: 'so-1', ...data, serviceVisit: { id: 'sv-1', siteId: 'site-1', status: 'IN_SERVICE' } })),
-      findUnique: vi.fn(async () => orderIn('IN_PROGRESS')),
-    },
+    serviceOrder: (() => {
+      let last = 'IN_PROGRESS';
+      return {
+        update: vi.fn(async ({ data }: any) => { if (data.status) last = data.status; return { id: 'so-1', ...data, serviceVisit: { id: 'sv-1', siteId: 'site-1', status: 'IN_SERVICE' } }; }),
+        findUnique: vi.fn(async () => orderIn('IN_PROGRESS')),
+        // CR-2026-098b — the aggregate visit/ticket sync reads all sibling orders.
+        findMany: vi.fn(async () => [{ status: last }]),
+      };
+    })(),
     serviceVisit: { update: vi.fn(async () => ({})) },
     technicianAssignment: { updateMany: vi.fn(async () => ({ count: 0 })) },
     queueTicket: {
@@ -85,6 +90,59 @@ describe('pause → Waiting for Parts (CR-2026-098)', () => {
     // The visit reflects the parts delay for advisor/manager views.
     expect(h.prisma.serviceVisit.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: 'WAITING_PARTS' } }),
+    );
+  });
+
+  it('CUSTOMER_AUTHORIZATION routes into the first-class WAITING_CUSTOMER state (CR-2026-098b)', async () => {
+    // One operational condition, one representation: the status is always
+    // WAITING_CUSTOMER; a CUSTOMER_AUTHORIZATION ledger row is always its interval.
+    const h = buildService();
+    vi.spyOn(h.service, 'findById').mockResolvedValue(orderIn('IN_PROGRESS') as never);
+
+    await h.service.pause('so-1', { reasonCode: 'CUSTOMER_AUTHORIZATION', notes: 'estimate approval' } as never, 'tech-1');
+
+    expect(h.prisma.serviceOrder.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'WAITING_CUSTOMER' }) }),
+    );
+    expect(h.prisma.serviceOrderPause.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ reasonCode: 'CUSTOMER_AUTHORIZATION' }) }),
+    );
+    expect(h.segments.endAllForOrder).toHaveBeenCalled();
+  });
+
+  it('multi-job visit: one job waiting for parts outranks a sibling passing QC (CR-2026-098b)', async () => {
+    // The customer must never read READY_FOR_PICKUP while a job waits on parts.
+    const h = buildService();
+    // The QC self-approval guard runs on QC → READY_TO_INVOICE; mgr-1 holds no
+    // technician record, so the pass is legitimate.
+    h.prisma.technician = { findUnique: vi.fn(async () => null), findFirst: vi.fn(async () => null) };
+    h.prisma.technicianAssignment.findFirst = vi.fn(async () => null);
+    vi.spyOn(h.service, 'findById').mockResolvedValue(orderIn('QC') as never);
+    h.prisma.serviceOrder.findMany.mockResolvedValue([
+      { status: 'WAITING_PARTS' }, { status: 'READY_TO_INVOICE' },
+    ]);
+
+    await h.service.changeStatus('so-1', { toStatus: 'READY_TO_INVOICE' } as never, 'mgr-1');
+
+    expect(h.prisma.serviceVisit.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'WAITING_PARTS' } }),
+    );
+  });
+
+  it('multi-job visit: active work on a sibling keeps the visit IN_SERVICE', async () => {
+    const h = buildService();
+    // Visit currently reads WAITING_PARTS; a sibling still actively working
+    // means the aggregate pulls it back to IN_SERVICE.
+    const order = { ...orderIn('IN_PROGRESS'), serviceVisit: { id: 'sv-1', siteId: 'site-1', status: 'WAITING_PARTS' } };
+    vi.spyOn(h.service, 'findById').mockResolvedValue(order as never);
+    h.prisma.serviceOrder.findMany.mockResolvedValue([
+      { status: 'WAITING_PARTS' }, { status: 'IN_PROGRESS' },
+    ]);
+
+    await h.service.changeStatus('so-1', { toStatus: 'WAITING_PARTS' } as never, 'tech-1');
+
+    expect(h.prisma.serviceVisit.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'IN_SERVICE' } }),
     );
   });
 

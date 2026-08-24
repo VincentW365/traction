@@ -8,7 +8,7 @@ import { ServiceOrdersService } from '../service-orders.service';
  */
 function buildService() {
   const prisma: any = {
-    serviceOrder: { update: vi.fn(async ({ data }: any) => ({ id: 'so-1', ...data })) },
+    serviceOrder: (() => { let last = 'IN_PROGRESS'; return { update: vi.fn(async ({ data }: any) => { if (data.status) last = data.status; return { id: 'so-1', ...data }; }), findMany: vi.fn(async () => [{ status: last }]) }; })(),
     serviceOrderPause: { create: vi.fn(async () => ({})), updateMany: vi.fn(async () => ({ count: 1 })) },
     serviceOrderRework: { count: vi.fn(async () => 0), create: vi.fn(async () => ({})) },
     serviceVisit: { update: vi.fn(async () => ({})) },
