@@ -90,6 +90,14 @@ export class WalkInsService {
     if (!vehicle) {
       throw new NotFoundException(`Vehicle ${data.vehicleId} not found`);
     }
+    // CR-2026-097 integrity — a visit's vehicle must belong to the visit's
+    // customer. Failing loudly here beats silently creating a record that ties
+    // one customer's history to another customer's car.
+    if (vehicle.customerId !== data.customerId) {
+      throw new BadRequestException(
+        `Vehicle ${vehicle.plateNumber} does not belong to this customer.`,
+      );
+    }
 
     // Validate service type codes
     const codes = data.serviceTypes.map((s) => s.serviceTypeCode);
@@ -257,6 +265,12 @@ export class WalkInsService {
             checkinSequence,
             displayStatus: 'PENDING_RANK',
           },
+        });
+
+        // CR-2026-097 — the ticket reference IS the visit's human identity.
+        await tx.serviceVisit.update({
+          where: { id: serviceVisit.id },
+          data: { visitNumber: ids.ticketReference },
         });
 
         // 5b. CR-2026-084 — persist the services chosen at registration.

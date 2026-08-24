@@ -239,6 +239,12 @@ export class CheckInService {
           },
         });
 
+        // CR-2026-097 — the ticket reference IS the visit's human identity.
+        await tx.serviceVisit.update({
+          where: { id: serviceVisit.id },
+          data: { visitNumber: ids.ticketReference },
+        });
+
         // 7. Transition Appointment → CHECKED_IN
         await tx.appointment.update({
           where: { id: appointment.id },

@@ -73,6 +73,12 @@ describe('CustomersService.findById — detail with role-aware import meta', () 
           serviceVisits: [{ id: 'sv1', status: 'CLOSED', sourceType: 'WALKIN', checkedInAt: new Date('2026-06-01'), arrivalAt: null, createdAt: new Date('2026-05-30') }],
         })),
       },
+      // CR-2026-097 — Customer 360 summary aggregates.
+      serviceVisit: {
+        aggregate: vi.fn(async () => ({ _count: 3, _max: { checkedInAt: new Date('2026-06-01'), createdAt: new Date('2026-06-01') } })),
+        groupBy: vi.fn(async () => [{ vehicleId: 'v1', _count: 3, _max: { checkedInAt: new Date('2026-06-01'), createdAt: new Date('2026-06-01') } }]),
+      },
+      appointment: { findFirst: vi.fn(async () => null) },
     };
     return new CustomersService(prisma);
   }

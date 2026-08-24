@@ -1,5 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, ServiceVisitStatus } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
@@ -174,7 +174,20 @@ export class CustomersService {
    *
    * CR-2026-006 exemption retained: by-id lookup applies no operational-scope filter.
    */
-  async findById(id: string, includeImportMeta = false): Promise<CustomerDetail> {
+  async findById(
+    id: string,
+    includeImportMeta = false,
+  ): Promise<
+    CustomerDetail & {
+      stats: {
+        totalVehicles: number;
+        totalVisits: number;
+        lastVisitAt: Date | null;
+        nextAppointment: { id: string; scheduledStartAt: Date } | null;
+      };
+      vehicleStats: Record<string, { visitsCount: number; lastServiceAt: Date | null }>;
+    }
+  > {
     const customer = await this.prisma.customer.findUnique({
       where: { id },
       include: {
@@ -196,12 +209,54 @@ export class CustomersService {
       sourceType: v.sourceType,
       visitedAt: v.checkedInAt ?? v.arrivalAt ?? v.createdAt,
     }));
-    return toCustomerDetail(customer, {
+
+    // CR-2026-097 — Customer 360 summary: visit totals, per-vehicle history
+    // counts, and the next upcoming appointment. One groupBy, no N+1.
+    const [visitAgg, perVehicle, nextAppointment] = await Promise.all([
+      this.prisma.serviceVisit.aggregate({
+        where: { customerId: id, testDataRunId: null },
+        _count: true,
+        _max: { checkedInAt: true, createdAt: true },
+      }),
+      this.prisma.serviceVisit.groupBy({
+        by: ['vehicleId'],
+        where: { customerId: id, testDataRunId: null },
+        _count: true,
+        _max: { checkedInAt: true, createdAt: true },
+      }),
+      this.prisma.appointment.findFirst({
+        where: {
+          customerId: id,
+          status: { in: ['DRAFT', 'CONFIRMED', 'RESCHEDULED'] },
+          scheduledStartAt: { gte: new Date() },
+        },
+        orderBy: { scheduledStartAt: 'asc' },
+        select: { id: true, scheduledStartAt: true },
+      }),
+    ]);
+    const perVehicleMap = new Map(
+      perVehicle.map((g) => [
+        g.vehicleId,
+        { visitsCount: g._count, lastServiceAt: g._max.checkedInAt ?? g._max.createdAt },
+      ]),
+    );
+
+    const detail = toCustomerDetail(customer, {
       vehicles: customer.vehicles,
       recentVisits,
       vehicleCount: customer._count.vehicles,
       includeImportMeta,
     });
+    return {
+      ...detail,
+      stats: {
+        totalVehicles: customer._count.vehicles,
+        totalVisits: visitAgg._count,
+        lastVisitAt: visitAgg._max.checkedInAt ?? visitAgg._max.createdAt,
+        nextAppointment,
+      },
+      vehicleStats: Object.fromEntries(perVehicleMap),
+    };
   }
 
   /**
@@ -214,21 +269,60 @@ export class CustomersService {
    * the vehicle, mileage in/out, and the services performed (from the appointment
    * and/or the service orders).
    */
-  async getServiceHistory(id: string, limit = 20, offset = 0) {
-    const take = Math.min(Math.max(Math.trunc(limit), 1), 100);
-    const skip = Math.max(Math.trunc(offset), 0);
+  async getServiceHistory(
+    id: string,
+    query: {
+      limit?: number;
+      offset?: number;
+      // CR-2026-097 — Customer 360 / per-vehicle history filters.
+      vehicleId?: string;
+      status?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      q?: string;
+      sort?: 'newest' | 'oldest';
+    } = {},
+  ) {
+    const take = Math.min(Math.max(Math.trunc(query.limit ?? 20), 1), 100);
+    const skip = Math.max(Math.trunc(query.offset ?? 0), 0);
     const where: Prisma.ServiceVisitWhereInput = { customerId: id, ...liveVisitWhere(true, false) };
+
+    if (query.vehicleId) where.vehicleId = query.vehicleId;
+    if (query.status) {
+      if (!(query.status in ServiceVisitStatus)) {
+        throw new BadRequestException(`Unknown visit status "${query.status}"`);
+      }
+      where.status = query.status as ServiceVisitStatus;
+    }
+    if (query.dateFrom || query.dateTo) {
+      where.createdAt = {};
+      if (query.dateFrom) where.createdAt.gte = new Date(`${query.dateFrom}T00:00:00.000Z`);
+      if (query.dateTo) where.createdAt.lte = new Date(`${query.dateTo}T23:59:59.999Z`);
+    }
+    const q = query.q?.trim();
+    if (q) {
+      where.OR = [
+        { visitNumber: { contains: q, mode: 'insensitive' } },
+        { queueTicket: { ticketNumber: { contains: q, mode: 'insensitive' } } },
+        { serviceOrders: { some: { items: { some: { serviceType: { name: { contains: q, mode: 'insensitive' } } } } } } },
+        { vehicle: { plateNumber: { contains: q, mode: 'insensitive' } } },
+      ];
+    }
 
     const [rows, total] = await Promise.all([
       this.prisma.serviceVisit.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: query.sort === 'oldest' ? 'asc' : 'desc' },
         take,
         skip,
         include: {
           vehicle: { select: { id: true, vehicleCode: true, plateNumber: true, make: true, model: true, modelYear: true } },
           appointment: { select: { services: { select: { serviceType: { select: { name: true } } } } } },
           serviceOrders: { select: { items: { select: { serviceType: { select: { name: true } } } } } },
+          // CR-2026-097 — availability flags so history rows can show at a glance
+          // whether an inspection or job sheet exists for the visit.
+          inspections: { select: { id: true, kind: true, status: true } },
+          jobSheetDraft: { select: { id: true } },
         },
       }),
       this.prisma.serviceVisit.count({ where }),
@@ -242,6 +336,7 @@ export class CustomersService {
       const label = [v.vehicle?.modelYear, v.vehicle?.make, v.vehicle?.model].filter(Boolean).join(' ');
       return {
         id: v.id,
+        visitNumber: v.visitNumber,
         visitedAt: v.checkedInAt ?? v.arrivalAt ?? v.createdAt,
         status: v.status,
         sourceType: v.sourceType,
@@ -251,6 +346,8 @@ export class CustomersService {
           ? { id: v.vehicle.id, vehicleCode: v.vehicle.vehicleCode, plateNumber: v.vehicle.plateNumber, label: label || null }
           : null,
         services: [...new Set(services)],
+        inspections: v.inspections.map((i) => ({ id: i.id, kind: i.kind, status: i.status })),
+        hasJobSheet: !!v.jobSheetDraft,
       };
     });
 

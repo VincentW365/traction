@@ -12,7 +12,8 @@ import { WalkInsService } from '../walk-ins.service';
  */
 function build() {
   const tx: any = {
-    serviceVisit: { create: vi.fn(async () => ({ id: 'sv1', customer: {}, vehicle: {} })) },
+    // CR-2026-097 — `update` sets visitNumber to the ticket reference post-issue.
+    serviceVisit: { create: vi.fn(async () => ({ id: 'sv1', customer: {}, vehicle: {} })), update: vi.fn(async () => ({})) },
     queueTicket: { create: vi.fn(async () => ({ id: 'qt1', ticketNumber: 'QTK-BERT-01-20260820-0001' })) },
     serviceOrder: {
       create: vi.fn(async () => ({ id: 'so1', items: [{ id: 'i1' }, { id: 'i2' }] })),

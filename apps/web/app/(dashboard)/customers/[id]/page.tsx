@@ -11,6 +11,7 @@ import { LoadingState } from '../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../components/status-badge';
 import { CustomerNotificationComposer } from '../../../../components/notification-composer';
 import { CommunicationHistory } from '../../../../components/communication-history';
+import { VisitHistory } from '../../../../components/visit-history';
 
 interface Vehicle {
   id: string;
@@ -49,6 +50,14 @@ interface CustomerDetail {
   recentVisits: RecentVisit[];
   createdAt: string;
   importMeta?: { batchId: string; rawName: string } | null;
+  // CR-2026-097 — Customer 360 summary
+  stats?: {
+    totalVehicles: number;
+    totalVisits: number;
+    lastVisitAt: string | null;
+    nextAppointment: { id: string; scheduledStartAt: string } | null;
+  };
+  vehicleStats?: Record<string, { visitsCount: number; lastServiceAt: string | null }>;
 }
 
 // CR-2026-030: full paginated service history (derived from ServiceVisit).
@@ -126,8 +135,10 @@ export default function CustomerDetailPage() {
 
   const [editingLoyalty, setEditingLoyalty] = useState(false);
   const [loyaltyMemberInput, setLoyaltyMemberInput] = useState(false);
-  const [historyOffset, setHistoryOffset] = useState(0);
   const [inspOffset, setInspOffset] = useState(0);
+  // CR-2026-097 — vehicle filter for the shared Service History component;
+  // set by the vehicle cards' "History" action.
+  const [historyVehicleId, setHistoryVehicleId] = useState<string | null>(null);
 
   // Inline edit state for the identity, contact, and consent cards. Each card
   // edits a 1:1 subset of Customer fields via the shared PATCH /customers/:id.
@@ -149,13 +160,6 @@ export default function CustomerDetailPage() {
   const { data: customer, isLoading, error } = useQuery<CustomerDetail>({
     queryKey: ['customer', customerId],
     queryFn: () => api.get(`/customers/${customerId}`),
-    enabled: !!customerId,
-  });
-
-  // CR-2026-030: full paginated service history (separate from the 10-visit summary in findById).
-  const historyQuery = useQuery<ServiceHistoryResponse>({
-    queryKey: ['customer-history', customerId, historyOffset],
-    queryFn: () => api.get(`/customers/${customerId}/service-history?limit=${HISTORY_PAGE}&offset=${historyOffset}`),
     enabled: !!customerId,
   });
 
@@ -296,6 +300,30 @@ export default function CustomerDetailPage() {
           </div>
         }
       />
+
+      {/* CR-2026-097 — Customer 360 summary strip */}
+      {customer.stats && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+          <div className="card px-4 py-3">
+            <p className="text-xl font-bold text-slate-900">{customer.stats.totalVehicles}</p>
+            <p className="text-[11px] uppercase tracking-wide text-slate-400">Vehicles</p>
+          </div>
+          <div className="card px-4 py-3">
+            <p className="text-xl font-bold text-slate-900">{customer.stats.totalVisits}</p>
+            <p className="text-[11px] uppercase tracking-wide text-slate-400">Visits</p>
+          </div>
+          <div className="card px-4 py-3">
+            <p className="text-sm font-semibold text-slate-900 mt-1">{fmtDate(customer.stats.lastVisitAt)}</p>
+            <p className="text-[11px] uppercase tracking-wide text-slate-400">Last visit</p>
+          </div>
+          <div className="card px-4 py-3">
+            <p className="text-sm font-semibold text-slate-900 mt-1">
+              {customer.stats.nextAppointment ? fmtDate(customer.stats.nextAppointment.scheduledStartAt) : '—'}
+            </p>
+            <p className="text-[11px] uppercase tracking-wide text-slate-400">Next appointment</p>
+          </div>
+        </div>
+      )}
 
       {/* Identity + key cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -577,87 +605,61 @@ export default function CustomerDetailPage() {
             <p className="text-sm text-slate-500">No vehicles registered.</p>
           ) : (
             <div className="space-y-3">
-              {customer.vehicles.map((v) => (
-                <Link key={v.id} href={`/vehicles/${v.id}`} className="block border border-slate-200 rounded-lg p-4 hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="badge bg-blue-50 text-blue-700 font-mono" title="Service Centre ID">{v.vehicleCode || `SC${v.plateNumber}`}</span>
-                      <span className="text-sm font-medium text-slate-900">{[v.modelYear, v.make, v.model].filter(Boolean).join(' ') || 'Unknown vehicle'}</span>
+              {customer.vehicles.map((v) => {
+                const vs = customer.vehicleStats?.[v.id];
+                return (
+                  <div key={v.id} className="border border-slate-200 rounded-lg p-4 hover:border-blue-300 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <Link href={`/vehicles/${v.id}`} className="flex items-center gap-3 group">
+                        <span className="badge bg-blue-50 text-blue-700 font-mono" title="Service Centre ID">{v.vehicleCode || `SC${v.plateNumber}`}</span>
+                        <span className="text-sm font-medium text-slate-900 group-hover:text-blue-700">{[v.modelYear, v.make, v.model].filter(Boolean).join(' ') || 'Unknown vehicle'}</span>
+                      </Link>
+                      <div className="flex items-center gap-2">
+                        {v.weightClass && <span className="badge bg-slate-100 text-slate-600">{v.weightClass}</span>}
+                        <button
+                          onClick={() => {
+                            setHistoryVehicleId(historyVehicleId === v.id ? null : v.id);
+                            document.getElementById('service-history')?.scrollIntoView({ behavior: 'smooth' });
+                          }}
+                          className={`text-xs px-2 py-0.5 rounded-md border ${historyVehicleId === v.id ? 'bg-blue-600 text-white border-blue-600' : 'border-slate-200 text-blue-600 hover:border-blue-300'}`}
+                        >
+                          History
+                        </button>
+                      </div>
                     </div>
-                    {v.weightClass && <span className="badge bg-slate-100 text-slate-600">{v.weightClass}</span>}
+                    <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500">
+                      <span>Plate: <span className="font-medium text-slate-700">{v.plateNumber}</span></span>
+                      {v.vin && <span>Chassis Number/VIN: <span className="font-medium text-slate-700">{v.vin}</span></span>}
+                      {v.odometer != null && <span>Odometer: <span className="font-medium text-slate-700">{v.odometer.toLocaleString()} mi</span></span>}
+                      {v.color && <span>Color: <span className="font-medium text-slate-700">{v.color}</span></span>}
+                      {/* CR-2026-097 — per-vehicle history at a glance */}
+                      {vs && (
+                        <span>
+                          Visits: <span className="font-medium text-slate-700">{vs.visitsCount}</span>
+                          {vs.lastServiceAt && <> · Last service: <span className="font-medium text-slate-700">{fmtDate(vs.lastServiceAt)}</span></>}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500">
-                    <span>Plate: <span className="font-medium text-slate-700">{v.plateNumber}</span></span>
-                    {v.vin && <span>Chassis Number/VIN: <span className="font-medium text-slate-700">{v.vin}</span></span>}
-                    {v.odometer != null && <span>Odometer: <span className="font-medium text-slate-700">{v.odometer.toLocaleString()} mi</span></span>}
-                    {v.color && <span>Color: <span className="font-medium text-slate-700">{v.color}</span></span>}
-                  </div>
-                </Link>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       </div>
 
-      {/* Visit / Service History — CR-2026-030: full paginated history with vehicle, services, mileage */}
-      <div className="card mb-6">
-        <div className="card-header flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-900">Visit &amp; Service History</h2>
-          {historyQuery.data && historyQuery.data.total > 0 && (
-            <span className="text-xs text-slate-500">
-              {historyQuery.data.offset + 1}–{Math.min(historyQuery.data.offset + historyQuery.data.items.length, historyQuery.data.total)} of {historyQuery.data.total}
-            </span>
-          )}
-        </div>
-        <div className="card-body">
-          {historyQuery.isLoading ? (
-            <p className="text-sm text-slate-500">Loading history…</p>
-          ) : historyQuery.isError ? (
-            <p className="text-sm text-red-600">Failed to load service history.</p>
-          ) : !historyQuery.data || historyQuery.data.items.length === 0 ? (
-            <p className="text-sm text-slate-500">No visits on record.</p>
-          ) : (
-            <>
-              <div className="table-container border-0 shadow-none">
-                <table className="w-full text-sm">
-                  <thead className="table-header"><tr><th>Date</th><th>Vehicle</th><th>Services</th><th>Mileage</th><th>Source</th><th>Status</th></tr></thead>
-                  <tbody>
-                    {historyQuery.data.items.map((v) => (
-                      <tr key={v.id} className="table-row">
-                        <td className="text-slate-700 whitespace-nowrap">{fmtDate(v.visitedAt)}</td>
-                        <td className="text-slate-600">
-                          {v.vehicle ? (
-                            <Link href={`/vehicles/${v.vehicle.id}`} className="text-blue-600 hover:underline">
-                              {v.vehicle.label || v.vehicle.plateNumber}
-                            </Link>
-                          ) : '—'}
-                        </td>
-                        <td className="text-slate-600">{v.services.length ? v.services.join(', ') : '—'}</td>
-                        <td className="text-slate-600 whitespace-nowrap">{fmtMileage(v.mileageIn, v.mileageOut)}</td>
-                        <td className="text-xs text-slate-500">{v.sourceType.replace(/_/g, ' ')}</td>
-                        <td><StatusBadge status={v.status} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {historyQuery.data.total > HISTORY_PAGE && (
-                <div className="flex items-center justify-between pt-3 mt-1 border-t border-slate-100">
-                  <button
-                    onClick={() => setHistoryOffset(Math.max(historyOffset - HISTORY_PAGE, 0))}
-                    disabled={historyOffset === 0}
-                    className="btn-secondary text-xs disabled:opacity-50"
-                  >Previous</button>
-                  <button
-                    onClick={() => setHistoryOffset(historyOffset + HISTORY_PAGE)}
-                    disabled={historyOffset + HISTORY_PAGE >= historyQuery.data.total}
-                    className="btn-secondary text-xs disabled:opacity-50"
-                  >Next</button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+      {/* CR-2026-097 — shared Service History (every row opens the full Visit Record) */}
+      <div id="service-history" className="mb-6">
+        <VisitHistory
+          customerId={customer.id}
+          vehicles={customer.vehicles.map((v) => ({
+            id: v.id,
+            plateNumber: v.plateNumber,
+            label: [v.modelYear, v.make, v.model].filter(Boolean).join(' ') || null,
+          }))}
+          selectedVehicleId={historyVehicleId}
+          onVehicleChange={setHistoryVehicleId}
+        />
       </div>
 
       {/* Inspections — CR-2026-081: per-customer inspection archive with date & findings */}

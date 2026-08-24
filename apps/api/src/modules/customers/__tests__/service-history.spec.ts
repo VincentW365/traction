@@ -28,6 +28,9 @@ const row = (over: Record<string, unknown> = {}) => ({
   vehicle: { id: 'veh1', vehicleCode: 'SCABC', plateNumber: 'ABC123', make: 'Toyota', model: 'Camry', modelYear: 2020 },
   appointment: { services: [{ serviceType: { name: 'Oil Change' } }] },
   serviceOrders: [{ items: [{ serviceType: { name: 'Oil Change' } }, { serviceType: { name: 'Tire Rotation' } }] }],
+  // CR-2026-097 — availability flags now included per row.
+  inspections: [],
+  jobSheetDraft: null,
   ...over,
 });
 
@@ -46,12 +49,12 @@ describe('CustomersService.getServiceHistory (CR-2026-030)', () => {
 
   it('clamps limit to 1..100 and offset to >= 0', async () => {
     const { service, prisma } = build([], 0);
-    await service.getServiceHistory('c', 999, -5);
+    await service.getServiceHistory('c', { limit: 999, offset: -5 });
     let args = prisma.serviceVisit.findMany.mock.calls[0][0];
     expect(args.take).toBe(100);
     expect(args.skip).toBe(0);
 
-    const r2 = await service.getServiceHistory('c', 0, 5);
+    const r2 = await service.getServiceHistory('c', { limit: 0, offset: 5 });
     args = prisma.serviceVisit.findMany.mock.calls[1][0];
     expect(args.take).toBe(1);
     expect(args.skip).toBe(5);
@@ -61,7 +64,7 @@ describe('CustomersService.getServiceHistory (CR-2026-030)', () => {
 
   it('maps deduped services, visitedAt (checkedInAt wins), vehicle label, paginated shape', async () => {
     const { service } = build([row()], 1);
-    const res = await service.getServiceHistory('c', 10, 0);
+    const res = await service.getServiceHistory('c', { limit: 10, offset: 0 });
     expect(res.total).toBe(1);
     expect(res.limit).toBe(10);
     expect(res.items).toHaveLength(1);

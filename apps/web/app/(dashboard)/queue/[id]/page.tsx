@@ -531,6 +531,9 @@ export default function QueueTicketDetailPage() {
         breadcrumbs={[{ label: 'Queue Board', href: '/queue' }, { label: ticket.ticketNumber }]}
         actions={
           <div className="flex items-center gap-2">
+            <Link href={`/visits/${sv.id}`} className="btn-secondary text-xs" title="The complete record of this visit — job sheet, inspections, photos, activity">
+              Visit Record
+            </Link>
             <StatusBadge status={ticket.displayStatus} />
             {ticket.queueRank != null && (
               <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-100 text-blue-800 text-sm font-bold">

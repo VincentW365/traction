@@ -973,6 +973,10 @@ model ServiceVisit {
   checkInStartedAt     DateTime?           @map("check_in_started_at") @db.Timestamptz
   checkedInAt          DateTime?           @map("checked_in_at") @db.Timestamptz
   status               ServiceVisitStatus  @default(CREATED)
+  // CR-2026-097 — human-readable visit identity. Ticketed visits reuse the ticket
+  // reference (one identity per visit, not two); pre-platform historical imports
+  // were backfilled as V-yymmdd-NNN by visit date. Immutable once assigned.
+  visitNumber          String?             @unique @map("visit_number")
   queuePriorityClass   QueuePriorityClass? @map("queue_priority_class")
   currentEtaStartAt    DateTime?           @map("current_eta_start_at") @db.Timestamptz
   currentEtaCompleteAt DateTime?           @map("current_eta_complete_at") @db.Timestamptz

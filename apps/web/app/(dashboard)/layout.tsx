@@ -4,6 +4,7 @@ import { useAuth } from '../../hooks/use-auth';
 import { Sidebar } from '../../components/sidebar';
 import { DevSandboxBanner } from '../../components/dev-sandbox-banner';
 import { UnclassifiedAlert } from '../../components/unclassified-alert';
+import { GlobalSearch } from '../../components/global-search';
 
 export default function DashboardLayout({
   children,
@@ -48,8 +49,8 @@ export default function DashboardLayout({
         )}
 
         {/* Top bar */}
-        <header className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0">
-          <div className="text-xs text-slate-400">
+        <header className="h-12 bg-white border-b border-slate-200 flex items-center justify-between gap-4 px-6 shrink-0">
+          <div className="text-xs text-slate-400 hidden md:block whitespace-nowrap">
             {new Date().toLocaleDateString('en-US', {
               weekday: 'long',
               year: 'numeric',
@@ -57,6 +58,9 @@ export default function DashboardLayout({
               day: 'numeric',
             })}
           </div>
+
+          {/* CR-2026-097 — one search box for every record identifier */}
+          <GlobalSearch />
 
           <div className="flex items-center gap-3">
             <button

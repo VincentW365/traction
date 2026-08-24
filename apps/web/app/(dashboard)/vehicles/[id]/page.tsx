@@ -9,6 +9,7 @@ import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { CustomerNotificationComposer } from '../../../../components/notification-composer';
 import { CommunicationHistory } from '../../../../components/communication-history';
+import { VisitHistory } from '../../../../components/visit-history';
 
 interface VehicleDetail {
   id: string;
@@ -307,6 +308,11 @@ export default function VehicleDetailPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* CR-2026-097 — this vehicle's complete visit history, each row → Visit Record */}
+      <div className="mb-6">
+        <VisitHistory customerId={vehicle.customer.id} vehicleId={vehicle.id} />
       </div>
 
       {/* CR-2026-096 — messages sent about THIS vehicle (service-history context) */}

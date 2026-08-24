@@ -213,6 +213,7 @@ export class ServiceVisitCompletionController {
       select: {
         id: true,
         siteId: true,
+        visitNumber: true, // CR-2026-097 — the job sheet's number derives from this (JS-<visit>)
         mileageIn: true,
         createdAt: true,
         customer: {

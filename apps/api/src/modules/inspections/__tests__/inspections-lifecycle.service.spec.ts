@@ -88,9 +88,11 @@ describe('InspectionsService.list — filters & shape (CR-2026-081)', () => {
     const h = buildForList();
     await h.service.list({ q: 'abc' } as any, STAFF as any);
     const or = whereOf(h).OR;
-    expect(or).toHaveLength(4);
+    // CR-2026-097 added the visit number as a fifth searchable identifier.
+    expect(or).toHaveLength(5);
     expect(JSON.stringify(or)).toContain('inspectionNumber');
     expect(JSON.stringify(or)).toContain('plateNumber');
+    expect(JSON.stringify(or)).toContain('visitNumber');
   });
 
   it('filters by finding severity', async () => {

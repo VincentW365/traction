@@ -136,6 +136,23 @@ if (dbOk) {
     check('notification templates', false, 'table missing — run pnpm db:migrate');
   }
   await tableCheck('user accounts', 'user_accounts', 1, 'seed has not run');
+  // CR-2026-097 — visit identity + relational integrity. Every visit must carry a
+  // human visit number (backfilled by migration), and no inspection may disagree
+  // with its visit about vehicle/customer.
+  try {
+    const [{ unnumbered }] = await prisma.$queryRawUnsafe(
+      `SELECT count(*)::int AS unnumbered FROM service_visits WHERE visit_number IS NULL`,
+    );
+    check('visit numbers', unnumbered === 0, unnumbered === 0 ? 'all visits numbered' : `${unnumbered} visit(s) missing a number — run pnpm db:migrate`);
+    const [{ mismatched }] = await prisma.$queryRawUnsafe(
+      `SELECT count(*)::int AS mismatched FROM vehicle_inspections vi
+       JOIN service_visits sv ON sv.id = vi.service_visit_id
+       WHERE vi.vehicle_id <> sv.vehicle_id OR vi.customer_id <> sv.customer_id`,
+    );
+    check('inspection↔visit integrity', mismatched === 0, mismatched === 0 ? 'consistent' : `${mismatched} inspection(s) disagree with their visit — flag for administrative review`);
+  } catch {
+    check('visit identity', false, 'visit_number column missing — run pnpm db:migrate');
+  }
 
   console.log('\nOperational data (produced by the controlled customer import, never by seed):');
   const customers = await tableCheck(

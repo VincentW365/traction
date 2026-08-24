@@ -225,7 +225,10 @@ export default function InspectionWorkspacePage() {
           <span className="text-xs text-slate-500 truncate">{c ? `${c.firstName} ${c.lastName}` : ''}</span>
         </div>
         {visitId && (
-          <Link href={`/inspections/job-sheet/${visitId}`} className="btn-secondary text-xs shrink-0">Job Sheet</Link>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Link href={`/visits/${visitId}`} className="btn-secondary text-xs" title="The complete record of this visit">Visit Record</Link>
+            <Link href={`/inspections/job-sheet/${visitId}`} className="btn-secondary text-xs">Job Sheet</Link>
+          </div>
         )}
       </div>
 

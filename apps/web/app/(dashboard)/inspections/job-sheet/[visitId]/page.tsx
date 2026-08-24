@@ -20,6 +20,7 @@ import { LoadingState } from '../../../../../components/ui/loading-state';
 
 interface JobSheetData {
   id: string;
+  visitNumber: string | null; // CR-2026-097
   mileageIn: number | null;
   createdAt: string;
   customer: {
@@ -237,6 +238,10 @@ export default function JobSheetPage() {
       <div className="flex items-center justify-between mb-3 print:hidden">
         <div className="flex items-center gap-3">
           <Link href="/inspections" className="text-xs text-blue-600 hover:underline">← Inspections</Link>
+          <Link href={`/visits/${visitId}`} className="text-xs text-blue-600 hover:underline" title="The complete record of this visit">Visit Record</Link>
+          {q.data?.visitNumber && (
+            <span className="text-[11px] font-mono text-slate-400" title="Job sheet number (derived from the visit number)">JS-{q.data.visitNumber}</span>
+          )}
           {dirty ? (
             <span className="text-[11px] text-amber-600">Unsaved changes</span>
           ) : savedAt ? (

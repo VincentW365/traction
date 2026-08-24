@@ -198,15 +198,25 @@ export class InspectionsService {
     if (query.serviceVisitId) where.serviceVisitId = query.serviceVisitId;
     if (query.customerId) where.customerId = query.customerId;
     if (query.kind) where.kind = query.kind;
+    // CR-2026-097 — compose the technician scope under AND, never Object.assign:
+    // the scope is an OR-fragment, and the free-text search below also builds an
+    // OR. Assigning both onto `where` let the second overwrite the first, so a
+    // technician who typed anything in the search box silently escaped their
+    // assignment scope. AND keeps both constraints in force together.
     const techScope = this.technicianScope(actor);
-    if (techScope) Object.assign(where, techScope);
+    if (techScope) where.AND = [techScope];
 
     // Explicit status wins; otherwise `active` narrows to the work-still-needed set
     // (DRAFT/COMPLETED/SIGNED_OFF), dropping CLOSED/CANCELLED off the worklist.
+    // CR-2026-097 — a finished VISIT also leaves the active queue: once the vehicle
+    // is gone, its inspections are history, not work, whatever status they were
+    // left in. The records stay untouched and reachable via the Visit Record,
+    // customer/vehicle history, and the History tab here.
     if (query.status) {
       where.status = query.status;
     } else if (query.active) {
       where.status = { in: ['DRAFT', 'COMPLETED', 'SIGNED_OFF'] };
+      where.serviceVisit = { status: { notIn: ['CLOSED', 'ABANDONED', 'CANCELLED'] } };
     }
 
     // Date range on createdAt (always populated; the display date falls back the
@@ -228,6 +238,8 @@ export class InspectionsService {
         { customer: { firstName: { contains: q, mode: 'insensitive' } } },
         { customer: { lastName: { contains: q, mode: 'insensitive' } } },
         { vehicle: { plateNumber: { contains: q, mode: 'insensitive' } } },
+        // CR-2026-097 — one search box, many identifiers: visit/ticket number too.
+        { serviceVisit: { visitNumber: { contains: q, mode: 'insensitive' } } },
       ];
     }
 

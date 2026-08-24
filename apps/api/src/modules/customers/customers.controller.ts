@@ -79,7 +79,7 @@ export class CustomersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Query() dto: ServiceHistoryQueryDto,
   ) {
-    return this.customersService.getServiceHistory(id, dto.limit, dto.offset);
+    return this.customersService.getServiceHistory(id, dto);
   }
 
   @Patch(':id')
