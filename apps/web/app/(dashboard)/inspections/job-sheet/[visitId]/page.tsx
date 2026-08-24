@@ -137,6 +137,23 @@ export default function JobSheetPage() {
   const [directive, setDirective] = useState('');
   const [initialised, setInitialised] = useState(false);
 
+  // Declared WITH the other hooks, above every early return. This mutation once sat
+  // after the loading/error returns, so the first (loading) render mounted fewer
+  // hooks than the data render — React's hooks-order invariant tripped the route's
+  // error boundary on every cold load, and "Try Again" worked only because the
+  // query was cached by then.
+  const saveDraft = useMutation({
+    mutationFn: () =>
+      api.put<{ saved: boolean; updatedAt: string }>(`/service-visits/${visitId}/job-sheet-draft`, {
+        data: { fields, ticks, pair, directive },
+        signatureImage: signature,
+      }),
+    onSuccess: (r: { updatedAt: string }) => {
+      setDirty(false);
+      setSavedAt(r.updatedAt);
+    },
+  });
+
   const d = q.data;
 
   // A saved sheet is restored exactly as it was left; only a visit with no saved
@@ -214,18 +231,6 @@ export default function JobSheetPage() {
       return next;
     });
   };
-
-  const saveDraft = useMutation({
-    mutationFn: () =>
-      api.put<{ saved: boolean; updatedAt: string }>(`/service-visits/${visitId}/job-sheet-draft`, {
-        data: { fields, ticks, pair, directive },
-        signatureImage: signature,
-      }),
-    onSuccess: (r: { updatedAt: string }) => {
-      setDirty(false);
-      setSavedAt(r.updatedAt);
-    },
-  });
 
   return (
     <div className="page-container max-w-3xl">
