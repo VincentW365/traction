@@ -301,7 +301,28 @@ function DirectoryView(props: {
 
       {query.isLoading && <LoadingState message="Loading directory..." />}
       {query.isError && <div className="card p-6 text-center border-red-200 bg-red-50"><p className="text-sm text-red-700">Failed to load directory.</p></div>}
-      {data && data.items.length === 0 && <EmptyState title="No customers match" description="Adjust the letter, filters or search." />}
+      {/* Two different facts share this blank table: the filter matched nothing, or
+          the database holds nothing. On a fresh deployment the second is the one that
+          matters, and "No customers match" would send an administrator hunting through
+          filters when the real answer is that the import has not run yet. */}
+      {data && data.items.length === 0 && data.total === 0 ? (
+        <div className="card p-8 text-center border-amber-200 bg-amber-50">
+          <h3 className="text-sm font-semibold text-amber-900">Customer database is currently empty</h3>
+          <p className="text-xs text-amber-800 mt-2 max-w-lg mx-auto leading-relaxed">
+            No customer records exist in this environment yet. If this is a fresh
+            deployment, application setup or the approved customer import may still be
+            required — the deployment status page shows exactly what this environment
+            contains.
+          </p>
+          <Link href="/admin/deployment" className="btn-secondary text-xs py-1.5 px-4 mt-4 inline-block">
+            Open deployment status
+          </Link>
+        </div>
+      ) : (
+        data && data.items.length === 0 && (
+          <EmptyState title="No customers match" description="Adjust the letter, filters or search." />
+        )
+      )}
 
       {data && data.items.length > 0 && (
         <>

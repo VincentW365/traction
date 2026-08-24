@@ -7,6 +7,7 @@ import { ScheduleModule as NestScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { SandboxModule } from './common/sandbox/sandbox.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { HealthModule } from './modules/health/health.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
@@ -43,6 +44,7 @@ import { AvailabilityModule } from './modules/availability/availability.module';
     PrismaModule,
     SandboxModule,
     AuthModule,
+    HealthModule,
     CustomersModule,
     VehiclesModule,
     AppointmentsModule,

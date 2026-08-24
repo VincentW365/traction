@@ -11,11 +11,18 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "deploy": "pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm run db:migrate && pnpm run build && pnpm run db:seed",
-    "db:reset": "prisma migrate reset",
+    "db:reset": "node scripts/guard-not-production.mjs && prisma migrate reset",
     "db:studio": "prisma studio",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
     "verify:kpi": "node scripts/verify-kpi-contributions.mjs",
-    "capture:kpi": "node scripts/capture-kpi-screenshots.mjs"
+    "capture:kpi": "node scripts/capture-kpi-screenshots.mjs",
+    "deploy:check": "node scripts/deploy-check.mjs",
+    "deploy:bootstrap": "node scripts/deploy-bootstrap.mjs",
+    "customers:import": "tsx apps/api/scripts/import-customers.ts",
+    "customers:import:commit": "tsx apps/api/scripts/import-customers.ts --commit",
+    "customers:verify": "node scripts/customers-verify.mjs",
+    "jobs:import": "tsx apps/api/scripts/import-jobs.ts",
+    "jobs:import:commit": "tsx apps/api/scripts/import-jobs.ts --commit"
   },
   "devDependencies": {
     "playwright": "^1.59.0",
