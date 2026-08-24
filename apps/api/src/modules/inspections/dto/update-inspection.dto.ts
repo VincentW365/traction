@@ -3,7 +3,7 @@ import {
   IsOptional, IsEnum, IsInt, IsString, IsBoolean, IsArray, ValidateNested, IsUUID, IsNumber, Min, MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { InspectionItemResult, BatteryTestResult, WheelPosition, RotorOrDrum } from '@prisma/client';
+import { InspectionItemResult, BatteryTestResult, WheelPosition, RotorOrDrum, NoPhotoReason } from '@prisma/client';
 
 /** A single checklist line result update (line is identified by its inspection-item id). */
 export class UpdateInspectionItemDto {
@@ -54,4 +54,20 @@ export class UpdateInspectionDto {
   @ApiPropertyOptional({ type: [UpdateWheelDto] })
   @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => UpdateWheelDto)
   wheels?: UpdateWheelDto[];
+
+  // CR-2026-093 — the pre-inspection's quick condition record. All optional: the
+  // whole record is optional, and a draft may be saved at any point.
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(2000) generalCondition?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() visibleDamage?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(2000) damageNotes?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(1000) itemsLeftInside?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) warningLights?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) fuelLevelNote?: string;
+  @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) odometerReading?: number;
+
+  // Why a pre-inspection was completed without photographic evidence — required by
+  // the UI before such a completion is allowed through.
+  @ApiPropertyOptional({ enum: NoPhotoReason })
+  @IsOptional() @IsEnum(NoPhotoReason) noPhotoReason?: NoPhotoReason;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(300) noPhotoReasonNote?: string;
 }

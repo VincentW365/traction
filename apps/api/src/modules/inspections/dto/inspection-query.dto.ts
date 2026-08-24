@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsEnum, IsUUID, IsInt, Min, Max, IsString, IsBoolean, IsDateString, MaxLength } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
-import { InspectionStatus, RecommendationSeverity } from '@prisma/client';
+import { InspectionStatus, RecommendationSeverity, InspectionKind } from '@prisma/client';
 
 /**
  * CR-2026-034 (C-2) — list/filter inspections. Non-ADMIN is forced to their own
@@ -20,6 +20,9 @@ export class InspectionQueryDto {
 
   @ApiPropertyOptional({ enum: InspectionStatus })
   @IsOptional() @IsEnum(InspectionStatus) status?: InspectionStatus;
+
+  @ApiPropertyOptional({ enum: InspectionKind, description: 'Vehicle inspections or photo pre-inspections' })
+  @IsOptional() @IsEnum(InspectionKind) kind?: InspectionKind;
 
   @ApiPropertyOptional({ description: 'Active-only shortcut (DRAFT/COMPLETED/SIGNED_OFF); ignored if status is set' })
   @IsOptional() @Transform(({ value }) => value === true || value === 'true') @IsBoolean() active?: boolean;

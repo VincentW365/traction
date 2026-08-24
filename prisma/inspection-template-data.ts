@@ -82,9 +82,19 @@ export async function seedInspectionTemplate(prisma: PrismaClient): Promise<{
 }> {
   return prisma.$transaction(async (tx) => {
     const template = await tx.inspectionTemplate.upsert({
-      where: { version: TEMPLATE_VERSION },
+      // Versions are unique per KIND (CR-2026-093): the vehicle checklist and the
+      // pre-inspection number their revisions independently.
+      where: { kind_version: { kind: 'VEHICLE_INSPECTION', version: TEMPLATE_VERSION } },
       update: { name: TEMPLATE_NAME, isActive: true },
-      create: { version: TEMPLATE_VERSION, name: TEMPLATE_NAME, isActive: true },
+      create: { version: TEMPLATE_VERSION, name: TEMPLATE_NAME, isActive: true, kind: 'VEHICLE_INSPECTION' },
+    });
+
+    // The photo-first pre-inspection template. Deliberately itemless: its substance
+    // is photographs and condition notes, not a checklist.
+    await tx.inspectionTemplate.upsert({
+      where: { kind_version: { kind: 'PRE_INSPECTION', version: 1 } },
+      update: { isActive: true },
+      create: { version: 1, name: 'Pre-Inspection v1', isActive: true, kind: 'PRE_INSPECTION' },
     });
     await tx.inspectionTemplateItem.deleteMany({ where: { templateId: template.id } });
     let order = 0;

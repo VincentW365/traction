@@ -193,6 +193,17 @@ export class InspectionsController {
     return this.service.complete(id, user);
   }
 
+  @Post(':id/skip')
+  @RequirePermission(PERMISSIONS.INSPECTION_EDIT)
+  @ApiOperation({ summary: 'Mark a draft inspection deliberately skipped (reason required)' })
+  skipInspection(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { reason?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.service.skip(id, body?.reason ?? '', user);
+  }
+
   @Post(':id/cancel')
   @RequirePermission(PERMISSIONS.INSPECTION_EDIT)
   @ApiOperation({ summary: 'Cancel a DRAFT or COMPLETED inspection' })

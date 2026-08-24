@@ -169,6 +169,8 @@ export default function ResourcesAdminPage() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [classFilter, setClassFilter] = useState('');
+  const [capabilityFilter, setCapabilityFilter] = useState('');
+  const [sortBy, setSortBy] = useState('display');
   const [showRetired, setShowRetired] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -210,9 +212,31 @@ export default function ResourcesAdminPage() {
       return true;
     })
     .filter((r) => {
+      if (!capabilityFilter) return true;
+      if (capabilityFilter === 'LIFT') return !!r.liftType && r.liftType !== 'mobile' && r.liftType !== 'power_jack';
+      if (capabilityFilter === 'MOBILE_JACK') return r.liftType === 'mobile' || r.liftType === 'power_jack';
+      if (capabilityFilter === 'ALIGNMENT') return r.hasAlignment;
+      if (capabilityFilter === 'DIAGNOSTICS') return r.hasDiagnostics;
+      if (capabilityFilter === 'GENERAL') return !r.liftType && !r.hasAlignment && !r.hasDiagnostics;
+      return true;
+    })
+    .filter((r) => {
       const q = search.trim().toLowerCase();
       if (!q) return true;
       return r.code.toLowerCase().includes(q) || r.name.toLowerCase().includes(q);
+    })
+    .sort((a, b) => {
+      if (sortBy === 'code') return a.code.localeCompare(b.code);
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
+      if (sortBy === 'status') {
+        const rank = (r: WorkResource) =>
+          r.retiredAt ? 5 : ({ AVAILABLE: 0, MAINTENANCE: 2, TEMPORARILY_UNAVAILABLE: 3, OUT_OF_SERVICE: 4 } as Record<string, number>)[
+            r.operationalStatus?.status ?? 'AVAILABLE'
+          ] ?? 1;
+        return rank(a) - rank(b) || a.displayOrder - b.displayOrder;
+      }
+      if (sortBy === 'updated') return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      return a.displayOrder - b.displayOrder || a.code.localeCompare(b.code);
     });
 
   const o = overviewQuery.data;
@@ -271,10 +295,26 @@ export default function ResourcesAdminPage() {
           <option value="SEDAN">Takes sedans</option>
           <option value="SUV">Takes SUVs</option>
         </select>
+        <select value={capabilityFilter} onChange={(e) => setCapabilityFilter(e.target.value)} className="input-field w-auto text-sm">
+          <option value="">Any capability</option>
+          <option value="LIFT">Has a lift</option>
+          <option value="MOBILE_JACK">Mobile / power jack</option>
+          <option value="ALIGNMENT">Alignment equipment</option>
+          <option value="DIAGNOSTICS">Diagnostics equipment</option>
+          <option value="GENERAL">General (no special equipment)</option>
+        </select>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="input-field w-auto text-sm">
+          <option value="display">Sort: Board order</option>
+          <option value="code">Sort: Code</option>
+          <option value="name">Sort: Name</option>
+          <option value="status">Sort: Needs attention first</option>
+          <option value="updated">Sort: Recently changed</option>
+        </select>
         <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
           <input type="checkbox" checked={showRetired} onChange={(e) => setShowRetired(e.target.checked)} />
           Show retired
         </label>
+        <span className="text-[11px] text-slate-400 ml-auto">{filtered.length} of {data.length}</span>
       </div>
 
       {resQuery.isLoading && <LoadingState message="Loading resources..." />}
@@ -701,9 +741,10 @@ function StatusModal({
           <label className="block">
             <span className="input-label">Status</span>
             <select value={status} onChange={(e) => setStatus(e.target.value)} className="input-field">
-              {Object.entries(STATUS_LABEL).map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
+              <option value="AVAILABLE">Available — accepts work normally</option>
+              <option value="TEMPORARILY_UNAVAILABLE">Temporarily Unavailable — short hold, expected back soon</option>
+              <option value="MAINTENANCE">Maintenance — being serviced or repaired</option>
+              <option value="OUT_OF_SERVICE">Out of Service — down until further notice</option>
             </select>
           </label>
 

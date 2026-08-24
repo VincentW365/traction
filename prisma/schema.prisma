@@ -505,7 +505,9 @@ enum InspectionSignatureType {
 // active template's items so historical inspections stay immutable.
 model InspectionTemplate {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  version   Int      @unique
+  /// Unique per KIND, not globally: the vehicle checklist and the pre-inspection
+  /// each version independently (CR-2026-093).
+  version   Int
   name      String
   /// CR-2026-093 — which kind of record this template drives. A pre-inspection needs a
   /// template too (it snapshots one like any other inspection), but it carries no
@@ -518,6 +520,7 @@ model InspectionTemplate {
   items       InspectionTemplateItem[]
   inspections VehicleInspection[]
 
+  @@unique([kind, version])
   @@map("inspection_templates")
 }
 

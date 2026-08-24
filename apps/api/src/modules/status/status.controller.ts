@@ -197,6 +197,54 @@ export class ServiceVisitCompletionController {
     private audit: AuditService,
   ) {}
 
+  /**
+   * CR-2026-093 — everything the job sheet needs, in one read.
+   *
+   * The sheet is filled from data the system already holds; nobody retypes a
+   * chassis number that was captured at check-in. QUEUE_VIEW so technicians can
+   * open the sheet for the vehicle in front of them.
+   */
+  @Get(':id/job-sheet')
+  @RequirePermission(PERMISSIONS.QUEUE_VIEW)
+  @ApiOperation({ summary: 'Data for the Service Centre job sheet: customer, vehicle, services, ticket' })
+  async jobSheet(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    const visit = await this.prisma.serviceVisit.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        siteId: true,
+        mileageIn: true,
+        createdAt: true,
+        customer: {
+          select: { customerNumber: true, firstName: true, lastName: true, phone: true, email: true },
+        },
+        vehicle: {
+          select: {
+            plateNumber: true, make: true, model: true, modelYear: true,
+            engineNo: true, vin: true, fuelType: true, transmission: true, drivetrain: true,
+          },
+        },
+        queueTicket: { select: { ticketNumber: true } },
+        serviceOrders: {
+          select: {
+            id: true,
+            notes: true,
+            items: { select: { serviceType: { select: { code: true, name: true } } } },
+            assignments: {
+              where: { isPrimary: true },
+              select: { technician: { select: { userAccount: { select: { fullName: true } } } } },
+            },
+          },
+        },
+      },
+    });
+    if (!visit) throw new NotFoundException(`ServiceVisit ${id} not found`);
+    if (user.role !== 'ADMIN' && user.siteId !== visit.siteId) {
+      throw new NotFoundException(`ServiceVisit ${id} not found`);
+    }
+    return visit;
+  }
+
   @Patch(':id/completion')
   @RequirePermission(PERMISSIONS.CHECKIN_PERFORM)
   @ApiOperation({ summary: 'Record completion data (mileage out, oil installed)' })

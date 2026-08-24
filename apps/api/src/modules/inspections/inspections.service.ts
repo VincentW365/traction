@@ -70,12 +70,16 @@ export class InspectionsService {
       throw new ForbiddenException('Cannot create an inspection for another site');
     }
 
+    // CR-2026-093 — the two kinds carry different templates. A pre-inspection is a
+    // photo-first condition record and legitimately has NO checklist items; only a
+    // full vehicle inspection insists on them.
+    const kind = dto.kind ?? 'VEHICLE_INSPECTION';
     const template = await this.prisma.inspectionTemplate.findFirst({
-      where: { isActive: true },
+      where: { isActive: true, kind },
       orderBy: { version: 'desc' },
       include: { items: { orderBy: { orderIndex: 'asc' } } },
     });
-    if (!template || template.items.length === 0) {
+    if (!template || (kind === 'VEHICLE_INSPECTION' && template.items.length === 0)) {
       throw new BadRequestException('No active inspection template is configured');
     }
 
@@ -95,12 +99,15 @@ export class InspectionsService {
           customerId: visit.customerId,
           templateId: template.id,
           templateVersion: template.version,
+          kind,
           status: 'DRAFT',
           performedByUserId: actor.sub,
           createdByUserId: actor.sub,
         },
       });
       // Snapshot the active template's lines into immutable per-inspection items.
+      // A pre-inspection has none — its substance is photographs and condition notes.
+      if (kind === 'PRE_INSPECTION') return created;
       await tx.inspectionItem.createMany({
         data: template.items.map((ti) => ({
           inspectionId: created.id,
@@ -150,6 +157,7 @@ export class InspectionsService {
     where.siteId = actor.role === 'ADMIN' ? query.siteId : actor.siteId!;
     if (query.serviceVisitId) where.serviceVisitId = query.serviceVisitId;
     if (query.customerId) where.customerId = query.customerId;
+    if (query.kind) where.kind = query.kind;
 
     // Explicit status wins; otherwise `active` narrows to the work-still-needed set
     // (DRAFT/COMPLETED/SIGNED_OFF), dropping CLOSED/CANCELLED off the worklist.
@@ -188,12 +196,13 @@ export class InspectionsService {
         take,
         skip,
         select: {
-          id: true, inspectionNumber: true, status: true,
+          id: true, inspectionNumber: true, status: true, kind: true,
           createdAt: true, completedAt: true, signedOffAt: true, closedAt: true, customerAckAt: true,
           customer: { select: { id: true, firstName: true, lastName: true } },
           vehicle: { select: { id: true, plateNumber: true, make: true, model: true } },
           serviceVisit: { select: { id: true } },
           recommendations: { select: { severity: true } },
+          _count: { select: { photos: true, recommendations: true } },
         },
       }),
       this.prisma.vehicleInspection.count({ where }),
@@ -241,6 +250,15 @@ export class InspectionsService {
       if (dto.brakeInspectionPerformed !== undefined) data.brakeInspectionPerformed = dto.brakeInspectionPerformed;
       if (dto.priorBodyDamageNotes !== undefined) data.priorBodyDamageNotes = dto.priorBodyDamageNotes;
       if (dto.comments !== undefined) data.comments = dto.comments;
+      if (dto.generalCondition !== undefined) data.generalCondition = dto.generalCondition;
+      if (dto.visibleDamage !== undefined) data.visibleDamage = dto.visibleDamage;
+      if (dto.damageNotes !== undefined) data.damageNotes = dto.damageNotes;
+      if (dto.itemsLeftInside !== undefined) data.itemsLeftInside = dto.itemsLeftInside;
+      if (dto.warningLights !== undefined) data.warningLights = dto.warningLights;
+      if (dto.fuelLevelNote !== undefined) data.fuelLevelNote = dto.fuelLevelNote;
+      if (dto.odometerReading !== undefined) data.odometerReading = dto.odometerReading;
+      if (dto.noPhotoReason !== undefined) data.noPhotoReason = dto.noPhotoReason;
+      if (dto.noPhotoReasonNote !== undefined) data.noPhotoReasonNote = dto.noPhotoReasonNote;
       if (Object.keys(data).length > 0) await tx.vehicleInspection.update({ where: { id }, data });
 
       for (const it of dto.items ?? []) {
@@ -360,6 +378,41 @@ export class InspectionsService {
     await this.statusHistory.record({ entityType: ENTITY, entityId: id, fromStatus: 'DRAFT', toStatus: 'COMPLETED', changedByUserId: actor.sub });
     await this.audit.log({ actorUserId: actor.sub, action: AUDIT_ACTIONS.INSPECTION_COMPLETED, entityType: ENTITY, entityId: id, afterJson: { status: 'COMPLETED' }, reasonCode: 'INSPECTION_COMPLETE' });
 
+    return this.findById(id, actor);
+  }
+
+  /**
+   * CR-2026-093 — deliberately not carried out, as opposed to CANCELLED (created in
+   * error). The distinction matters in history: a skipped inspection says the shop
+   * considered one and decided against it, with a reason and a name attached.
+   */
+  async skip(id: string, reason: string, actor: InspectionActor) {
+    if (!reason?.trim()) throw new BadRequestException('Skipping needs a reason.');
+    const existing = await this.prisma.vehicleInspection.findUnique({
+      where: { id },
+      select: { id: true, siteId: true, status: true },
+    });
+    if (!existing) throw new NotFoundException('Inspection not found');
+    this.assertSameSite(existing.siteId, actor);
+    if (existing.status !== 'DRAFT') {
+      throw new BadRequestException('Only a draft can be marked skipped.');
+    }
+
+    await this.prisma.vehicleInspection.update({
+      where: { id },
+      data: { status: 'SKIPPED', skippedAt: new Date(), skippedByUserId: actor.sub },
+    });
+    await this.statusHistory.record({
+      entityType: ENTITY, entityId: id, fromStatus: 'DRAFT', toStatus: 'SKIPPED', changedByUserId: actor.sub,
+    });
+    await this.audit.log({
+      actorUserId: actor.sub,
+      action: 'INSPECTION_SKIPPED',
+      entityType: ENTITY,
+      entityId: id,
+      reasonCode: 'INSPECTION_SKIPPED',
+      notes: reason,
+    });
     return this.findById(id, actor);
   }
 

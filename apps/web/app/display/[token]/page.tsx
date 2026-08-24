@@ -214,7 +214,7 @@ export default function DisplayBoardPage() {
       <main className="relative flex-1 grid grid-cols-3 gap-[clamp(0.75rem,1.4vw,1.5rem)] p-[clamp(0.75rem,1.6vw,1.75rem)] overflow-hidden">
         <Lane
           title="In Queue"
-          subtitle="Waiting to be called"
+          subtitle="Waiting to be serviced"
           count={data.inQueue.length}
           accent={ACCENTS.blue}
           icon={<ClockIcon />}
