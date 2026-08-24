@@ -279,7 +279,9 @@ class Component extends DCLogic {
       ],
 
       officeFields: [
-        { label: 'CUSTOMER NO.', value: this.props.customerNo ?? '' },
+        // Colon added at the owner's request — the one deliberate departure from the
+        // printed card, which omits it on this line only.
+        { label: 'CUSTOMER NO.:', value: this.props.customerNo ?? '' },
         { label: 'PREPARED BY:', value: this.props.preparedBy ?? '' },
         { label: 'ASSIGNED MECHANIC:', value: this.props.assignedMechanic ?? '' },
         { label: 'SALES INV. #:', value: this.props.salesInv ?? '' },
