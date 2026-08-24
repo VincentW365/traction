@@ -239,6 +239,15 @@ export default function ResourcesAdminPage() {
       return a.displayOrder - b.displayOrder || a.code.localeCompare(b.code);
     });
 
+  // Grouped by type, retired gathered at the end: a manager scans "Bays" as a
+  // block the way they scan the workshop floor, not as interleaved table rows.
+  const grouped = new Map<string, WorkResource[]>();
+  for (const r of filtered) {
+    const key = r.retiredAt ? 'RETIRED' : r.resourceCategory;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(r);
+  }
+
   const o = overviewQuery.data;
 
   return (
@@ -336,81 +345,29 @@ export default function ResourcesAdminPage() {
       )}
 
       {filtered.length > 0 && (
-        <div className="card overflow-hidden">
-          <div className="table-container">
-            <table className="w-full text-sm">
-              <thead>
-                <tr>
-                  <th className="text-left">Code</th>
-                  <th className="text-left">Name</th>
-                  <th className="text-left">Type</th>
-                  <th className="text-left">Vehicle class</th>
-                  <th className="text-left">Capabilities</th>
-                  <th className="text-left">Status</th>
-                  <th className="text-center">In use</th>
-                  <th className="text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r) => {
-                  const state = r.retiredAt ? 'RETIRED' : (r.operationalStatus?.status ?? 'AVAILABLE');
-                  return (
-                    <tr key={r.id} className={r.retiredAt ? 'opacity-60' : ''}>
-                      <td className="font-mono text-xs">{r.code}</td>
-                      <td className="font-medium text-slate-900">
-                        {r.name}
-                        {!r.isActive && !r.retiredAt && (
-                          <span className="ml-2 badge bg-slate-100 text-slate-500 text-[10px]">inactive</span>
-                        )}
-                        {!r.schedulingEnabled && !r.retiredAt && (
-                          <span className="ml-2 badge bg-slate-100 text-slate-500 text-[10px]">not scheduled</span>
-                        )}
-                      </td>
-                      <td className="text-slate-600">{CATEGORY_LABEL[r.resourceCategory] ?? r.resourceCategory}</td>
-                      <td className="text-slate-600">{vehicleClassLabel(r)}</td>
-                      <td className="text-slate-600 text-xs">{capabilitySummary(r)}</td>
-                      <td>
-                        {r.retiredAt ? (
-                          <span className="badge bg-slate-200 text-slate-600 text-[11px]" title={r.retireReason ?? ''}>
-                            Retired
-                          </span>
-                        ) : (
-                          <span
-                            className={`badge text-[11px] ${STATUS_BADGE[state] ?? 'bg-slate-100 text-slate-600'}`}
-                            title={r.operationalStatus?.reason ?? ''}
-                          >
-                            {STATUS_LABEL[state] ?? state}
-                          </span>
-                        )}
-                      </td>
-                      <td className="text-center">
-                        {r.occupancy?.status === 'OCCUPIED' ? (
-                          <span className="badge bg-blue-50 text-blue-700 text-[10px]">occupied</span>
-                        ) : (
-                          <span className="text-slate-300">—</span>
-                        )}
-                      </td>
-                      <td className="text-right whitespace-nowrap">
-                        {!r.retiredAt && (
-                          <>
-                            <button onClick={() => setEditing(r)} className="btn-secondary text-xs py-1 px-2 mr-1">
-                              Edit
-                            </button>
-                            <button onClick={() => setStatusTarget(r)} className="btn-secondary text-xs py-1 px-2 mr-1">
-                              Set Status
-                            </button>
-                          </>
-                        )}
-                        <button onClick={() => setHistoryTarget(r)} className="btn-secondary text-xs py-1 px-2">
-                          History
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        <div className="space-y-5">
+          {GROUP_ORDER.filter((cat) => grouped.get(cat)?.length).map((cat) => (
+            <section key={cat}>
+              <div className="flex items-center gap-2 mb-2">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  {GROUP_LABEL[cat] ?? cat}
+                </h2>
+                <span className="badge bg-slate-100 text-slate-500 text-[10px]">{grouped.get(cat)!.length}</span>
+                <div className="flex-grow border-t border-slate-200" />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {grouped.get(cat)!.map((r) => (
+                  <ResourceCard
+                    key={r.id}
+                    resource={r}
+                    onEdit={() => setEditing(r)}
+                    onStatus={() => setStatusTarget(r)}
+                    onHistory={() => setHistoryTarget(r)}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
       )}
 
@@ -422,6 +379,104 @@ export default function ResourcesAdminPage() {
         <StatusModal resource={statusTarget} onClose={() => setStatusTarget(null)} onSaved={refresh} />
       )}
       {historyTarget && <HistoryDrawer resource={historyTarget} onClose={() => setHistoryTarget(null)} />}
+    </div>
+  );
+}
+
+const GROUP_ORDER = ['BAY', 'OVERFLOW', 'LIGHT_SLOT', 'POWER_WASH', 'EXTERNAL', 'RETIRED'];
+const GROUP_LABEL: Record<string, string> = {
+  BAY: 'Service Bays',
+  OVERFLOW: 'Overflow Spaces',
+  LIGHT_SLOT: 'Light Slots',
+  POWER_WASH: 'Power Wash',
+  EXTERNAL: 'External',
+  RETIRED: 'Retired',
+};
+
+/** Left stripe + badge tone per operational state — status reads before any text. */
+const STATE_STRIPE: Record<string, string> = {
+  AVAILABLE: 'bg-emerald-500',
+  TEMPORARILY_UNAVAILABLE: 'bg-amber-500',
+  MAINTENANCE: 'bg-orange-500',
+  OUT_OF_SERVICE: 'bg-red-500',
+  RETIRED: 'bg-slate-400',
+};
+
+function ResourceCard({
+  resource: r, onEdit, onStatus, onHistory,
+}: {
+  resource: WorkResource;
+  onEdit: () => void;
+  onStatus: () => void;
+  onHistory: () => void;
+}) {
+  const state = r.retiredAt ? 'RETIRED' : (r.operationalStatus?.status ?? 'AVAILABLE');
+  const occupied = r.occupancy?.status === 'OCCUPIED';
+  const caps = capabilitySummary(r);
+  const down = state !== 'AVAILABLE' && state !== 'RETIRED';
+
+  return (
+    <div className={`relative card overflow-hidden flex flex-col ${r.retiredAt ? 'opacity-70' : ''}`}>
+      <span className={`absolute inset-y-0 left-0 w-1 ${STATE_STRIPE[state] ?? 'bg-slate-300'}`} />
+      <div className="pl-4 pr-3 pt-3 pb-2 flex-grow">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[10px] font-semibold text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">
+                {r.code}
+              </span>
+              {occupied && (
+                <span className="flex items-center gap-1 text-[10px] font-semibold text-blue-700">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                  In use
+                </span>
+              )}
+            </div>
+            <div className="text-sm font-semibold text-slate-900 mt-1 truncate">{r.name}</div>
+          </div>
+          <span
+            className={`badge text-[10px] shrink-0 ${r.retiredAt ? 'bg-slate-200 text-slate-600' : (STATUS_BADGE[state] ?? 'bg-slate-100 text-slate-600')}`}
+            title={r.retiredAt ? (r.retireReason ?? '') : (r.operationalStatus?.reason ?? '')}
+          >
+            {r.retiredAt ? 'Retired' : (STATUS_LABEL[state] ?? state)}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+          <span className="badge bg-indigo-50 text-indigo-700 text-[10px]">{vehicleClassLabel(r)}</span>
+          {caps.split(' · ').map((cap) => (
+            <span key={cap} className="badge bg-slate-50 text-slate-600 text-[10px] border border-slate-200">{cap}</span>
+          ))}
+          {!r.schedulingEnabled && !r.retiredAt && (
+            <span className="badge bg-slate-100 text-slate-500 text-[10px]">not scheduled</span>
+          )}
+          {!r.isActive && !r.retiredAt && (
+            <span className="badge bg-slate-100 text-slate-500 text-[10px]">inactive</span>
+          )}
+        </div>
+
+        {/* Why it is down, and when it comes back — on the card, not behind a click */}
+        {down && (r.operationalStatus?.reason || r.operationalStatus?.expectedReturnAt) && (
+          <p className="mt-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded px-2 py-1">
+            {r.operationalStatus?.reason ?? ''}
+            {r.operationalStatus?.expectedReturnAt &&
+              ` — expected back ${new Date(r.operationalStatus.expectedReturnAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`}
+          </p>
+        )}
+        {r.retiredAt && r.retireReason && (
+          <p className="mt-2 text-[11px] text-slate-500 truncate" title={r.retireReason}>{r.retireReason}</p>
+        )}
+      </div>
+
+      <div className="pl-4 pr-3 py-2 border-t border-slate-100 flex gap-1.5">
+        {!r.retiredAt && (
+          <>
+            <button onClick={onEdit} className="btn-secondary text-[11px] py-1 px-2.5">Edit</button>
+            <button onClick={onStatus} className="btn-secondary text-[11px] py-1 px-2.5">Set Status</button>
+          </>
+        )}
+        <button onClick={onHistory} className="btn-secondary text-[11px] py-1 px-2.5 ml-auto">History</button>
+      </div>
     </div>
   );
 }
