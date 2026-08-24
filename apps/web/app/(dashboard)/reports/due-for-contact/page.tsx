@@ -43,6 +43,16 @@ export default function DueForContactPage() {
   const [thresholdMiles, setThresholdMiles] = useState(500);
   const [thresholdDays, setThresholdDays] = useState(30);
 
+  // The person on this screen is about to CALL someone — they need "Tire Rotation",
+  // not TIR-01. Names come from the catalogue; an unmapped code still shows itself.
+  const servicesQuery = useQuery<Array<{ code: string; name: string }>>({
+    queryKey: ['service-types-names'],
+    queryFn: () => api.get('/service-types'),
+    staleTime: 5 * 60_000,
+  });
+  const serviceName = (code: string) =>
+    servicesQuery.data?.find((t) => t.code === code)?.name ?? code;
+
   const dueQuery = useQuery<DueRow[]>({
     queryKey: ['due-for-contact', siteId, thresholdMiles, thresholdDays],
     queryFn: () =>
@@ -86,7 +96,7 @@ export default function DueForContactPage() {
               cust?.phone ?? '',
               vehicleLabel,
               r.vehicle.plateNumber,
-              r.serviceTypeCode,
+              serviceName(r.serviceTypeCode),
               fmtDate(r.nextDueDate),
               r.nextDueOdometer ?? '',
               r.vehicle.odometer ?? '',
@@ -181,8 +191,18 @@ export default function DueForContactPage() {
                       <Link href={`/vehicles/${r.vehicle.id}`} className="text-blue-600 hover:underline">{vehicleLabel}</Link>
                       <span className="text-slate-400 ml-1.5 text-xs">{r.vehicle.plateNumber}</span>
                     </td>
-                    <td className="text-slate-600 font-mono text-xs">{r.serviceTypeCode}</td>
-                    <td className="text-right text-slate-600 whitespace-nowrap">{fmtDate(r.nextDueDate)}</td>
+                    <td className="text-slate-700">
+                      {serviceName(r.serviceTypeCode)}
+                    </td>
+                    <td className="text-right whitespace-nowrap">
+                      {r.nextDueDate && new Date(r.nextDueDate) < new Date() ? (
+                        <span className="text-red-600 font-semibold" title="Past due">
+                          {fmtDate(r.nextDueDate)} · overdue
+                        </span>
+                      ) : (
+                        <span className="text-slate-600">{fmtDate(r.nextDueDate)}</span>
+                      )}
+                    </td>
                     <td className="text-right text-slate-600 tabular-nums">{r.nextDueOdometer != null ? r.nextDueOdometer.toLocaleString() : '—'}</td>
                     <td className="text-right text-slate-500 tabular-nums">{r.vehicle.odometer != null ? r.vehicle.odometer.toLocaleString() : '—'}</td>
                   </tr>

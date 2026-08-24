@@ -14,6 +14,14 @@ interface NavItem {
 
 const ICON_CLASS = 'w-4 h-4';
 
+// The business has one management label: Manager. ADMIN is a role CODE and must
+// never surface as a word a user reads.
+const ROLE_DISPLAY: Record<string, string> = {
+  ADMIN: 'Manager',
+  SERVICE_ADVISOR: 'Service Advisor',
+  TECHNICIAN: 'Technician',
+};
+
 const NAV_ITEMS: NavItem[] = [
   {
     href: '/check-in', label: 'Check-In', section: 'Operations',
@@ -220,7 +228,7 @@ export function Sidebar() {
         <div className="px-4 py-3 border-t border-slate-800">
           <div className="text-xs font-medium text-slate-300 truncate">{user.fullName}</div>
           <div className="text-[10px] text-slate-500 capitalize">
-            {(sandboxRole ?? user.roleCode).replace(/_/g, ' ').toLowerCase()}
+            {ROLE_DISPLAY[sandboxRole ?? user.roleCode] ?? (sandboxRole ?? user.roleCode).replace(/_/g, ' ').toLowerCase()}
             {fullAccess && <span className="text-amber-400 normal-case"> · full access</span>}
           </div>
           {/* CR-2026-094 — which commit this build came from, for managers only. Blank
