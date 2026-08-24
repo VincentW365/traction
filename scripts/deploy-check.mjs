@@ -10,7 +10,12 @@
  * Secrets are checked for PRESENCE only — a missing JWT_SECRET is reported as
  * missing, never echoed.
  */
-import { PrismaClient } from '@prisma/client';
+// Default-import destructure, not a named import: the generated client is CJS,
+// and named-export detection has real-world failure modes (the clean-checkout
+// simulation hit one at Windows' path-length limit). This form works everywhere.
+import prismaPkg from '@prisma/client';
+
+const { PrismaClient } = prismaPkg;
 
 const results = [];
 const check = (name, ok, detail, { warnOnly = false } = {}) => {

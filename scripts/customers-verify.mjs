@@ -9,7 +9,12 @@
  * reports is the shape: totals, orphans, duplicate candidates, and the import
  * batches recorded on ExternalSystemRef.
  */
-import { PrismaClient } from '@prisma/client';
+// Default-import destructure, not a named import: the generated client is CJS,
+// and named-export detection has real-world failure modes (the clean-checkout
+// simulation hit one at Windows' path-length limit). This form works everywhere.
+import prismaPkg from '@prisma/client';
+
+const { PrismaClient } = prismaPkg;
 
 const prisma = new PrismaClient();
 

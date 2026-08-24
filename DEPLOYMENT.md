@@ -30,6 +30,11 @@ Monorepo (pnpm workspaces + Turborepo):
 - **Node.js 20+** and **pnpm 10+** (`npm install -g pnpm`, or `corepack enable`)
 - **PostgreSQL 16** (managed service or self-hosted)
 - *(Optional)* **Docker + Docker Compose** — the included `docker-compose.yml` starts Postgres + Redis for local use.
+- **Windows hosts: clone to a short path** (e.g. `C:\bsop`). The clean-checkout
+  simulation demonstrated Prisma's generated client failing to load once the
+  checkout path pushes `node_modules` past the ~260-character Windows limit —
+  alternatively enable NTFS long paths. Linux hosts (including Render) are
+  unaffected.
 
 ## 3. Configure environment
 `.env.example` is the **complete environment contract** — every variable the
