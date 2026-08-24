@@ -7,113 +7,788 @@ import { useSiteId } from '../../../../hooks/use-site';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { EmptyState } from '../../../../components/ui/empty-state';
-import { StatusBadge } from '../../../../components/status-badge';
+
+/**
+ * CR-2026-095 — Resources & Bays, the authoritative operational configuration area.
+ *
+ * "We opened Bay 6" or "the lift is being repaired" is handled here, takes effect
+ * immediately in scheduling and dispatch, and requires nobody with a code editor.
+ *
+ * The screen speaks operations, not database: statuses read "Temporarily
+ * Unavailable", not the enum; warnings name the appointments a change would touch;
+ * and destructive-looking actions explain what actually happens (retirement keeps
+ * every historical record).
+ */
 
 interface WorkResource {
   id: string;
   code: string;
   name: string;
   resourceCategory: string;
-  maxVehicleWeight: string | null;
   liftType: string | null;
   hasAlignment: boolean;
   hasDiagnostics: boolean;
   requiresMechanic: boolean;
+  showOnDispatchBoard: boolean;
+  supportsSedan: boolean;
+  supportsSuv: boolean;
+  schedulingEnabled: boolean;
+  capacity: number;
   isActive: boolean;
   displayOrder: number;
+  notes: string | null;
+  retiredAt: string | null;
+  retireReason: string | null;
+  updatedAt: string;
+  operationalStatus?: {
+    status: string;
+    reason: string | null;
+    expectedReturnAt: string | null;
+  } | null;
+  occupancy?: { status: string } | null;
 }
+
+interface Overview {
+  totalActive: number;
+  availableNow: number;
+  inUse: number;
+  maintenance: number;
+  temporarilyUnavailable: number;
+  outOfService: number;
+  retired: number;
+  sedanBays: number;
+  suvBays: number;
+}
+
+interface Impact {
+  occupiedNow: boolean;
+  activeAssignments: number;
+  futureReservations: number;
+  historicalAssignments: number;
+  everUsed: boolean;
+}
+
+interface HistoryEvent {
+  id: string;
+  at: string;
+  by: string;
+  action: string;
+  reason: string | null;
+}
+
+const CATEGORY_LABEL: Record<string, string> = {
+  BAY: 'Bay',
+  OVERFLOW: 'Overflow',
+  LIGHT_SLOT: 'Light Slot',
+  POWER_WASH: 'Power Wash',
+  EXTERNAL: 'External',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  AVAILABLE: 'Available',
+  TEMPORARILY_UNAVAILABLE: 'Temporarily Unavailable',
+  MAINTENANCE: 'Maintenance',
+  OUT_OF_SERVICE: 'Out of Service',
+};
+
+const STATUS_BADGE: Record<string, string> = {
+  AVAILABLE: 'bg-emerald-50 text-emerald-700',
+  TEMPORARILY_UNAVAILABLE: 'bg-amber-50 text-amber-700',
+  MAINTENANCE: 'bg-orange-50 text-orange-700',
+  OUT_OF_SERVICE: 'bg-red-50 text-red-700',
+};
+
+const ACTION_LABEL: Record<string, string> = {
+  RESOURCE_CREATE: 'Created',
+  RESOURCE_UPDATE: 'Configuration changed',
+  RESOURCE_OPERATIONAL_STATUS_CHANGE: 'Status changed',
+  RESOURCE_RETIRE: 'Retired',
+  RESOURCE_REACTIVATE: 'Returned to service',
+  RESOURCE_DELETE: 'Deleted',
+  MOBILE_JACK_OVERRIDE: 'Mobile-jack override used',
+};
+
+function errText(e: unknown, fallback: string): string {
+  return e instanceof Error && e.message ? e.message : fallback;
+}
+
+function vehicleClassLabel(r: WorkResource): string {
+  if (r.supportsSedan && r.supportsSuv) return 'Sedan + SUV';
+  if (r.supportsSedan) return 'Sedan only';
+  if (r.supportsSuv) return 'SUV only';
+  return '—';
+}
+
+function capabilitySummary(r: WorkResource): string {
+  const caps: string[] = [];
+  if (r.liftType) caps.push(r.liftType === 'mobile' ? 'Mobile jack' : `${r.liftType} lift`);
+  if (r.hasAlignment) caps.push('Alignment');
+  if (r.hasDiagnostics) caps.push('Diagnostics');
+  return caps.length ? caps.join(' · ') : 'General';
+}
+
+/** Shared shape for the add and edit forms. */
+interface FormState {
+  code: string;
+  name: string;
+  resourceCategory: string;
+  liftType: string;
+  hasAlignment: boolean;
+  hasDiagnostics: boolean;
+  requiresMechanic: boolean;
+  showOnDispatchBoard: boolean;
+  supportsSedan: boolean;
+  supportsSuv: boolean;
+  schedulingEnabled: boolean;
+  capacity: number;
+  displayOrder: number;
+  notes: string;
+}
+
+const EMPTY_FORM: FormState = {
+  code: '',
+  name: '',
+  resourceCategory: 'BAY',
+  liftType: '',
+  hasAlignment: false,
+  hasDiagnostics: false,
+  requiresMechanic: true,
+  showOnDispatchBoard: true,
+  supportsSedan: true,
+  supportsSuv: true,
+  schedulingEnabled: true,
+  capacity: 1,
+  displayOrder: 0,
+  notes: '',
+};
 
 export default function ResourcesAdminPage() {
   const siteId = useSiteId();
   const queryClient = useQueryClient();
+
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [classFilter, setClassFilter] = useState('');
+  const [showRetired, setShowRetired] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<WorkResource | null>(null);
+  const [statusTarget, setStatusTarget] = useState<WorkResource | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<WorkResource | null>(null);
 
   const resQuery = useQuery<WorkResource[]>({
     queryKey: ['resources-admin', siteId],
     queryFn: () => api.get(`/resources?siteId=${siteId}`),
+    refetchInterval: 30_000,
+  });
+  const overviewQuery = useQuery<Overview>({
+    queryKey: ['resources-overview', siteId],
+    queryFn: () => api.get(`/resources/overview-admin?siteId=${siteId}`),
+    refetchInterval: 30_000,
   });
 
-  const toggleMutation = useMutation({
-    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
-      api.patch(`/resources/${id}`, { isActive }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['resources-admin'] }),
-  });
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['resources-admin'] });
+    queryClient.invalidateQueries({ queryKey: ['resources-overview'] });
+    queryClient.invalidateQueries({ queryKey: ['dispatch'] });
+  };
 
   const data = resQuery.data ?? [];
-  const filtered = categoryFilter ? data.filter((r) => r.resourceCategory === categoryFilter) : data;
+  const filtered = data
+    .filter((r) => (showRetired ? true : !r.retiredAt))
+    .filter((r) => (categoryFilter ? r.resourceCategory === categoryFilter : true))
+    .filter((r) => {
+      if (!statusFilter) return true;
+      if (statusFilter === 'RETIRED') return !!r.retiredAt;
+      return !r.retiredAt && (r.operationalStatus?.status ?? 'AVAILABLE') === statusFilter;
+    })
+    .filter((r) => {
+      if (!classFilter) return true;
+      if (classFilter === 'SEDAN') return r.supportsSedan;
+      if (classFilter === 'SUV') return r.supportsSuv;
+      return true;
+    })
+    .filter((r) => {
+      const q = search.trim().toLowerCase();
+      if (!q) return true;
+      return r.code.toLowerCase().includes(q) || r.name.toLowerCase().includes(q);
+    });
+
+  const o = overviewQuery.data;
 
   return (
     <div className="page-container">
       <PageHeader
         title="Resources & Bays"
-        subtitle={`${data.length} resources configured`}
-        breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Admin' }, { label: 'Resources' }]}
+        subtitle="The bays, lifts and equipment this site schedules work onto — changes take effect immediately"
+        breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Setup' }, { label: 'Resources & Bays' }]}
         actions={
-          <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="input-field w-auto">
-            <option value="">All Categories</option>
-            <option value="BAY">Bay</option>
-            <option value="OVERFLOW">Overflow</option>
-            <option value="LIGHT_SLOT">Light Slot</option>
-          </select>
+          <button onClick={() => setAdding(true)} className="btn-primary text-sm">
+            Add Resource
+          </button>
         }
       />
 
-      {resQuery.isLoading && <LoadingState message="Loading resources..." />}
+      {/* Operational overview — counts a manager acts on, not analytics */}
+      {o && (
+        <div className="grid grid-cols-3 md:grid-cols-9 gap-2 mb-4">
+          <Stat label="Active" value={o.totalActive} />
+          <Stat label="Available now" value={o.availableNow} tone="good" />
+          <Stat label="In use" value={o.inUse} />
+          <Stat label="Maintenance" value={o.maintenance} tone={o.maintenance ? 'warn' : undefined} />
+          <Stat label="Temp. unavailable" value={o.temporarilyUnavailable} tone={o.temporarilyUnavailable ? 'warn' : undefined} />
+          <Stat label="Out of service" value={o.outOfService} tone={o.outOfService ? 'bad' : undefined} />
+          <Stat label="Retired" value={o.retired} />
+          <Stat label="Sedan bays" value={o.sedanBays} />
+          <Stat label="SUV bays" value={o.suvBays} />
+        </div>
+      )}
 
-      {filtered.length === 0 && resQuery.isSuccess && (
-        <EmptyState title="No resources" description="No work resources configured for this site." />
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search code or name…"
+          className="input-field w-52 text-sm"
+        />
+        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="input-field w-auto text-sm">
+          <option value="">All types</option>
+          {Object.entries(CATEGORY_LABEL).map(([v, l]) => (
+            <option key={v} value={v}>{l}</option>
+          ))}
+        </select>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="input-field w-auto text-sm">
+          <option value="">All statuses</option>
+          {Object.entries(STATUS_LABEL).map(([v, l]) => (
+            <option key={v} value={v}>{l}</option>
+          ))}
+          <option value="RETIRED">Retired</option>
+        </select>
+        <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="input-field w-auto text-sm">
+          <option value="">Any vehicle class</option>
+          <option value="SEDAN">Takes sedans</option>
+          <option value="SUV">Takes SUVs</option>
+        </select>
+        <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+          <input type="checkbox" checked={showRetired} onChange={(e) => setShowRetired(e.target.checked)} />
+          Show retired
+        </label>
+      </div>
+
+      {resQuery.isLoading && <LoadingState message="Loading resources..." />}
+      {resQuery.isError && (
+        <div className="card p-6 text-center border-red-200 bg-red-50">
+          <p className="text-sm text-red-700">Could not load resources.</p>
+        </div>
+      )}
+
+      {!resQuery.isLoading && filtered.length === 0 && (
+        <EmptyState
+          title={data.length === 0 ? 'No resources configured yet' : 'Nothing matches these filters'}
+          description={
+            data.length === 0
+              ? 'Add your first bay or piece of equipment — it becomes schedulable the moment it is saved.'
+              : 'Clear a filter or two.'
+          }
+        />
       )}
 
       {filtered.length > 0 && (
-        <div className="table-container">
-          <table className="w-full text-sm">
-            <thead className="table-header">
-              <tr>
-                <th>Code</th>
-                <th>Name</th>
-                <th>Category</th>
-                <th>Max Weight</th>
-                <th>Lift</th>
-                <th>Capabilities</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r) => (
-                <tr key={r.id} className="table-row">
-                  <td className="font-mono text-xs font-bold text-slate-700">{r.code}</td>
-                  <td className="font-medium text-slate-900">{r.name}</td>
-                  <td>
-                    <span className={`badge text-[10px] ${r.resourceCategory === 'BAY' ? 'bg-blue-50 text-blue-700' : r.resourceCategory === 'OVERFLOW' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
-                      {r.resourceCategory}
-                    </span>
-                  </td>
-                  <td className="text-xs text-slate-500">{r.maxVehicleWeight ?? 'Any'}</td>
-                  <td className="text-xs text-slate-500">{r.liftType ?? '--'}</td>
-                  <td className="text-xs">
-                    <div className="flex gap-1">
-                      {r.hasAlignment && <span className="badge bg-violet-50 text-violet-700 text-[9px]">Align</span>}
-                      {r.hasDiagnostics && <span className="badge bg-indigo-50 text-indigo-700 text-[9px]">Diag</span>}
-                      {r.requiresMechanic && <span className="badge bg-slate-100 text-slate-500 text-[9px]">Mech</span>}
-                    </div>
-                  </td>
-                  <td><StatusBadge status={r.isActive ? 'ACTIVE' : 'INACTIVE'} /></td>
-                  <td>
-                    <button
-                      onClick={() => toggleMutation.mutate({ id: r.id, isActive: !r.isActive })}
-                      disabled={toggleMutation.isPending}
-                      className={`text-xs font-medium ${r.isActive ? 'text-red-500 hover:underline' : 'text-emerald-600 hover:underline'}`}
-                    >
-                      {r.isActive ? 'Deactivate' : 'Activate'}
-                    </button>
-                  </td>
+        <div className="card overflow-hidden">
+          <div className="table-container">
+            <table className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="text-left">Code</th>
+                  <th className="text-left">Name</th>
+                  <th className="text-left">Type</th>
+                  <th className="text-left">Vehicle class</th>
+                  <th className="text-left">Capabilities</th>
+                  <th className="text-left">Status</th>
+                  <th className="text-center">In use</th>
+                  <th className="text-right">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map((r) => {
+                  const state = r.retiredAt ? 'RETIRED' : (r.operationalStatus?.status ?? 'AVAILABLE');
+                  return (
+                    <tr key={r.id} className={r.retiredAt ? 'opacity-60' : ''}>
+                      <td className="font-mono text-xs">{r.code}</td>
+                      <td className="font-medium text-slate-900">
+                        {r.name}
+                        {!r.isActive && !r.retiredAt && (
+                          <span className="ml-2 badge bg-slate-100 text-slate-500 text-[10px]">inactive</span>
+                        )}
+                        {!r.schedulingEnabled && !r.retiredAt && (
+                          <span className="ml-2 badge bg-slate-100 text-slate-500 text-[10px]">not scheduled</span>
+                        )}
+                      </td>
+                      <td className="text-slate-600">{CATEGORY_LABEL[r.resourceCategory] ?? r.resourceCategory}</td>
+                      <td className="text-slate-600">{vehicleClassLabel(r)}</td>
+                      <td className="text-slate-600 text-xs">{capabilitySummary(r)}</td>
+                      <td>
+                        {r.retiredAt ? (
+                          <span className="badge bg-slate-200 text-slate-600 text-[11px]" title={r.retireReason ?? ''}>
+                            Retired
+                          </span>
+                        ) : (
+                          <span
+                            className={`badge text-[11px] ${STATUS_BADGE[state] ?? 'bg-slate-100 text-slate-600'}`}
+                            title={r.operationalStatus?.reason ?? ''}
+                          >
+                            {STATUS_LABEL[state] ?? state}
+                          </span>
+                        )}
+                      </td>
+                      <td className="text-center">
+                        {r.occupancy?.status === 'OCCUPIED' ? (
+                          <span className="badge bg-blue-50 text-blue-700 text-[10px]">occupied</span>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+                      <td className="text-right whitespace-nowrap">
+                        {!r.retiredAt && (
+                          <>
+                            <button onClick={() => setEditing(r)} className="btn-secondary text-xs py-1 px-2 mr-1">
+                              Edit
+                            </button>
+                            <button onClick={() => setStatusTarget(r)} className="btn-secondary text-xs py-1 px-2 mr-1">
+                              Set Status
+                            </button>
+                          </>
+                        )}
+                        <button onClick={() => setHistoryTarget(r)} className="btn-secondary text-xs py-1 px-2">
+                          History
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
+
+      {adding && <ResourceForm siteId={siteId} onClose={() => setAdding(false)} onSaved={refresh} />}
+      {editing && (
+        <ResourceForm siteId={siteId} existing={editing} onClose={() => setEditing(null)} onSaved={refresh} />
+      )}
+      {statusTarget && (
+        <StatusModal resource={statusTarget} onClose={() => setStatusTarget(null)} onSaved={refresh} />
+      )}
+      {historyTarget && <HistoryDrawer resource={historyTarget} onClose={() => setHistoryTarget(null)} />}
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: number; tone?: 'good' | 'warn' | 'bad' }) {
+  const colour =
+    tone === 'good' ? 'text-emerald-700' : tone === 'warn' ? 'text-amber-700' : tone === 'bad' ? 'text-red-700' : 'text-slate-900';
+  return (
+    <div className="card p-2.5 text-center">
+      <div className={`text-lg font-bold tabular-nums ${colour}`}>{value}</div>
+      <div className="text-[10px] text-slate-500 leading-tight">{label}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Add / Edit
+// ---------------------------------------------------------------------------
+
+function ResourceForm({
+  siteId,
+  existing,
+  onClose,
+  onSaved,
+}: {
+  siteId: string;
+  existing?: WorkResource;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<FormState>(
+    existing
+      ? {
+          code: existing.code,
+          name: existing.name,
+          resourceCategory: existing.resourceCategory,
+          liftType: existing.liftType ?? '',
+          hasAlignment: existing.hasAlignment,
+          hasDiagnostics: existing.hasDiagnostics,
+          requiresMechanic: existing.requiresMechanic,
+          showOnDispatchBoard: existing.showOnDispatchBoard,
+          supportsSedan: existing.supportsSedan,
+          supportsSuv: existing.supportsSuv,
+          schedulingEnabled: existing.schedulingEnabled,
+          capacity: existing.capacity,
+          displayOrder: existing.displayOrder,
+          notes: existing.notes ?? '',
+        }
+      : EMPTY_FORM,
+  );
+
+  // The §29 impact numbers, so a manager sees what a capability change touches
+  // BEFORE saving, not in a support call afterwards.
+  const impactQuery = useQuery<Impact>({
+    queryKey: ['resource-impact', existing?.id],
+    queryFn: () => api.get(`/resources/${existing!.id}/impact`),
+    enabled: !!existing,
+  });
+
+  const save = useMutation({
+    mutationFn: () => {
+      const payload = {
+        ...form,
+        liftType: form.liftType || null,
+        notes: form.notes || null,
+        capacity: Number(form.capacity),
+        displayOrder: Number(form.displayOrder),
+      };
+      return existing
+        ? api.patch(`/resources/${existing.id}`, { ...payload, expectedUpdatedAt: existing.updatedAt })
+        : api.post('/resources', { ...payload, siteId });
+    },
+    onSuccess: () => {
+      onSaved();
+      onClose();
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: () => api.delete(`/resources/${existing!.id}`),
+    onSuccess: () => {
+      onSaved();
+      onClose();
+    },
+  });
+
+  const retire = useMutation({
+    mutationFn: (reason: string) => api.post(`/resources/${existing!.id}/retire`, { reason }),
+    onSuccess: () => {
+      onSaved();
+      onClose();
+    },
+  });
+
+  const impact = impactQuery.data;
+  const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/40 z-50 flex items-start justify-center overflow-y-auto py-8">
+      <div className="card w-full max-w-lg mx-4">
+        <div className="card-header flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">
+            {existing ? `Edit ${existing.name}` : 'Add Resource'}
+          </h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">×</button>
+        </div>
+        <div className="card-body space-y-3">
+          {existing && impact && (impact.futureReservations > 0 || impact.activeAssignments > 0 || impact.occupiedNow) && (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {existing.name} currently has{' '}
+              {[
+                impact.occupiedNow ? 'a vehicle on it' : null,
+                impact.activeAssignments ? `${impact.activeAssignments} active assignment(s)` : null,
+                impact.futureReservations ? `${impact.futureReservations} upcoming reservation(s)` : null,
+              ]
+                .filter(Boolean)
+                .join(', ')}
+              . Changing its availability or capabilities may affect that work.
+            </p>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="input-label">Code</span>
+              <input value={form.code} onChange={(e) => set('code', e.target.value)} className="input-field" placeholder="BAY-6" />
+            </label>
+            <label className="block">
+              <span className="input-label">Name</span>
+              <input value={form.name} onChange={(e) => set('name', e.target.value)} className="input-field" placeholder="Bay 6" />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="input-label">Type</span>
+              <select
+                value={form.resourceCategory}
+                onChange={(e) => set('resourceCategory', e.target.value)}
+                className="input-field"
+                disabled={!!existing}
+                title={existing ? 'The type defines behaviour and does not change after creation.' : undefined}
+              >
+                {Object.entries(CATEGORY_LABEL).map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="input-label">Lift / equipment</span>
+              <select value={form.liftType} onChange={(e) => set('liftType', e.target.value)} className="input-field">
+                <option value="">None</option>
+                <option value="sedan">Sedan lift</option>
+                <option value="heavy">Heavy lift</option>
+                <option value="mobile">Mobile jack</option>
+                <option value="power_jack">Power jack</option>
+              </select>
+            </label>
+          </div>
+
+          <div>
+            <span className="input-label">Vehicle classes this resource can take</span>
+            <div className="flex gap-4 mt-1">
+              <label className="flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={form.supportsSedan} onChange={(e) => set('supportsSedan', e.target.checked)} />
+                Sedan
+              </label>
+              <label className="flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={form.supportsSuv} onChange={(e) => set('supportsSuv', e.target.checked)} />
+                SUV
+              </label>
+            </div>
+            {form.liftType === 'mobile' && form.supportsSuv && (
+              <p className="text-[11px] text-amber-700 mt-1">
+                Mobile jacks are sedan-only by the shop&apos;s safety rule. Ticking SUV here does not bypass it —
+                an SUV assignment will still need an audited manager override.
+              </p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            {(
+              [
+                ['hasAlignment', 'Alignment equipment'],
+                ['hasDiagnostics', 'Diagnostics equipment'],
+                ['requiresMechanic', 'Requires a mechanic'],
+                ['showOnDispatchBoard', 'Show on dispatch board'],
+                ['schedulingEnabled', 'Accepts scheduled work'],
+              ] as const
+            ).map(([key, label]) => (
+              <label key={key} className="flex items-center gap-1.5 text-sm text-slate-700 cursor-pointer">
+                <input type="checkbox" checked={form[key]} onChange={(e) => set(key, e.target.checked)} />
+                {label}
+              </label>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="input-label">Capacity (concurrent jobs)</span>
+              <input
+                type="number"
+                min={1}
+                value={form.capacity}
+                onChange={(e) => set('capacity', Number(e.target.value))}
+                className="input-field"
+              />
+            </label>
+            <label className="block">
+              <span className="input-label">Display order</span>
+              <input
+                type="number"
+                value={form.displayOrder}
+                onChange={(e) => set('displayOrder', Number(e.target.value))}
+                className="input-field"
+              />
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="input-label">Internal notes</span>
+            <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)} className="input-field" rows={2} />
+          </label>
+
+          {save.isError && (
+            <p className="text-xs text-red-600">{errText(save.error, 'Could not save.')}</p>
+          )}
+          {remove.isError && (
+            <p className="text-xs text-red-600">{errText(remove.error, 'Could not delete.')}</p>
+          )}
+          {retire.isError && (
+            <p className="text-xs text-red-600">{errText(retire.error, 'Could not retire.')}</p>
+          )}
+
+          <div className="flex items-center justify-between pt-1">
+            <div className="flex gap-2">
+              {existing && impact && !impact.everUsed && (
+                <button
+                  onClick={() => {
+                    if (confirm(`Delete ${existing.name}? It has never been used, so this removes it completely.`)) {
+                      remove.mutate();
+                    }
+                  }}
+                  className="btn-secondary text-xs text-red-600"
+                  disabled={remove.isPending}
+                >
+                  Delete
+                </button>
+              )}
+              {existing && impact && impact.everUsed && (
+                <button
+                  onClick={() => {
+                    const reason = prompt(
+                      `Retire ${existing.name}? It keeps all its history and stops taking new work. Enter the reason:`,
+                    );
+                    if (reason?.trim()) retire.mutate(reason.trim());
+                  }}
+                  className="btn-secondary text-xs text-red-600"
+                  disabled={retire.isPending}
+                >
+                  Retire
+                </button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={onClose} className="btn-secondary text-sm">Cancel</button>
+              <button onClick={() => save.mutate()} disabled={save.isPending} className="btn-primary text-sm">
+                {save.isPending ? 'Saving…' : existing ? 'Save Changes' : 'Create Resource'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Set Status
+// ---------------------------------------------------------------------------
+
+function StatusModal({
+  resource,
+  onClose,
+  onSaved,
+}: {
+  resource: WorkResource;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const current = resource.operationalStatus?.status ?? 'AVAILABLE';
+  const [status, setStatus] = useState(current);
+  const [reason, setReason] = useState('');
+  const [expectedReturn, setExpectedReturn] = useState('');
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.post(`/resources/${resource.id}/status`, {
+        status,
+        reason: reason || undefined,
+        expectedReturnAt: expectedReturn ? new Date(expectedReturn).toISOString() : undefined,
+      }),
+    onSuccess: () => {
+      onSaved();
+      onClose();
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center">
+      <div className="card w-full max-w-sm mx-4">
+        <div className="card-header flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">Set status — {resource.name}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">×</button>
+        </div>
+        <div className="card-body space-y-3">
+          <label className="block">
+            <span className="input-label">Status</span>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className="input-field">
+              {Object.entries(STATUS_LABEL).map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </select>
+          </label>
+
+          {status !== 'AVAILABLE' && (
+            <>
+              <label className="block">
+                <span className="input-label">Reason (shown on the board and in history)</span>
+                <input
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  className="input-field"
+                  placeholder="Lift repair, electrical fault…"
+                />
+              </label>
+              <label className="block">
+                <span className="input-label">Expected back (optional)</span>
+                <input
+                  type="datetime-local"
+                  value={expectedReturn}
+                  onChange={(e) => setExpectedReturn(e.target.value)}
+                  className="input-field"
+                />
+              </label>
+              <p className="text-[11px] text-slate-500">
+                While not Available, {resource.name} refuses new assignments. Existing work and history are untouched.
+              </p>
+            </>
+          )}
+
+          {save.isError && <p className="text-xs text-red-600">{errText(save.error, 'Could not change status.')}</p>}
+
+          <div className="flex justify-end gap-2">
+            <button onClick={onClose} className="btn-secondary text-sm">Cancel</button>
+            <button onClick={() => save.mutate()} disabled={save.isPending} className="btn-primary text-sm">
+              {save.isPending ? 'Saving…' : 'Set Status'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Change history
+// ---------------------------------------------------------------------------
+
+function HistoryDrawer({ resource, onClose }: { resource: WorkResource; onClose: () => void }) {
+  const q = useQuery<HistoryEvent[]>({
+    queryKey: ['resource-history', resource.id],
+    queryFn: () => api.get(`/resources/${resource.id}/history`),
+  });
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center">
+      <div className="card w-full max-w-md mx-4 max-h-[80vh] flex flex-col">
+        <div className="card-header flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">Change history — {resource.name}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">×</button>
+        </div>
+        <div className="card-body overflow-y-auto">
+          {q.isLoading && <LoadingState message="Loading history..." />}
+          {q.data && q.data.length === 0 && (
+            <p className="text-sm text-slate-500">No configuration changes recorded.</p>
+          )}
+          {q.data && q.data.length > 0 && (
+            <div className="space-y-2">
+              {q.data.map((e) => (
+                <div key={e.id} className="border-b border-slate-100 pb-2 last:border-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-medium text-slate-900">{ACTION_LABEL[e.action] ?? e.action}</span>
+                    <span className="text-[10px] text-slate-400 whitespace-nowrap">
+                      {new Date(e.at).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    by {e.by}
+                    {e.reason ? ` — ${e.reason}` : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

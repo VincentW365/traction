@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Patch,
   Param,
   Query,
@@ -90,6 +91,16 @@ export class StaffController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.staffService.reactivate(id, user.sub);
+  }
+
+  @Delete(':id')
+  @RequirePermission(PERMISSIONS.STAFF_DELETE)
+  @ApiOperation({
+    summary:
+      'Delete a deactivated staff member with no operational history. Anyone with recorded work or audited actions stays deactivated instead.',
+  })
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.staffService.remove(id, user.sub);
   }
 
   @Post(':id/link-technician')

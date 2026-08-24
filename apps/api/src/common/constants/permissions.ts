@@ -64,6 +64,7 @@ export const PERMISSIONS = {
   STAFF_CREATE: 'staff:create',
   STAFF_UPDATE: 'staff:update',
   STAFF_DEACTIVATE: 'staff:deactivate',
+  STAFF_DELETE: 'staff:delete',
 
   // Technician Profile Management
   TECHNICIAN_MANAGE: 'technician:manage',

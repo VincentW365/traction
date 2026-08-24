@@ -9,7 +9,13 @@ import { ResourcesService } from '../resources.service';
 function build(liftType: string, serviceClass: string | null) {
   const prisma: any = {
     workResource: {
-      findUnique: vi.fn(async () => ({ id: 'r1', code: 'MJACK-01', name: 'Mobile Jack 1', liftType, occupancy: null })),
+      // CR-2026-095 fields included at their healthy defaults, so this spec keeps
+      // testing ONLY the DMAIC gate rather than tripping the new eligibility checks.
+      findUnique: vi.fn(async () => ({
+        id: 'r1', code: 'MJACK-01', name: 'Mobile Jack 1', liftType, occupancy: null,
+        isActive: true, schedulingEnabled: true, supportsSedan: true, supportsSuv: true,
+        retiredAt: null, operationalStatus: null,
+      })),
     },
     queueTicket: {
       findUnique: vi.fn(async () => ({

@@ -112,11 +112,33 @@ export class ResourcesService {
   ) {
     const resource = await this.prisma.workResource.findUnique({
       where: { id: resourceId },
-      include: { occupancy: true },
+      include: { occupancy: true, operationalStatus: true },
     });
     if (!resource) throw new NotFoundException(`Resource ${resourceId} not found`);
     if (resource.occupancy?.status === 'OCCUPIED') {
       throw new BadRequestException(`Resource ${resource.code} is currently occupied`);
+    }
+
+    // CR-2026-095 — configuration is now live operational truth, so the gate sits
+    // here at assignment, not only in the admin screen's filters. Each refusal names
+    // its reason: "cannot assign" with no why is a radio call to the office.
+    if (resource.retiredAt) {
+      throw new BadRequestException(`${resource.name} is retired and cannot take new work.`);
+    }
+    if (!resource.isActive) {
+      throw new BadRequestException(`${resource.name} is deactivated.`);
+    }
+    if (!resource.schedulingEnabled) {
+      throw new BadRequestException(`${resource.name} is not accepting scheduled work.`);
+    }
+    const opState = resource.operationalStatus?.status ?? 'AVAILABLE';
+    if (opState !== 'AVAILABLE') {
+      const label = opState.replace(/_/g, ' ').toLowerCase();
+      const back = resource.operationalStatus?.expectedReturnAt;
+      throw new BadRequestException(
+        `${resource.name} is ${label}${back ? ` (expected back ${back.toISOString().slice(0, 16).replace('T', ' ')})` : ''}.` +
+          (resource.operationalStatus?.reason ? ` Reason: ${resource.operationalStatus.reason}` : ''),
+      );
     }
 
     const ticket = await this.prisma.queueTicket.findUnique({
@@ -126,6 +148,22 @@ export class ResourcesService {
     if (!ticket) throw new NotFoundException(`Queue ticket ${queueTicketId} not found`);
     if (!['WAITING', 'PENDING_RANK'].includes(ticket.displayStatus)) {
       throw new BadRequestException(`Ticket is in status ${ticket.displayStatus}, cannot assign`);
+    }
+
+    // CR-2026-095 — structured vehicle-class compatibility. Checked BEFORE the
+    // mobile-jack rule so an SUV against a sedan-only bay is refused as plain
+    // incompatibility; the DMAIC gate below stays its own named safety rule with its
+    // own audited override — an administrator unticking a checkbox cannot reach it.
+    const vehicleClass = ticket.serviceVisit.vehicle?.serviceClass ?? null;
+    if (vehicleClass === 'SUV_CLASS' && !resource.supportsSuv) {
+      throw new BadRequestException(
+        `${resource.name} is configured for sedans only — this vehicle is an SUV.`,
+      );
+    }
+    if (vehicleClass === 'SEDAN_CLASS' && !resource.supportsSedan) {
+      throw new BadRequestException(
+        `${resource.name} is configured for SUVs only — this vehicle is a sedan.`,
+      );
     }
 
     // --- DMAIC Rule 3: mobile-jack sedan-only gate (with audited manager override) ---

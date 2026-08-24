@@ -172,6 +172,17 @@ enum DrivingProfile {
 
 // --- v4.1 New Enums ---
 
+/// CR-2026-095 — graded operational states. A boolean up/down could not distinguish
+/// a lift under repair from a bay lost to flooding, and the return-to-service story
+/// differs for each. RETIRED is deliberately NOT here: retirement is a lifecycle
+/// fact on the resource itself, not an operational mood.
+enum ResourceOperationalState {
+  AVAILABLE
+  TEMPORARILY_UNAVAILABLE
+  MAINTENANCE
+  OUT_OF_SERVICE
+}
+
 enum ResourceCategory {
   BAY
   OVERFLOW
@@ -1629,6 +1640,20 @@ model WorkResource {
   showOnDispatchBoard Boolean             @default(true) @map("show_on_dispatch_board")
   isActive            Boolean             @default(true) @map("is_active")
   displayOrder        Int                 @default(0) @map("display_order")
+  // CR-2026-095 — vehicle-class compatibility, stored structured rather than
+  // inferred from names. The platform's operational classes are Sedan and SUV; a
+  // resource may support either or both.
+  supportsSedan       Boolean             @default(true) @map("supports_sedan")
+  supportsSuv         Boolean             @default(true) @map("supports_suv")
+  /// May the scheduler hand this resource new work at all? Distinct from the
+  /// operational state: a spare jack can be AVAILABLE yet held out of scheduling.
+  schedulingEnabled   Boolean             @default(true) @map("scheduling_enabled")
+  capacity            Int                 @default(1)
+  // Retirement is permanent lifecycle, never deleted: historical assignments keep
+  // pointing here, and reports keep resolving the name.
+  retiredAt           DateTime?           @map("retired_at") @db.Timestamptz
+  retiredByUserId     String?             @map("retired_by_user_id") @db.Uuid
+  retireReason        String?             @map("retire_reason")
   // --- JSON extensible flags (secondary, future-proofing) ---
   capabilities        Json?
   notes               String?
@@ -1648,8 +1673,14 @@ model WorkResource {
 model ResourceOperationalStatus {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   resourceId    String   @unique @map("resource_id") @db.Uuid
+  /// Kept in lockstep with status for every reader that predates the enum:
+  /// true exactly when status is AVAILABLE.
   isOperational Boolean  @default(true) @map("is_operational")
+  status        ResourceOperationalState @default(AVAILABLE)
   reason        String?
+  /// When the resource is expected back — informational, surfaced on the board.
+  expectedReturnAt DateTime? @map("expected_return_at") @db.Timestamptz
+  statusSince   DateTime? @map("status_since") @db.Timestamptz
   setByUserId   String?  @map("set_by_user_id") @db.Uuid
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
 

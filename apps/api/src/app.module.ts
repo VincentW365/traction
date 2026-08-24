@@ -28,7 +28,6 @@ import { PartsModule } from './modules/parts/parts.module';
 // import { TransportModule } from './modules/transport/transport.module';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { ResourcesModule } from './modules/resources/resources.module';
-import { IntegrationModule } from './modules/integrations/integration.module';
 import { StatusModule } from './modules/status/status.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { ScheduleHoldsModule } from './modules/schedule-holds/schedule-holds.module';
@@ -63,7 +62,6 @@ import { AvailabilityModule } from './modules/availability/availability.module';
     // TransportModule,  // CR-2026-040 — archived (see import note above)
     MaintenanceModule,
     ResourcesModule,
-    IntegrationModule,
     StatusModule,
     ScheduleModule,
     ScheduleHoldsModule,

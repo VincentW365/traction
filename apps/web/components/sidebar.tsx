@@ -137,15 +137,13 @@ const NAV_ITEMS: NavItem[] = [
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2zM10 7h4a3 3 0 013 3v4" /></svg>,
   },
   {
-    href: '/admin/resources', label: 'Resources', section: 'Setup',
+    href: '/admin/resources', label: 'Resources & Bays', section: 'Setup',
     roles: ['ADMIN'],
     icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>,
   },
-  {
-    href: '/admin/integrations', label: 'Integrations', section: 'Setup',
-    roles: ['ADMIN'],
-    icon: <svg className={ICON_CLASS} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>,
-  },
+  // Integrations deliberately has no entry (CR-2026-095): the platform runs
+  // standalone, and the page behind this link was a placeholder advertising
+  // synchronisation that never existed.
   {
     href: '/admin/audit-logs', label: 'Audit Logs', section: 'Setup',
     roles: ['ADMIN'],

@@ -139,7 +139,24 @@ pnpm customers:verify    # after an import: totals, orphans, batches
 - **Customer import**: `pnpm customers:import -- --rollback <batchId>` removes one
   batch exactly.
 
-## 9. Storage note (inspection photographs)
+## 9. Standalone architecture and operational configuration
+The platform runs **standalone**: the application database is the authoritative
+operational source of truth for everything created and maintained in it
+(customers, vehicles, appointments, queue tickets, work orders, resources, bays,
+inspections, KPI configuration). There are no external business-system
+integrations, no integration credentials, and no synchronisation processes.
+
+Ordinary operational changes are made **inside the application** and require no
+code change, commit or redeployment: bays and resources (Setup → Resources &
+Bays — add, edit, set status, retire), staff (Staff Directory), KPI mappings,
+inspection templates, business rules. Deployment remains necessary only for code
+changes and infrastructure configuration (secrets, connection strings, providers).
+
+The reference seed is create-if-missing throughout: a deployment never overwrites
+configuration an administrator has changed, and the technician roster seeds only
+on first install so deliberately deleted staff stay deleted.
+
+## 10. Storage note (inspection photographs)
 Inspection photos are stored through a driver boundary (`INSPECTION_PHOTO_DRIVER`,
 currently `local` disk). On hosts without a persistent disk (Render free tier) they
 **do not survive a redeploy**. Before production use of photo evidence matters,

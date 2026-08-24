@@ -240,6 +240,93 @@ export class StaffService {
     return this.findById(id);
   }
 
+  /**
+   * CR-2026-095 — delete a DEACTIVATED staff member from the roster.
+   *
+   * The line this draws: a person's presence in the shop's OPERATIONAL RECORD is not
+   * deletable. Someone who worked jobs, appears in KPI snapshots, or took actions
+   * that were audited stays — deactivated, off every roster and selector, but
+   * resolvable wherever history points at them. Deletion is for the other case: an
+   * account created in error, a duplicate, a hire who never started. Those may go
+   * entirely.
+   *
+   * Deactivation first is mandatory. It proves the removal was considered rather
+   * than a slip on an active employee, and it means every selector already stopped
+   * offering the person before the row disappears.
+   */
+  async remove(id: string, actorUserId: string) {
+    const existing = await this.findById(id);
+    if (existing.status !== 'INACTIVE') {
+      throw new BadRequestException(
+        'Only a deactivated staff member can be deleted. Deactivate them first.',
+      );
+    }
+
+    const technicianId = existing.technician?.id ?? null;
+
+    // Operational references. Any one of these makes the person part of the shop's
+    // history, and history keeps its people.
+    const blocks: string[] = [];
+    if (technicianId) {
+      const [assignments, segments, delays, occupancies, qcOrders] = await Promise.all([
+        this.prisma.technicianAssignment.count({ where: { technicianId } }),
+        this.prisma.technicianWorkSegment.count({ where: { technicianId } }),
+        this.prisma.kpiDelayEvent.count({ where: { technicianId } }),
+        this.prisma.resourceOccupancy.count({ where: { technicianId } }),
+        this.prisma.serviceOrder.count({ where: { qcAssignedTechnicianId: technicianId } }),
+      ]);
+      if (assignments) blocks.push(`${assignments} work assignment(s)`);
+      if (segments) blocks.push(`${segments} recorded work segment(s)`);
+      if (delays) blocks.push(`${delays} KPI delay record(s)`);
+      if (occupancies) blocks.push(`${occupancies} bay occupancy record(s)`);
+      if (qcOrders) blocks.push(`${qcOrders} quality-check assignment(s)`);
+    }
+    const auditActions = await this.prisma.auditLog.count({ where: { actorUserId: id } });
+    if (auditActions) blocks.push(`${auditActions} audited action(s)`);
+
+    if (blocks.length > 0) {
+      throw new BadRequestException(
+        `${existing.fullName} has operational history (${blocks.join(', ')}) and cannot be deleted — ` +
+          'they stay deactivated so that history keeps resolving. Deletion is only for accounts that were never used.',
+      );
+    }
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        if (technicianId) {
+          await tx.technicianSkill.deleteMany({ where: { technicianId } });
+          await tx.mechanicDayAvailability.deleteMany({ where: { technicianId } });
+          await tx.technician.delete({ where: { id: technicianId } });
+        }
+        await tx.userAccount.delete({ where: { id } });
+      });
+    } catch (e) {
+      // A foreign key this method did not enumerate. Refuse rather than half-delete:
+      // the constraint is telling us this person IS referenced somewhere.
+      if ((e as { code?: string }).code === 'P2003') {
+        throw new BadRequestException(
+          `${existing.fullName} is still referenced by other records and cannot be deleted. They remain deactivated.`,
+        );
+      }
+      throw e;
+    }
+
+    await this.audit.log({
+      actorUserId,
+      action: 'STAFF_DELETE',
+      entityType: 'UserAccount',
+      entityId: id,
+      beforeJson: {
+        fullName: existing.fullName,
+        email: existing.email,
+        roleCode: existing.roleCode,
+        technicianId,
+      },
+      notes: 'Hard delete of a never-used, deactivated staff account',
+    });
+    return { deleted: true };
+  }
+
   async linkTechnician(userId: string, dto: LinkTechnicianDto, actorUserId: string) {
     const user = await this.findById(userId);
 

@@ -54,8 +54,16 @@ async function main() {
     { email: 't.lewis@bert.local', fullName: 'T. Lewis', employeeCode: 'BERT-T11' },
     { email: 'r.walker@bert.local', fullName: 'R. Walker', employeeCode: 'BERT-T12' },
   ];
-  for (const t of technicianRoster) {
-    users.push({ email: t.email, fullName: t.fullName, roleCode: 'TECHNICIAN', password: 'tech123' });
+  // CR-2026-095 — the technician roster is FIRST-INSTALL data, not a standing
+  // truth. Once the shop manages its own staff in the application, a deploy must
+  // not resurrect a technician an administrator deliberately deleted — so roster
+  // accounts are only created while the technician table is still empty. Core
+  // system logins above are exempt: they are infrastructure, not staff decisions.
+  const isFirstInstall = (await prisma.technician.count()) === 0;
+  if (isFirstInstall) {
+    for (const t of technicianRoster) {
+      users.push({ email: t.email, fullName: t.fullName, roleCode: 'TECHNICIAN', password: 'tech123' });
+    }
   }
 
   const createdUsers: Record<string, string> = {};
@@ -197,7 +205,14 @@ async function main() {
   }));
 
   for (const t of techSpecs) {
-    const userId = createdUsers[t.email];
+    // On a first install the account was just created above; on later runs the
+    // roster accounts were not touched, so resolve whoever still exists. A deleted
+    // technician resolves to nothing and is NOT recreated — that deletion was a
+    // management decision this seed has no business reversing. Existing technicians
+    // still get the additive skill top-up (CR-2026-067).
+    const userId =
+      createdUsers[t.email] ??
+      (await prisma.userAccount.findUnique({ where: { authSubject: t.email }, select: { id: true } }))?.id;
     if (!userId) continue;
 
     // Idempotent + additive: upsert the technician, then add any missing skills so a

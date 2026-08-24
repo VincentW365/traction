@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { api } from '../../../../lib/api-client';
 import { useSiteId } from '../../../../hooks/use-site';
@@ -35,6 +35,7 @@ const ROLE_LABELS: Record<string, string> = {
 export default function StaffDirectoryPage() {
   const siteId = useSiteId();
   const [roleFilter, setRoleFilter] = useState('');
+  const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
 
@@ -48,6 +49,13 @@ export default function StaffDirectoryPage() {
       if (search) params.set('search', search);
       return api.get(`/staff?${params.toString()}`);
     },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/staff/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['staff'] }),
+    onError: (e: unknown) =>
+      alert(e instanceof Error ? e.message : 'This staff member could not be deleted.'),
   });
 
   const data = staffQuery.data ?? [];
@@ -149,13 +157,33 @@ export default function StaffDirectoryPage() {
                       <span className="text-xs text-slate-400">--</span>
                     )}
                   </td>
-                  <td>
+                  <td className="whitespace-nowrap">
                     <Link
                       href={`/admin/staff/${staff.id}`}
                       className="text-xs text-blue-600 hover:underline font-medium"
                     >
                       View
                     </Link>
+                    {/* CR-2026-095 — deletion is offered only once someone is already
+                        deactivated: the two-step makes removal deliberate, and the API
+                        refuses anyone with recorded work or audited actions anyway. */}
+                    {staff.status === 'INACTIVE' && (
+                      <button
+                        onClick={() => {
+                          if (
+                            confirm(
+                              `Delete ${staff.fullName} permanently? Only accounts with no recorded work or audited actions can be deleted — anyone with history stays deactivated instead.`,
+                            )
+                          ) {
+                            deleteMutation.mutate(staff.id);
+                          }
+                        }}
+                        disabled={deleteMutation.isPending}
+                        className="ml-3 text-xs text-red-600 hover:underline font-medium"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -12,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ResourcesService } from './resources.service';
+import { ResourceAdminService, type ResourceWriteModel } from './resource-admin.service';
 import { AssignResourceDto } from './dto/assign-resource.dto';
 import { SetOperationalStatusDto } from './dto/set-operational-status.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -29,6 +31,7 @@ import { AuditService } from '../audit/audit.service';
 export class ResourcesController {
   constructor(
     private resourcesService: ResourcesService,
+    private admin: ResourceAdminService,
     private prisma: PrismaService,
     private audit: AuditService,
   ) {}
@@ -97,17 +100,20 @@ export class ResourcesController {
 
   @Post()
   @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
-  @ApiOperation({ summary: 'Create a new work resource' })
-  async create(@Body() body: any, @CurrentUser() user: JwtPayload) {
-    const resource = await this.prisma.workResource.create({ data: body });
-    await this.audit.log({
-      actorUserId: user.sub,
-      action: 'RESOURCE_CREATE',
-      entityType: 'WorkResource',
-      entityId: resource.id,
-      afterJson: body,
-    });
-    return resource;
+  @ApiOperation({ summary: 'Create a work resource or bay (validated, audited)' })
+  async create(
+    @Body() body: ResourceWriteModel & { siteId: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    const { siteId, ...data } = body ?? ({} as never);
+    return this.admin.create(siteId, data, user.sub);
+  }
+
+  @Get('overview-admin')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Operational counts for the Resources & Bays screen' })
+  adminOverview(@Query('siteId') siteId: string) {
+    return this.admin.overview(siteId);
   }
 
   @Get(':id/operational-status')
@@ -145,24 +151,63 @@ export class ResourcesController {
 
   @Patch(':id')
   @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
-  @ApiOperation({ summary: 'Update a work resource' })
+  @ApiOperation({ summary: 'Update a work resource (concurrency-guarded, audited)' })
   async update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: any,
+    @Body() body: ResourceWriteModel & { expectedUpdatedAt?: string },
     @CurrentUser() user: JwtPayload,
   ) {
-    const existing = await this.prisma.workResource.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException(`Resource ${id} not found`);
+    const { expectedUpdatedAt, ...data } = body ?? ({} as never);
+    return this.admin.update(id, data, user.sub, expectedUpdatedAt);
+  }
 
-    const updated = await this.prisma.workResource.update({ where: { id }, data: body });
-    await this.audit.log({
-      actorUserId: user.sub,
-      action: 'RESOURCE_UPDATE',
-      entityType: 'WorkResource',
-      entityId: id,
-      beforeJson: { code: existing.code, name: existing.name, isActive: existing.isActive },
-      afterJson: body,
-    });
-    return updated;
+  @Post(':id/status')
+  @RequirePermission(PERMISSIONS.RESOURCE_OPERATIONAL_TOGGLE)
+  @ApiOperation({ summary: 'Set graded operational status (maintenance, out of service, ...)' })
+  setStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { status: string; reason?: string; expectedReturnAt?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.admin.setStatus(id, body ?? ({} as never), user.sub);
+  }
+
+  @Post(':id/retire')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Retire a resource permanently. History is kept; new work is refused.' })
+  retire(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { reason?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.admin.retire(id, body?.reason ?? '', user.sub);
+  }
+
+  @Post(':id/reactivate')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Bring a retired resource back into service' })
+  reactivate(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.admin.reactivate(id, user.sub);
+  }
+
+  @Delete(':id')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Delete a never-used resource. Anything with history must be retired instead.' })
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.admin.deleteIfUnused(id, user.sub);
+  }
+
+  @Get(':id/impact')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'What a change to this resource would affect (for pre-save warnings)' })
+  impact(@Param('id', ParseUUIDPipe) id: string) {
+    return this.admin.impact(id);
+  }
+
+  @Get(':id/history')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Change history for a resource, from the audit log' })
+  history(@Param('id', ParseUUIDPipe) id: string) {
+    return this.admin.history(id);
   }
 }
