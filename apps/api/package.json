@@ -34,6 +34,7 @@
     "class-validator": "^0.15.1",
     "date-fns": "^4",
     "date-fns-tz": "^3",
+    "express": "^5.2.1",
     "ioredis": "^5",
     "jsonwebtoken": "^9",
     "passport": "^0.7",

@@ -93,6 +93,9 @@ importers:
       date-fns-tz:
         specifier: ^3
         version: 3.2.0(date-fns@4.1.0)
+      express:
+        specifier: ^5.2.1
+        version: 5.2.1
       ioredis:
         specifier: ^5
         version: 5.10.1

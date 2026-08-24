@@ -112,6 +112,42 @@ The old strings ("Wait Parts", "Blocked Orders", "Parts Pending",
   QC → close → timeline retains the delay with duration. Control job without a
   pause is unaffected.
 
+## 6b. CR-2026-098b — verification round (2026-08-24, post-push)
+
+Five directed verifications on the pushed range surfaced and fixed three real
+defects:
+
+1. **Multi-job visits (fixed):** visit and queue-ticket status were last-write-
+   wins per order. Live repro: with job A in WAITING_PARTS, job B passing QC
+   drove the visit to READY_FOR_PICKUP. Both syncs now derive from ALL of the
+   visit's orders (active work > parts block > QC > ready); a rework on one job
+   no longer sends an actively-worked car back to the waiting line. Verified
+   live end-to-end and pinned by tests. Single-order visits reduce exactly to
+   the old mapping.
+2. **WAITING_CUSTOMER vs CUSTOMER_AUTHORIZATION (resolved by unification):**
+   the pause reason now routes into the first-class WAITING_CUSTOMER state
+   exactly like WAITING_PARTS — one operational condition, one representation,
+   unambiguous ledger intervals.
+3. **Dispatch load (fixed):** the recommender weighed a parts-blocked job like
+   active work. Held jobs (WAITING_PARTS/WAITING_CUSTOMER/PAUSED) now carry a
+   reduced weight and `available` is driven by ACTIVE assignments only —
+   a technician at an idle bench is dispatchable.
+4. **Pushed-range audit (b11c3b3..8fe521e, 20 commits, 143 files):** no secrets,
+   no real customer data, no tracked data files; all phone numbers in design
+   assets are the 876-000-0000 placeholder; binaries are the intentional brand/
+   design assets plus the blank job-card PDF (a template, no PII).
+5. **Fresh-start smoke from pushed origin/master** (new clone → empty database →
+   full migration chain → seed → built API): PASSED end-to-end, and caught a
+   genuine boot-breaker — `express` was imported directly by main.ts but never
+   declared (a phantom dependency; a truly fresh machine could not start the
+   built API). Now declared. Also removed a hard-coded dev-seed site UUID
+   fallback in `useSiteId` that would have silently scoped queries to a
+   nonexistent site for any siteless user. A healing migration zeroes the four
+   long-standing cosmetic schema-drift items so `migrate diff` is clean on
+   fresh and existing databases. Guards observed working during the smoke:
+   skill gate, bay gate, double-booking gate, technician-only start (admin
+   correctly 403), KPI vehicle-class gate.
+
 ## 7. Validation
 
 - API tests: **979 passed** (new `waiting-parts.service.spec` covering routing,
