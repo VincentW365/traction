@@ -46,8 +46,11 @@ describe('TechniciansService.getRecommendedTechnicians (CR-2026-035)', () => {
       ],
     });
     const res = await h.service.getRecommendedTechnicians('so1');
-    const held = res.technicians.find((r: any) => r.technicianId === 'held');
-    const busy = res.technicians.find((r: any) => r.technicianId === 'busy');
+    // The dev watcher compiles specs strictly — assert presence before use.
+    const held = res.technicians.find((r: any) => r.technicianId === 'held')!;
+    const busy = res.technicians.find((r: any) => r.technicianId === 'busy')!;
+    expect(held).toBeDefined();
+    expect(busy).toBeDefined();
     expect(held.available).toBe(true);
     expect(held.heldAssignments).toBe(1);
     expect(held.activeAssignments).toBe(0);
