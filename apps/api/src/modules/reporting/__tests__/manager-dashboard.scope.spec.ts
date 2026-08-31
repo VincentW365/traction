@@ -35,4 +35,14 @@ describe('ManagerDashboardService is always-live (CR-2026-006)', () => {
     const where = h.prisma.serviceOrder.count.mock.calls[0][0].where;
     expect(where.serviceVisit.sourceType).toEqual(liveVisit.sourceType);
   });
+
+  it('operational counts exclude children of terminal visits (CR-2026-098c)', async () => {
+    // An ASSIGNED order under an ABANDONED visit sat in "Jobs In Progress" for
+    // weeks, and stale tickets under closed visits inflated the queue counts.
+    await h.service.getDashboard('site-1');
+    const orderWhere = h.prisma.serviceOrder.count.mock.calls[0][0].where;
+    expect(orderWhere.serviceVisit.status).toEqual({ notIn: ['CLOSED', 'ABANDONED', 'CANCELLED'] });
+    const ticketWhere = h.prisma.queueTicket.count.mock.calls[0][0].where;
+    expect(ticketWhere.serviceVisit.status).toEqual({ notIn: ['CLOSED', 'ABANDONED', 'CANCELLED'] });
+  });
 });

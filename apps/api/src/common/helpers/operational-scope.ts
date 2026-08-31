@@ -69,6 +69,26 @@ export function serviceVisitIsLive(includeHistorical = false, includeTestData = 
   return liveVisitWhere(includeHistorical, includeTestData);
 }
 
+// --- Terminal-visit exclusion (CR-2026-098c) ---------------------------------
+// The visit is the authoritative operational record: once it is CLOSED,
+// ABANDONED, or CANCELLED, its children (queue ticket, service orders) must
+// never appear in live operational counts — whatever their own status rows say.
+// Found the hard way: a queue ticket left WAITING under a closed visit told a
+// customer they were "#1 of 6" in an empty shop, and an ASSIGNED order under an
+// abandoned visit sat in "Jobs In Progress" for weeks.
+export const TERMINAL_VISIT_STATUSES = ['CLOSED', 'ABANDONED', 'CANCELLED'] as const;
+
+/** Live-visit scope PLUS not-terminal — for counts of current operational work. */
+export function operationalVisitWhere(
+  includeHistorical = false,
+  includeTestData = false,
+): Prisma.ServiceVisitWhereInput {
+  return {
+    ...liveVisitWhere(includeHistorical, includeTestData),
+    status: { notIn: [...TERMINAL_VISIT_STATUSES] },
+  };
+}
+
 // --- Inverse: HISTORICAL-ONLY (CR-2026-013 historical analytics) -------------
 // Selects ONLY the imported historical visits. Reuses the same marker constant.
 export function historicalVisitWhere(): Prisma.ServiceVisitWhereInput {

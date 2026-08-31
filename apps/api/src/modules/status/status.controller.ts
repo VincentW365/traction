@@ -7,6 +7,7 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { TERMINAL_VISIT_STATUSES } from '../../common/helpers/operational-scope';
 
 /**
  * Public customer status endpoint — NO authentication required.
@@ -56,10 +57,16 @@ export class StatusController {
     const displayStatus = ticket?.displayStatus ?? visit.status;
     const partsReadiness = visit.partsReadiness;
 
-    // CR-2026-028: queue-position context (no ETA). Count the ranked line at this site.
+    // CR-2026-028: queue-position context (no ETA). Count the ranked line at this
+    // site. CR-2026-098c — only tickets whose VISIT is still operationally open:
+    // a stale ticket under a closed visit once told a customer they were
+    // "#1 of 6" in an empty shop.
     const totalInQueue = position !== null
       ? await this.prisma.queueTicket.count({
-          where: { serviceVisit: { siteId: visit.siteId }, queueRank: { not: null } },
+          where: {
+            serviceVisit: { siteId: visit.siteId, status: { notIn: [...TERMINAL_VISIT_STATUSES] } },
+            queueRank: { not: null },
+          },
         })
       : 0;
     const aheadCount = position !== null ? Math.max(0, position - 1) : null;
