@@ -27,14 +27,6 @@ interface TicketDetail {
   ticketNumber: string;
   checkinSequence: number;
   queueRank: number | null;
-  // CR-2026-099 — the priority engine's latest explainable decision.
-  queueDecision: {
-    priorityClass: string;
-    score: string | number | null;
-    reasonCodes: Array<{ code: string; detail: string }>;
-    snapshotAt: string;
-    blockedReason: string | null;
-  } | null;
   displayStatus: string;
   blockedReason: string | null;
   readyForDispatch: boolean;
@@ -591,31 +583,6 @@ export default function QueueTicketDetailPage() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* CR-2026-099 — why the engine put this car where it is. */}
-      {ticket.queueDecision && ticket.queueRank != null && (
-        <details className="card mb-4">
-          <summary className="card-header cursor-pointer text-sm font-semibold text-slate-700 select-none">
-            Why position #{ticket.queueRank}
-            {ticket.queueDecision.score != null && (
-              <span className="ml-2 text-xs font-normal text-slate-400">score {Number(ticket.queueDecision.score)}</span>
-            )}
-          </summary>
-          <div className="card-body">
-            <ul className="space-y-1.5">
-              {ticket.queueDecision.reasonCodes.map((r, i) => (
-                <li key={i} className="text-sm text-slate-700 flex gap-2">
-                  <span className="text-slate-300">•</span>
-                  <span>{r.detail}</span>
-                </li>
-              ))}
-            </ul>
-            <p className="text-[11px] text-slate-400 mt-2">
-              Decided {new Date(ticket.queueDecision.snapshotAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · priorities re-evaluate automatically as the queue changes
-            </p>
-          </div>
-        </details>
       )}
 
       {/* Override Controls */}

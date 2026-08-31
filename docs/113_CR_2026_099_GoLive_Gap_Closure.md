@@ -5,6 +5,19 @@
 
 ---
 
+> **Revision (CR-2026-099b, same day, owner's direction):** the queue is
+> **FIFO-first** — arrival order is the rule, and priority intervenes only for
+> the complex cases: an on-time appointment (inside its protected window) goes
+> ahead of the walk-in line, manager overrides pin, blocked cars step aside.
+> There is **no scoring**: fast-track, late and missed appointments are honest
+> LABELS (board chips, audit trail), not queue jumps; the seven scoring/weight
+> settings are hidden from the Settings UI. The window rules
+> (`protected_window_early_min`/`_late_min`, `missed_threshold_min`) remain
+> live controls — widening the late window genuinely extends protection
+> (test-pinned). The "Why position #N" panel was removed at the owner's
+> direction; QueueDecision snapshots still persist for audit. The scoring
+> description below is superseded accordingly.
+
 ## 1. The queue engine is real
 
 The FIFO ranking (with its ~15 decorative priority settings) is replaced by the

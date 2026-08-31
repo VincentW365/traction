@@ -157,19 +157,12 @@ export class QueueService {
 
     if (!ticket) throw new NotFoundException(`Queue ticket ${ticketId} not found`);
 
-    // CR-2026-099 — the engine's latest decision for this visit, so staff can
-    // answer "why is this car in this position" from the record.
-    const latestDecision = await this.prisma.queueDecision.findFirst({
-      where: { serviceVisitId: ticket.serviceVisitId },
-      orderBy: { snapshotAt: 'desc' },
-      select: { priorityClass: true, score: true, reasonCodes: true, snapshotAt: true, blockedReason: true },
-    });
-
-    // Resolved server-side so every client shows the same answer.
+    // Resolved server-side so every client shows the same answer. (QueueDecision
+    // snapshots stay in the database for audit; CR-2026-099b removed the
+    // "why this position" panel — staff do not need it on screen.)
     return {
       ...ticket,
       serviceDescription: describeVisitServices(ticket.serviceVisit, ', '),
-      queueDecision: latestDecision,
     };
   }
 

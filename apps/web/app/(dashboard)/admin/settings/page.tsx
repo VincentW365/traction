@@ -51,7 +51,15 @@ const RULE_CATEGORIES: Record<string, { label: string; keys: string[] }> = {
 // from the UI rather than shown as decoration; the rows stay (harmless, and
 // some are reserved for phases that never shipped).
 const HIDDEN_RULE_KEYS = new Set([
-  'quick_service_bonus', // disabled by design — fast-track carries its own base weight
+  // CR-2026-099b — FIFO-first queue: scoring/weight knobs retired with it.
+  'lateness_penalty_per_min',
+  'wait_time_bonus_per_min',
+  'wait_time_bonus_cap_min',
+  'base_weight_APPT_PROTECTED',
+  'base_weight_APPT_LATE_SOFT',
+  'base_weight_WALKIN_STANDARD',
+  'base_weight_WALKIN_FASTTRACK',
+  'quick_service_bonus',
   'batching_bonus', // Phase-1 disabled
   'max_protected_delay_min', // base weights already guarantee protection
   'blocked_return_policy', // behaviour is always original-position
