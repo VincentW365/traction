@@ -44,7 +44,7 @@ describe('standalone application', () => {
     // credential in it belongs to an external business system. (Twilio/SendGrid are
     // the application's OWN notification providers, opt-in and stubbed by default.)
     const envExample = readFileSync(join(REPO, '.env.example'), 'utf8');
-    expect(envExample).not.toMatch(/AUTOMATE|SAGE|SHAREPOINT/i);
+    expect(envExample).not.toMatch(/(AUTOMATE|SAGE|SHAREPOINT)/i);
   });
 
   it('ExternalSystemRef remains — it is the customer-import audit trail, not an integration', () => {

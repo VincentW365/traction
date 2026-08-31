@@ -14,6 +14,7 @@ import { StatCard } from '../../../components/ui/stat-card';
 /* ---------- Types (FIFO v2) ---------- */
 
 interface QueueItem {
+  priorityClass: string | null;
   queueTicketId: string;
   ticketNumber: string;
   fifoPosition: number | null;
@@ -206,23 +207,30 @@ export default function QueueBoardPage() {
                       </Link>
                     </td>
 
-                    {/* Source type */}
+                    {/* CR-2026-099 — the engine's priority class, so the order
+                        of the line is legible at a glance. */}
                     <td className="px-4 py-3">
-                      {item.sourceType === 'APPOINTMENT' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
-                          Appt
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                          </svg>
-                          Walk-in
-                        </span>
-                      )}
+                      {(() => {
+                        const cls = item.priorityClass;
+                        const chip = (text: string, tone: string, title: string) => (
+                          <span title={title} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border ${tone}`}>{text}</span>
+                        );
+                        if (item.overrideActive) return chip('Pinned', 'bg-purple-50 text-purple-700 border-purple-200', 'Manager override holds this position');
+                        switch (cls) {
+                          case 'APPT_PROTECTED':
+                            return chip('Appt · on time', 'bg-emerald-50 text-emerald-700 border-emerald-200', 'Appointment inside its protected window');
+                          case 'APPT_LATE_SOFT':
+                            return chip('Appt · late', 'bg-amber-50 text-amber-700 border-amber-200', 'Late appointment — soft priority with a lateness penalty');
+                          case 'MISSED_APPOINTMENT':
+                            return chip('Missed appt', 'bg-red-50 text-red-700 border-red-200', 'Arrived past the missed threshold — ranked as a walk-in');
+                          case 'WALKIN_FASTTRACK':
+                            return chip('Fast track', 'bg-cyan-50 text-cyan-700 border-cyan-200', 'All quick services — fast-track weighting');
+                          default:
+                            return item.sourceType === 'APPOINTMENT'
+                              ? chip('Appt', 'bg-emerald-50 text-emerald-700 border-emerald-200', 'Appointment')
+                              : chip('Walk-in', 'bg-blue-50 text-blue-700 border-blue-200', 'Walk-in, ranked by arrival and wait time');
+                        }
+                      })()}
                     </td>
 
                     {/* Status + readiness dot + parts info */}

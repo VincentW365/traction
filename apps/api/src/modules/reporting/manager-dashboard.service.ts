@@ -18,7 +18,7 @@ export interface DashboardStats {
 // CR-2026-098 — INTEGRATION_ERROR removed: the platform is standalone and no
 // generator ever produced that alert type.
 export interface DashboardAlert {
-  type: 'OVERDUE_JOB' | 'BLOCKED_PARTS' | 'WAITING_PARTS' | 'ABSENT_TECH' | 'READY_FOR_QC';
+  type: 'OVERDUE_JOB' | 'BLOCKED_PARTS' | 'WAITING_PARTS' | 'LONG_WAIT' | 'ABSENT_TECH' | 'READY_FOR_QC';
   severity: 'warning' | 'critical';
   title: string;
   detail: string;
@@ -231,6 +231,44 @@ export class ManagerDashboardService {
         detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber}`,
         entityId: order.id,
         queueTicketId: sv.queueTicket?.id,
+      });
+    }
+
+    // CR-2026-099 — fairness escalation (business rule `fairness_threshold_min`,
+    // previously a decorative setting): a walk-in waiting beyond the threshold
+    // surfaces to the manager instead of quietly aging in the line.
+    const fairnessRule = await this.prisma.businessRuleConfig.findFirst({
+      where: { ruleKey: 'fairness_threshold_min', effectiveTo: null },
+      select: { valueJson: true },
+    });
+    const fairnessThresholdMin = Number(fairnessRule?.valueJson) || 90;
+    const longWaiters = await this.prisma.queueTicket.findMany({
+      where: {
+        serviceVisit: { siteId, ...operationalVisitWhere() },
+        displayStatus: 'WAITING',
+        generatedAt: { lt: new Date(now.getTime() - fairnessThresholdMin * 60000) },
+      },
+      include: {
+        serviceVisit: {
+          select: {
+            customer: { select: { firstName: true, lastName: true } },
+            vehicle: { select: { plateNumber: true } },
+          },
+        },
+      },
+      orderBy: { generatedAt: 'asc' },
+      take: 10,
+    });
+    for (const t of longWaiters) {
+      const waitMin = Math.round((now.getTime() - t.generatedAt.getTime()) / 60000);
+      const sv = t.serviceVisit;
+      alerts.push({
+        type: 'LONG_WAIT',
+        severity: waitMin > fairnessThresholdMin * 2 ? 'critical' : 'warning',
+        title: `Waiting ${waitMin} min — ${t.ticketNumber}`,
+        detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber}`,
+        entityId: t.id,
+        queueTicketId: t.id,
       });
     }
 

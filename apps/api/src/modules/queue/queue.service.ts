@@ -106,6 +106,9 @@ export class QueueService {
         // could never distinguish a car being worked on from one awaiting collection.
         visitStatus: sv.status,
         sourceType: sv.sourceType,
+        // CR-2026-099 — the priority engine's class, so the board can show WHY
+        // the line is ordered the way it is.
+        priorityClass: sv.queuePriorityClass,
         blockedReason: t.blockedReason ?? (t.displayStatus === 'BLOCKED' ? this.getBlockedReason(sv) : null),
         readyForDispatch: t.readyForDispatch,
         partsReadiness: sv.partsReadiness,
@@ -153,10 +156,20 @@ export class QueueService {
     });
 
     if (!ticket) throw new NotFoundException(`Queue ticket ${ticketId} not found`);
+
+    // CR-2026-099 — the engine's latest decision for this visit, so staff can
+    // answer "why is this car in this position" from the record.
+    const latestDecision = await this.prisma.queueDecision.findFirst({
+      where: { serviceVisitId: ticket.serviceVisitId },
+      orderBy: { snapshotAt: 'desc' },
+      select: { priorityClass: true, score: true, reasonCodes: true, snapshotAt: true, blockedReason: true },
+    });
+
     // Resolved server-side so every client shows the same answer.
     return {
       ...ticket,
       serviceDescription: describeVisitServices(ticket.serviceVisit, ', '),
+      queueDecision: latestDecision,
     };
   }
 

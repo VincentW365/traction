@@ -178,6 +178,36 @@ export class StaffService {
     return this.findById(id);
   }
 
+  /**
+   * CR-2026-099 — manager password reset for a staff member (the recovery path
+   * when someone forgets theirs). Same policy + hashing as self-service; stamps
+   * passwordChangedAt so the person's old sessions end; audited without the
+   * password ever being logged.
+   */
+  async resetPassword(id: string, temporaryPassword: string, actorUserId: string) {
+    const user = await this.prisma.userAccount.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException(`Staff member ${id} not found`);
+    if (!temporaryPassword || temporaryPassword.length < 8 || !/[a-zA-Z]/.test(temporaryPassword) || !/[0-9]/.test(temporaryPassword)) {
+      throw new BadRequestException('Temporary password must be at least 8 characters with a letter and a number');
+    }
+
+    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+    await this.prisma.userAccount.update({
+      where: { id },
+      data: { passwordHash, passwordChangedAt: new Date() },
+    });
+
+    await this.audit.log({
+      actorUserId,
+      action: 'PASSWORD_RESET_BY_MANAGER',
+      entityType: 'UserAccount',
+      entityId: id,
+      notes: `Password reset for ${user.fullName}`,
+    });
+
+    return { reset: true };
+  }
+
   async deactivate(id: string, actorUserId: string) {
     const existing = await this.findById(id);
     if (existing.status === 'INACTIVE') {

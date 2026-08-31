@@ -742,6 +742,9 @@ model UserAccount {
   fullName     String   @map("full_name")
   roleCode     String   @map("role_code")
   passwordHash String?  @map("password_hash")
+  // CR-2026-099 — set on every password change/reset; refresh tokens issued
+  // before this moment are rejected, ending the old sessions.
+  passwordChangedAt DateTime? @map("password_changed_at") @db.Timestamptz
   status       String   @default("ACTIVE")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
@@ -979,6 +982,10 @@ model ServiceVisit {
   checkInStartedAt     DateTime?           @map("check_in_started_at") @db.Timestamptz
   checkedInAt          DateTime?           @map("checked_in_at") @db.Timestamptz
   status               ServiceVisitStatus  @default(CREATED)
+  // CR-2026-099 — data-quality review of historical unknown-customer visits:
+  // UNRESOLVED (awaiting review) | RESOLVED (relinked to a real customer) |
+  // AMBIGUOUS (reviewed, cannot be confidently linked). Null for normal visits.
+  historicalReviewStatus String? @map("historical_review_status")
   // CR-2026-097 — human-readable visit identity. Ticketed visits reuse the ticket
   // reference (one identity per visit, not two); pre-platform historical imports
   // were backfilled as V-yymmdd-NNN by visit date. Immutable once assigned.

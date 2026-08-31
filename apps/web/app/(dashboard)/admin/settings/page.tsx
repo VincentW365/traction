@@ -16,14 +16,18 @@ interface BusinessRule {
   createdBy: { fullName: string } | null;
 }
 
+// CR-2026-099 — every key listed here materially controls runtime behaviour.
+// Decorative settings were removed from the UI outright (HIDDEN_RULE_KEYS):
+// a manager must never tune a knob connected to nothing.
 const RULE_CATEGORIES: Record<string, { label: string; keys: string[] }> = {
   operating: {
     label: 'Operating Hours',
     keys: ['operating_hours'],
   },
   queue: {
-    label: 'Queue Tuning',
-    keys: ['protected_window_early_min', 'protected_window_late_min', 'missed_threshold_min', 'lateness_penalty_per_min', 'wait_time_bonus_per_min', 'wait_time_bonus_cap_min', 'fairness_threshold_min', 'quick_service_bonus', 'batching_bonus', 'max_protected_delay_min', 'blocked_return_policy'],
+    // Read by the priority engine on every recompute (scheduling.service).
+    label: 'Queue Priority',
+    keys: ['protected_window_early_min', 'protected_window_late_min', 'missed_threshold_min', 'lateness_penalty_per_min', 'wait_time_bonus_per_min', 'wait_time_bonus_cap_min', 'fairness_threshold_min'],
   },
   weights: {
     label: 'Priority Weights',
@@ -31,21 +35,36 @@ const RULE_CATEGORIES: Record<string, { label: string; keys: string[] }> = {
   },
   maintenance: {
     label: 'Maintenance',
-    keys: ['default_oil_interval_miles', 'default_oil_interval_months', 'oil_brand_options', 'oil_grade_presets', 'reminder_lead_days', 'reminder_mileage_threshold', 'reminder_eligible_service_types'],
+    keys: ['default_oil_interval_miles', 'default_oil_interval_months', 'oil_brand_options', 'oil_grade_presets', 'reminder_lead_days', 'reminder_mileage_threshold', 'reminder_eligible_service_types', 'maintenance_reminder_enabled'],
   },
   appointments: {
     label: 'Appointments',
-    keys: ['reservation_activation_min', 'reservation_expiry_min', 'eta_band_narrow_min', 'eta_band_wide_min'],
-  },
-  notifications: {
-    label: 'Notifications',
-    keys: ['notification_provider_sms', 'notification_provider_email', 'completion_requires_front_desk_action'],
+    keys: ['appointment_reminder_enabled', 'appointment_reminder_hours'],
   },
   operations: {
     label: 'Operations',
-    keys: ['overflow_mechanic_required', 'light_slot_mechanic_required'],
+    keys: ['display_board_enabled', 'display_board_token'],
   },
 };
+
+// Settings that exist in the database but control nothing at runtime. Hidden
+// from the UI rather than shown as decoration; the rows stay (harmless, and
+// some are reserved for phases that never shipped).
+const HIDDEN_RULE_KEYS = new Set([
+  'quick_service_bonus', // disabled by design — fast-track carries its own base weight
+  'batching_bonus', // Phase-1 disabled
+  'max_protected_delay_min', // base weights already guarantee protection
+  'blocked_return_policy', // behaviour is always original-position
+  'reservation_activation_min', // bay reservation feature never shipped
+  'reservation_expiry_min',
+  'eta_band_narrow_min', // ETA bands never shipped
+  'eta_band_wide_min',
+  'notification_provider_sms', // providers are deployment config (env), not a setting
+  'notification_provider_email',
+  'completion_requires_front_desk_action', // never wired
+  'overflow_mechanic_required', // never wired
+  'light_slot_mechanic_required', // never wired
+]);
 
 function categorizeRule(ruleKey: string): string {
   for (const [cat, def] of Object.entries(RULE_CATEGORIES)) {

@@ -37,6 +37,18 @@ export class AuthController {
     return this.authService.getProfile(user.sub);
   }
 
+  // CR-2026-099 — self-service password change (any authenticated user).
+  @Post('change-password')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Change own password (verifies current; ends older sessions)' })
+  async changePassword(
+    @Body() body: { currentPassword: string; newPassword: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.authService.changePassword(user.sub, body.currentPassword, body.newPassword);
+  }
+
   // CR-2026-022 — dev-only one-click login (no guard: pre-auth; gated inside the
   // service by ALLOW_DEV_LOGIN + non-production). Refuses (403) when disabled.
   @Get('dev-login/profiles')

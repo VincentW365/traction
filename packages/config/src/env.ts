@@ -20,6 +20,18 @@ export const envSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_FROM_NUMBER: z.string().optional(),
   TWILIO_MESSAGING_SERVICE_SID: z.string().optional(),
+  // CR-2026-099 — email delivery. `smtp` sends real mail through any SMTP
+  // mailbox (Microsoft 365, Google Workspace, a relay); `stub` records only.
+  EMAIL_PROVIDER: z.enum(['stub', 'smtp']).default('stub'),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().optional(),
+  SMTP_SECURE: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().optional(),
   // CR-2026-096 — notification routing mode. TEST (the default) redirects every
   // customer send to the configured test recipients; reaching real customers
   // requires an EXPLICIT NOTIFICATION_MODE=LIVE in deployment config. With the

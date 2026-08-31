@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { ReportingService, TrendMetric } from './reporting.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -13,6 +13,22 @@ import { PERMISSIONS } from '../../common/constants/permissions';
 export class ReportingController {
   constructor(private reportingService: ReportingService) {}
 
+  // CR-2026-099 — bad input is the CLIENT's problem, stated plainly. These used
+  // to fall through to Prisma as Invalid Dates and surface as raw 500s.
+  private assertDateRange(siteId: string, startDate: string, endDate: string): void {
+    const ISO_DAY = /^d{4}-d{2}-d{2}$/;
+    if (!siteId) throw new BadRequestException('siteId is required');
+    if (!startDate || !ISO_DAY.test(startDate) || Number.isNaN(Date.parse(startDate))) {
+      throw new BadRequestException('startDate must be a valid date in YYYY-MM-DD format');
+    }
+    if (!endDate || !ISO_DAY.test(endDate) || Number.isNaN(Date.parse(endDate))) {
+      throw new BadRequestException('endDate must be a valid date in YYYY-MM-DD format');
+    }
+    if (startDate > endDate) {
+      throw new BadRequestException('startDate must not be after endDate');
+    }
+  }
+
   @Get('kpis')
   @RequirePermission(PERMISSIONS.REPORT_VIEW)
   @ApiOperation({ summary: 'Get KPI dashboard data for a site and date range' })
@@ -23,6 +39,7 @@ export class ReportingController {
     @Query('endDate') endDate: string,
     @Query('includeHistorical') includeHistorical?: string,
   ) {
+    this.assertDateRange(siteId, startDate, endDate);
     return this.reportingService.getKpis(siteId, startDate, endDate, includeHistorical === 'true');
   }
 
@@ -45,6 +62,7 @@ export class ReportingController {
     @Query('metric') metric: TrendMetric,
     @Query('includeHistorical') includeHistorical?: string,
   ) {
+    this.assertDateRange(siteId, startDate, endDate);
     return this.reportingService.getTrendData(siteId, startDate, endDate, metric, includeHistorical === 'true');
   }
 
@@ -61,6 +79,7 @@ export class ReportingController {
     @Query('endDate') endDate: string,
     @Query('includeHistorical') includeHistorical?: string,
   ) {
+    this.assertDateRange(siteId, startDate, endDate);
     return this.reportingService.getTechnicianUtilization(siteId, startDate, endDate, includeHistorical === 'true');
   }
 
@@ -77,6 +96,7 @@ export class ReportingController {
     @Query('endDate') endDate: string,
     @Query('includeHistorical') includeHistorical?: string,
   ) {
+    this.assertDateRange(siteId, startDate, endDate);
     return this.reportingService.getServiceFamilyBreakdown(siteId, startDate, endDate, includeHistorical === 'true');
   }
 
@@ -105,6 +125,7 @@ export class ReportingController {
     @Query('endDate') endDate: string,
     @Query('includeHistorical') includeHistorical?: string,
   ) {
+    this.assertDateRange(siteId, startDate, endDate);
     return this.reportingService.getQueuePerformanceSummary(siteId, startDate, endDate, includeHistorical === 'true');
   }
 
@@ -117,6 +138,7 @@ export class ReportingController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
+    if (from || to) this.assertDateRange('n/a', from ?? '1900-01-01', to ?? '2999-12-31');
     return this.reportingService.getHistoricalAnalytics({ from, to });
   }
 
@@ -131,6 +153,7 @@ export class ReportingController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
+    if (from || to) this.assertDateRange(siteId ?? 'n/a', from ?? '1900-01-01', to ?? '2999-12-31');
     return this.reportingService.getReworkReport({ siteId, from, to });
   }
 

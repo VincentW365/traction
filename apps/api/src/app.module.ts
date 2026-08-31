@@ -21,7 +21,12 @@ import { ReportingModule } from './modules/reporting/reporting.module';
 import { TechniciansModule } from './modules/technicians/technicians.module';
 import { ServiceOrdersModule } from './modules/service-orders/service-orders.module';
 import { KpiModule } from './modules/kpi/kpi.module';
-import { PartsModule } from './modules/parts/parts.module';
+// CR-2026-099 — Parts Requests retired at the owner's direction ("feature will
+// not be needed"): parts arrive per-job, not through an internal request/
+// reservation pipeline. The schema stays (the WAITING_PARTS workflow and the
+// parts-readiness projection read it), only the API surface is withdrawn.
+// Restore: uncomment this import + the PartsModule entry below.
+// import { PartsModule } from './modules/parts/parts.module';
 // CR-2026-040 — Transport (customer drop-off / request pick-up) archived: feature
 // unregistered (not deleted). Module files kept under ./modules/transport for easy
 // re-enable. Restore: uncomment this import + the TransportModule entry below.
@@ -59,7 +64,7 @@ import { AvailabilityModule } from './modules/availability/availability.module';
     ServiceOrdersModule,
     // CR-2026-088 — technician KPI framework.
     KpiModule,
-    PartsModule,
+    // PartsModule,  // CR-2026-099 — retired (see import note above)
     // TransportModule,  // CR-2026-040 — archived (see import note above)
     MaintenanceModule,
     ResourcesModule,

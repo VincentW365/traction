@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 
 /**
@@ -119,6 +120,11 @@ export class HealthService {
       (serviceTypes ?? 0) > 0 && (activeKpiPolicies ?? 0) > 0 && (activeInspectionTemplates ?? 0) > 0;
     const operationalDataPresent = (customers ?? 0) > 0;
 
+    // CR-2026-099 — surface (never fix silently) accounts still on the
+    // documented seed passwords. In production this is a standing security
+    // incident; the Deployment page shows it until every one is changed.
+    const defaultCredentialAccounts = await this.findDefaultCredentialAccounts();
+
     return {
       ...health,
       reference: {
@@ -140,17 +146,63 @@ export class HealthService {
           ? null
           : 'Customer database is empty. If this is a fresh deployment, run the approved customer import (see docs/DEPLOYMENT_HANDOFF.md).',
       },
+      security: {
+        // Accounts still using a documented seed password (emails only — never
+        // the passwords themselves). Empty array = clean.
+        defaultCredentialAccounts,
+        note: defaultCredentialAccounts.length
+          ? 'These accounts still use documented seed passwords. Change them (self-service under Account, or Staff → Reset Password).'
+          : null,
+      },
       configuration: {
         // Presence only. The values never leave the server.
         environment: process.env.NODE_ENV ?? 'development',
         devLoginEnabled:
           process.env.ALLOW_DEV_LOGIN === 'true' && process.env.NODE_ENV !== 'production',
         notificationProvider: process.env.NOTIFICATION_PROVIDER ?? 'stub',
+        emailProvider: process.env.EMAIL_PROVIDER ?? 'stub',
+        notificationMode: process.env.NOTIFICATION_MODE ?? 'TEST',
         vinDecodeProvider: process.env.VIN_DECODE_PROVIDER === 'LIVE' ? 'LIVE' : 'STUB',
         inspectionPhotoDriver: process.env.INSPECTION_PHOTO_DRIVER ?? 'local',
         corsConfigured: !!process.env.API_CORS_ORIGIN,
         jwtSecretConfigured: !!process.env.JWT_SECRET,
       },
     };
+  }
+
+  /** Compare the known seed passwords against their documented accounts. */
+  private async findDefaultCredentialAccounts(): Promise<string[]> {
+    const KNOWN: Array<{ email: string; password: string }> = [
+      { email: 'admin@bert.local', password: 'admin123' },
+      { email: 'manager@bert.local', password: 'manager123' },
+      { email: 'advisor@bert.local', password: 'advisor123' },
+      { email: 'frontdesk@bert.local', password: 'frontdesk123' },
+    ];
+    const flagged: string[] = [];
+    try {
+      for (const k of KNOWN) {
+        const u = await this.prisma.userAccount.findFirst({
+          where: { email: k.email, status: 'ACTIVE' },
+          select: { passwordHash: true },
+        });
+        if (u?.passwordHash && (await bcrypt.compare(k.password, u.passwordHash))) {
+          flagged.push(k.email);
+        }
+      }
+      // Technicians share one documented password — check the first few.
+      const techs = await this.prisma.userAccount.findMany({
+        where: { roleCode: 'TECHNICIAN', status: 'ACTIVE' },
+        select: { email: true, passwordHash: true },
+        take: 25,
+      });
+      for (const t of techs) {
+        if (t.passwordHash && (await bcrypt.compare('tech123', t.passwordHash))) {
+          flagged.push(t.email ?? 'technician');
+        }
+      }
+    } catch {
+      // Never let the security check break the health endpoint.
+    }
+    return flagged;
   }
 }

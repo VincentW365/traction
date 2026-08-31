@@ -72,6 +72,14 @@ export default function StaffDetailPage() {
     ]),
   ).sort();
 
+  // CR-2026-099 — manager password reset.
+  const [showReset, setShowReset] = useState(false);
+  const [resetPw, setResetPw] = useState('');
+  const resetMutation = useMutation({
+    mutationFn: () => api.post(`/staff/${staffId}/reset-password`, { temporaryPassword: resetPw }),
+    onSuccess: () => setResetPw(''),
+  });
+
   const deactivateMutation = useMutation({
     mutationFn: () => api.post(`/staff/${staffId}/deactivate`, {}),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['staff-detail', staffId] }),
@@ -233,7 +241,41 @@ export default function StaffDetailPage() {
                   {reactivateMutation.isPending ? 'Reactivating...' : 'Reactivate'}
                 </button>
               )}
+              <button onClick={() => setShowReset(!showReset)} className="btn-secondary text-xs">
+                Reset Password
+              </button>
             </div>
+
+            {/* CR-2026-099 — manager-set temporary password (forgot-password recovery).
+                Ends the person's existing sessions. */}
+            {showReset && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+                <label className="input-label">Temporary password</label>
+                <input
+                  type="text"
+                  value={resetPw}
+                  onChange={(e) => setResetPw(e.target.value)}
+                  placeholder="At least 8 characters, a letter and a number"
+                  className="input-field text-sm"
+                />
+                {resetMutation.isError && (
+                  <p className="text-xs text-red-600">{resetMutation.error instanceof Error ? resetMutation.error.message : 'Reset failed'}</p>
+                )}
+                {resetMutation.isSuccess && (
+                  <p className="text-xs text-emerald-700">Password reset. Share the temporary password with {staff.fullName}; their old sessions are ended.</p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => resetMutation.mutate()}
+                    disabled={resetMutation.isPending || resetPw.length < 8}
+                    className="btn-primary text-xs"
+                  >
+                    {resetMutation.isPending ? 'Resetting…' : 'Set Temporary Password'}
+                  </button>
+                  <button onClick={() => { setShowReset(false); setResetPw(''); }} className="btn-secondary text-xs">Cancel</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

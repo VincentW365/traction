@@ -250,6 +250,7 @@ export class AuthService {
       const decoded = jwt.verify(refreshToken, this.jwtSecret) as {
         sub: string;
         type: string;
+        iat?: number;
         sandboxRunId?: string;
       };
 
@@ -265,11 +266,71 @@ export class AuthService {
         throw new UnauthorizedException('User not found or inactive');
       }
 
+      // CR-2026-099 — a password change ends every session that predates it.
+      if (
+        user.passwordChangedAt &&
+        decoded.iat &&
+        decoded.iat * 1000 < user.passwordChangedAt.getTime()
+      ) {
+        throw new UnauthorizedException('Session ended by a password change — sign in again');
+      }
+
       // CR-2026-023 — preserve the dev-login sandbox run id across refreshes.
       const accessToken = this.signAccessToken(user, decoded.sandboxRunId);
       return { accessToken };
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+  }
+
+  /**
+   * CR-2026-099 — self-service password change. Verifies the current password,
+   * enforces a reasonable policy, hashes with bcrypt, stamps passwordChangedAt
+   * (which invalidates pre-change refresh tokens), and returns a fresh token
+   * pair so THIS session continues seamlessly. Passwords are never logged.
+   */
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const user = await this.prisma.userAccount.findUnique({ where: { id: userId } });
+    if (!user || !user.passwordHash || user.status !== 'ACTIVE') {
+      throw new UnauthorizedException('Account not available');
+    }
+
+    const currentOk = await bcrypt.compare(currentPassword ?? '', user.passwordHash);
+    if (!currentOk) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    this.assertPasswordPolicy(newPassword);
+    if (await bcrypt.compare(newPassword, user.passwordHash)) {
+      throw new BadRequestException('New password must be different from the current one');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    const changedAt = new Date();
+    const updated = await this.prisma.userAccount.update({
+      where: { id: userId },
+      data: { passwordHash, passwordChangedAt: changedAt },
+    });
+
+    await this.audit.log({
+      actorUserId: userId,
+      action: 'PASSWORD_CHANGED',
+      entityType: 'UserAccount',
+      entityId: userId,
+      notes: 'Self-service password change',
+    });
+
+    // Fresh tokens (issued AFTER changedAt) keep the current session alive.
+    return this.issueTokensForUser(updated as TokenUser);
+  }
+
+  /** Reasonable, non-theatrical policy: length + a letter and a number. */
+  private assertPasswordPolicy(password: string): void {
+    if (!password || password.length < 8) {
+      throw new BadRequestException('Password must be at least 8 characters');
+    }
+    if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+      throw new BadRequestException('Password must contain at least one letter and one number');
     }
   }
 

@@ -21,6 +21,8 @@ function build() {
     serviceOrder: { findMany: vi.fn(async ({ where }: any) => (where.status === 'QC' ? [qcOrder] : [])) },
     queueTicket: { findMany: vi.fn(async () => []) },
     mechanicDayAvailability: { findMany: vi.fn(async () => []) },
+    // CR-2026-099 — fairness escalation reads the threshold rule.
+    businessRuleConfig: { findFirst: vi.fn(async () => null) },
   };
   return { service: new ManagerDashboardService(prisma as any), prisma };
 }
@@ -45,6 +47,7 @@ describe('getAlerts — READY_FOR_QC (CR-2026-074)', () => {
       serviceOrder: { findMany: vi.fn(async () => []) },
       queueTicket: { findMany: vi.fn(async () => []) },
       mechanicDayAvailability: { findMany: vi.fn(async () => []) },
+      businessRuleConfig: { findFirst: vi.fn(async () => null) },
     };
     const service = new ManagerDashboardService(prisma as any);
     const alerts = await service.getAlerts('site-1');

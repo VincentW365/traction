@@ -93,6 +93,18 @@ export class StaffController {
     return this.staffService.reactivate(id, user.sub);
   }
 
+  // CR-2026-099 — manager-set temporary password (forgot-password recovery).
+  @Post(':id/reset-password')
+  @RequirePermission(PERMISSIONS.STAFF_UPDATE)
+  @ApiOperation({ summary: 'Reset a staff password to a manager-set temporary one (ends their sessions)' })
+  async resetPassword(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { temporaryPassword: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.staffService.resetPassword(id, body.temporaryPassword, user.sub);
+  }
+
   @Delete(':id')
   @RequirePermission(PERMISSIONS.STAFF_DELETE)
   @ApiOperation({

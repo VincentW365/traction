@@ -63,6 +63,14 @@ export default function DashboardLayout({
           <GlobalSearch />
 
           <div className="flex items-center gap-3">
+            {/* CR-2026-099 — self-service password change */}
+            <a
+              href="/account"
+              className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium
+                text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              Account
+            </a>
             <button
               onClick={() => {
                 logout();
