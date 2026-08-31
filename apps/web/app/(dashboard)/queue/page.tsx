@@ -115,7 +115,9 @@ export default function QueueBoardPage() {
           boardQuery.data ? (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-mono text-slate-500">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              {new Date(boardQuery.data.generatedAt).toLocaleTimeString()}
+              {/* No seconds: the value only updates on refresh, and a frozen
+                  seconds digit reads as a broken clock. */}
+              {new Date(boardQuery.data.generatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
             </span>
           ) : undefined
         }

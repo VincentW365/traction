@@ -15,6 +15,7 @@ interface Vehicle {
   make: string | null;
   model: string | null;
   modelYear: number | null;
+  color: string | null;
 }
 
 interface CustomerSearchResult {
@@ -431,7 +432,7 @@ export default function CheckInPage() {
               <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
                 <span className="text-sm font-mono font-medium text-slate-900">{selectedVehicle.plateNumber}</span>
                 <span className="text-xs text-slate-500">
-                  {[selectedVehicle.modelYear, selectedVehicle.make, selectedVehicle.model].filter(Boolean).join(' ')}
+                  {[selectedVehicle.modelYear, selectedVehicle.make, selectedVehicle.model, selectedVehicle.color].filter(Boolean).join(' ')}
                 </span>
               </div>
             )}
@@ -535,12 +536,16 @@ export default function CheckInPage() {
                       placeholder="Type oil grade (optional)" className="input-field mt-2" />
                   )}
                 </div>
-                <div className="col-span-2">
-                  <label className="input-label">Vehicle Color</label>
-                  <input type="text" value={vehicleColor} onChange={(e) => setVehicleColor(e.target.value)}
-                    placeholder="e.g., Silver, White, Black"
-                    className="input-field" />
-                </div>
+                {/* Color is asked for only when the record doesn't have one —
+                    re-asking what the file already knows is intake noise. */}
+                {!selectedVehicle.color && (
+                  <div className="col-span-2">
+                    <label className="input-label">Vehicle Color</label>
+                    <input type="text" value={vehicleColor} onChange={(e) => setVehicleColor(e.target.value)}
+                      placeholder="e.g., Silver, White, Black"
+                      className="input-field" />
+                  </div>
+                )}
                 {/* P4(b): notification consent capture (default opt-out) */}
                 <div className="col-span-2 border-t border-slate-100 pt-3 mt-1">
                   <p className="input-label mb-2">Notification consent</p>
