@@ -107,7 +107,7 @@ export default function InspectionsHubPage() {
     <div className="page-container">
       <PageHeader
         title="Inspections"
-        subtitle="Record optional vehicle condition checks, detailed technical inspections and supporting photographs"
+        subtitle="Record vehicle condition checks, detailed technical inspections and supporting photographs"
         breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Inspections' }]}
         actions={
           <div className="flex gap-2">
@@ -164,7 +164,7 @@ export default function InspectionsHubPage() {
       {!listQuery.isLoading && rows.length === 0 && (
         <EmptyState
           title={tab === 'active' ? 'No active inspection records' : 'Nothing here yet'}
-          description="Inspections are optional — start one from the buttons above, or from a ticket, visit or customer page."
+          description="Start one from the buttons above, or from a ticket, visit or customer page."
         />
       )}
 

@@ -309,7 +309,7 @@ function StartStub({
   });
   return (
     <div className="card p-8 text-center">
-      <p className="text-sm text-slate-500 mb-3">{label} Inspections are optional — start one only when it is wanted.</p>
+      <p className="text-sm text-slate-500 mb-3">{label}</p>
       <button onClick={() => create.mutate()} disabled={create.isPending} className="btn-primary text-sm">
         {create.isPending ? 'Starting…' : cta}
       </button>
@@ -413,7 +413,7 @@ function VehicleInspectionFormInner({
     if (notInspectedCount > 0) {
       const ok = confirm(
         `${notInspectedCount} item${notInspectedCount === 1 ? ' has' : 's have'} not been inspected. ` +
-          'You may still complete this optional inspection, but these items will be shown as Not Inspected.',
+          'You can still complete the inspection — these items will be shown as Not Inspected.',
       );
       if (!ok) return;
     }
