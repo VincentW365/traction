@@ -17,9 +17,12 @@ describe('technician My Jobs (CR-2026-100 §1/§2/§4)', () => {
 
   it('renders every workload bucket, not just a single current job', () => {
     expect(src).toContain('Waiting / On Hold');
-    expect(src).toContain('Ready to Start');
+    // CR-2026-101 renamed "Ready to Start" → "Up Next" and split "Finished
+    // Today" into "Awaiting QC" + "Completed Today".
+    expect(src).toContain('Up Next');
     expect(src).toContain('Also In Progress');
-    expect(src).toContain('Finished Today');
+    expect(src).toContain('Awaiting QC');
+    expect(src).toContain('Completed Today');
   });
 
   it('every job card reaches the job sheet in one tap', () => {

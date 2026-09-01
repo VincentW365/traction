@@ -14,6 +14,7 @@ import { PAUSE_REASONS, REWORK_REASONS } from '../../../../lib/service-order-act
 import { SearchableSelect } from '../../../../components/ui/searchable-select';
 import { ServiceQualifiers } from '../../../../components/service-qualifiers';
 import { qualifierSummary, type QualifierItem } from '../../../../lib/service-qualifiers';
+import { VisitNotesCard } from '../../../../components/visit-notes-card';
 import {
   CustomerNotificationComposer,
   type ComposerContext,
@@ -1630,6 +1631,23 @@ export default function QueueTicketDetailPage() {
             </>
           )}
         </div>
+      </div>
+
+      {/* CR-2026-101 — typed operational notes: concern / advisor / manager /
+          technician / safety / data reports, distinguishable, resolvable. */}
+      <div className="mb-6">
+        <VisitNotesCard
+          visitId={ticket!.serviceVisit.id}
+          addableKinds={
+            user?.roleCode === 'ADMIN'
+              ? ['CUSTOMER_CONCERN', 'ADVISOR', 'MANAGER', 'SAFETY', 'DATA_REPORT']
+              : user?.roleCode === 'SERVICE_ADVISOR'
+                ? ['CUSTOMER_CONCERN', 'ADVISOR', 'SAFETY', 'DATA_REPORT']
+                : ['TECHNICIAN', 'SAFETY', 'DATA_REPORT']
+          }
+          canResolve={canManageOrders}
+          title="Notes & Instructions"
+        />
       </div>
 
       {/* CR-2026-096 — customer contact via the shared composer + history */}

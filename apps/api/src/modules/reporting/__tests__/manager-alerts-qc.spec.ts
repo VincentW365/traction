@@ -25,6 +25,8 @@ function build() {
     businessRuleConfig: { findFirst: vi.fn(async () => null) },
     // CR-2026-100 — pending pause approvals; none by default.
     serviceOrderPause: { findMany: vi.fn(async () => []), count: vi.fn(async () => 0) },
+    // CR-2026-101 — attention notes; none by default.
+    visitNote: { findMany: vi.fn(async () => []), count: vi.fn(async () => 0) },
   };
   return { service: new ManagerDashboardService(prisma as any), prisma };
 }
@@ -51,6 +53,8 @@ describe('getAlerts — READY_FOR_QC (CR-2026-074)', () => {
       mechanicDayAvailability: { findMany: vi.fn(async () => []) },
       businessRuleConfig: { findFirst: vi.fn(async () => null) },
       serviceOrderPause: { findMany: vi.fn(async () => []), count: vi.fn(async () => 0) },
+    // CR-2026-101 — attention notes; none by default.
+    visitNote: { findMany: vi.fn(async () => []), count: vi.fn(async () => 0) },
     };
     const service = new ManagerDashboardService(prisma as any);
     const alerts = await service.getAlerts('site-1');

@@ -803,7 +803,9 @@ export class ServiceOrdersService {
         workSegments: { select: { startedAt: true, endedAt: true } },
         serviceOrder: {
           include: {
-            items: { include: { serviceType: { select: { name: true } } } },
+            items: { include: { serviceType: { select: { name: true, baseDurationMinutes: true } } } },
+            // CR-2026-101 — a job sent back for rework is its own bucket.
+            reworks: { where: { closedAt: null }, select: { id: true } },
             pauses: {
               select: {
                 id: true,
@@ -822,6 +824,15 @@ export class ServiceOrdersService {
                   select: { plateNumber: true, make: true, model: true, serviceClass: true },
                 },
                 queueTicket: { select: { id: true, ticketNumber: true } },
+                // CR-2026-101 — appointment time so the technician can anticipate.
+                appointment: { select: { scheduledStartAt: true } },
+                // CR-2026-101 — the customer's stated concern, prominent on the card.
+                visitNotes: {
+                  where: { kind: 'CUSTOMER_CONCERN' },
+                  orderBy: { createdAt: 'desc' },
+                  take: 1,
+                  select: { text: true },
+                },
               },
             },
           },
@@ -870,6 +881,17 @@ export class ServiceOrdersService {
         priorityClass: (visit as { queuePriorityClass?: string | null }).queuePriorityClass ?? null,
         bay: a.bay?.code ?? null,
         services: order.items.map((i) => i.serviceType.name),
+        // CR-2026-101 — anticipate and prioritise: expected time from the booked
+        // services, the appointment slot, walk-in/appointment source, an open
+        // rework flag, and the customer's stated concern.
+        expectedMinutes: order.items.reduce(
+          (sum, i) => sum + (i.serviceType.baseDurationMinutes ?? 0),
+          0,
+        ),
+        sourceType: (visit as { sourceType?: string }).sourceType ?? null,
+        appointmentAt: visit.appointment?.scheduledStartAt ?? null,
+        hasOpenRework: order.reworks.length > 0,
+        concern: visit.visitNotes[0]?.text ?? visit.notes ?? null,
         pausedMs,
         myWorkMs,
         hasOpenSegment: a.workSegments.some((s) => !s.endedAt),
@@ -885,6 +907,56 @@ export class ServiceOrdersService {
           : null,
       };
     });
+  }
+
+  /**
+   * CR-2026-101 — the technician's workday clock: real labour today, from the
+   * segment ledger, union-merged so it is physically bounded by the wall clock
+   * however many jobs they held. Counts come from the assignments list the
+   * screen already has; this answers only "how much have I actually worked?"
+   */
+  async getMyWorkdaySummary(userId: string) {
+    const tech = await this.prisma.technician.findUnique({
+      where: { userAccountId: userId },
+    });
+    if (!tech) return { todayWorkMs: 0, activeSegmentStartedAt: null };
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const now = Date.now();
+
+    const segments = await this.prisma.technicianWorkSegment.findMany({
+      where: {
+        technicianId: tech.id,
+        OR: [{ endedAt: null }, { endedAt: { gte: todayStart } }],
+      },
+      select: { startedAt: true, endedAt: true },
+    });
+
+    // Clip to today and merge (overlaps count once).
+    const intervals = segments
+      .map((s) => ({
+        start: Math.max(s.startedAt.getTime(), todayStart.getTime()),
+        end: Math.min(s.endedAt?.getTime() ?? now, now),
+      }))
+      .filter((i) => i.end > i.start)
+      .sort((a, b) => a.start - b.start);
+    let todayWorkMs = 0;
+    let curStart = -1;
+    let curEnd = -1;
+    for (const i of intervals) {
+      if (i.start > curEnd) {
+        if (curEnd > curStart) todayWorkMs += curEnd - curStart;
+        curStart = i.start;
+        curEnd = i.end;
+      } else if (i.end > curEnd) {
+        curEnd = i.end;
+      }
+    }
+    if (curEnd > curStart) todayWorkMs += curEnd - curStart;
+
+    const open = segments.find((s) => !s.endedAt);
+    return { todayWorkMs, activeSegmentStartedAt: open?.startedAt ?? null };
   }
 
   /**
@@ -2067,6 +2139,274 @@ export class ServiceOrdersService {
       openPauseApprovalStatus,
       openPauseEnteredOnBehalf,
     };
+  }
+
+  /**
+   * CR-2026-101 — everything a technician needs to KNOW about a job, in one
+   * read. Purpose-built context, not a restricted manager screen: customer
+   * (read-only slice — name, contact, preferences, notes; never an edit path),
+   * vehicle (the operational record incl. the authoritative classification),
+   * the visit (number, source, appointment time, mileage, concern), the job
+   * (services with expected durations, bay, status, holds, rework), current
+   * inspections with their recommendation/authorization states (§15), and the
+   * job sheet reference. Guarded by SERVICE_ORDER_VIEW — read access with no
+   * write path anywhere in this payload.
+   */
+  async getJobContext(orderId: string) {
+    const order = await this.prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+      include: {
+        items: {
+          select: {
+            id: true,
+            serviceType: {
+              select: { id: true, code: true, name: true, baseDurationMinutes: true },
+            },
+          },
+        },
+        assignments: {
+          where: { endedAt: null },
+          select: {
+            id: true,
+            isPrimary: true,
+            startedAt: true,
+            bay: { select: { code: true, bayType: true } },
+            technician: {
+              select: { id: true, employeeCode: true, userAccount: { select: { fullName: true } } },
+            },
+          },
+        },
+        pauses: {
+          where: { endedAt: null },
+          select: {
+            id: true,
+            reasonCode: true,
+            notes: true,
+            startedAt: true,
+            approvalStatus: true,
+            enteredOnBehalf: true,
+          },
+        },
+        reworks: {
+          select: { id: true, reasonCode: true, description: true, openedAt: true, closedAt: true },
+          orderBy: { openedAt: 'desc' },
+        },
+        serviceVisit: {
+          select: {
+            id: true,
+            visitNumber: true,
+            sourceType: true,
+            status: true,
+            checkedInAt: true,
+            mileageIn: true,
+            notes: true,
+            oilBrandRequested: true,
+            oilGradeRequested: true,
+            queuePriorityClass: true,
+            partsReadiness: true,
+            appointment: { select: { scheduledStartAt: true, notes: true } },
+            queueTicket: { select: { id: true, ticketNumber: true } },
+            jobSheetDraft: { select: { id: true, updatedAt: true } },
+            customer: {
+              select: {
+                id: true,
+                customerNumber: true,
+                firstName: true,
+                lastName: true,
+                phone: true,
+                email: true,
+                loyaltyMember: true,
+                notificationOptInSms: true,
+                notificationOptInEmail: true,
+                notes: true,
+              },
+            },
+            vehicle: {
+              select: {
+                id: true,
+                vehicleCode: true,
+                plateNumber: true,
+                vin: true,
+                make: true,
+                model: true,
+                modelYear: true,
+                color: true,
+                odometer: true,
+                serviceClass: true,
+                weightClass: true,
+                fuelType: true,
+                transmission: true,
+                drivetrain: true,
+                engineNo: true,
+                driveSide: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    if (!order) throw new NotFoundException(`ServiceOrder ${orderId} not found`);
+
+    const visit = order.serviceVisit;
+    const [inspections, timing] = await Promise.all([
+      this.prisma.vehicleInspection.findMany({
+        where: { serviceVisitId: visit.id },
+        select: {
+          id: true,
+          inspectionNumber: true,
+          status: true,
+          kind: true,
+          createdAt: true,
+          comments: true,
+          recommendations: {
+            select: {
+              id: true,
+              severity: true,
+              description: true,
+              customerDecision: true,
+              decisionAt: true,
+              resultingServiceOrderId: true,
+            },
+            orderBy: { createdAt: 'asc' },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.getWorkTiming(orderId),
+    ]);
+
+    const expectedMinutes = order.items.reduce(
+      (sum, i) => sum + (i.serviceType.baseDurationMinutes ?? 0),
+      0,
+    );
+
+    return {
+      order: {
+        id: order.id,
+        status: order.status,
+        startedAt: order.startedAt,
+        completedAt: order.completedAt,
+        promisedCompletionAt: order.promisedCompletionAt,
+        // The advisor's operational note on the work order (§13: labelled, not blended).
+        advisorNotes: order.notes,
+        services: order.items.map((i) => ({
+          code: i.serviceType.code,
+          name: i.serviceType.name,
+          durationMinutes: i.serviceType.baseDurationMinutes,
+        })),
+        expectedMinutes,
+        assignments: order.assignments.map((a) => ({
+          technicianName: a.technician.userAccount?.fullName ?? a.technician.employeeCode,
+          isPrimary: a.isPrimary,
+          startedAt: a.startedAt,
+          bay: a.bay?.code ?? null,
+          bayType: a.bay?.bayType ?? null,
+        })),
+        openPause: order.pauses[0] ?? null,
+        openRework: order.reworks.find((r) => !r.closedAt) ?? null,
+        reworkCount: order.reworks.length,
+      },
+      timing,
+      visit: {
+        id: visit.id,
+        visitNumber: visit.visitNumber ?? null,
+        sourceType: visit.sourceType,
+        status: visit.status,
+        checkedInAt: visit.checkedInAt,
+        mileageIn: visit.mileageIn,
+        // The visit-level note captured at intake — for walk-ins this is what
+        // the customer asked for at the counter.
+        intakeNotes: visit.notes,
+        oilRequested: [visit.oilBrandRequested, visit.oilGradeRequested].filter(Boolean).join(' ') || null,
+        priorityClass: visit.queuePriorityClass ?? null,
+        partsReadiness: visit.partsReadiness,
+        appointmentAt: visit.appointment?.scheduledStartAt ?? null,
+        appointmentNotes: visit.appointment?.notes ?? null,
+        queueTicketId: visit.queueTicket?.id ?? null,
+        ticketNumber: visit.queueTicket?.ticketNumber ?? null,
+        jobSheet: visit.jobSheetDraft
+          ? { savedAt: visit.jobSheetDraft.updatedAt, jobSheetNumber: visit.visitNumber ? `JS-${visit.visitNumber}` : null }
+          : { savedAt: null, jobSheetNumber: visit.visitNumber ? `JS-${visit.visitNumber}` : null },
+      },
+      customer: visit.customer,
+      vehicle: visit.vehicle,
+      inspections,
+    };
+  }
+
+  /**
+   * CR-2026-101 — what has previously been done to THIS vehicle, reachable
+   * straight from the job (never through customer administration). Recent
+   * first; includes imported historical visits — they ARE the vehicle's past.
+   */
+  async getVehicleHistory(orderId: string, limit = 10) {
+    const order = await this.prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+      select: { serviceVisitId: true, serviceVisit: { select: { vehicleId: true } } },
+    });
+    if (!order) throw new NotFoundException(`ServiceOrder ${orderId} not found`);
+
+    const visits = await this.prisma.serviceVisit.findMany({
+      where: {
+        vehicleId: order.serviceVisit.vehicleId,
+        id: { not: order.serviceVisitId },
+      },
+      select: {
+        id: true,
+        visitNumber: true,
+        sourceType: true,
+        status: true,
+        checkedInAt: true,
+        createdAt: true,
+        mileageIn: true,
+        notes: true,
+        serviceOrders: {
+          select: {
+            status: true,
+            notes: true,
+            items: { select: { serviceType: { select: { name: true } } } },
+            reworks: { select: { id: true } },
+            pauses: { where: { reasonCode: 'WAITING_PARTS' }, select: { id: true } },
+          },
+        },
+        inspections: {
+          select: {
+            id: true,
+            inspectionNumber: true,
+            status: true,
+            createdAt: true,
+            comments: true,
+            recommendations: {
+              select: { severity: true, description: true, customerDecision: true },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(limit, 1), 25),
+    });
+
+    return visits.map((v) => ({
+      serviceVisitId: v.id,
+      visitNumber: v.visitNumber ?? null,
+      sourceType: v.sourceType,
+      status: v.status,
+      date: v.checkedInAt ?? v.createdAt,
+      mileageIn: v.mileageIn,
+      notes: v.notes,
+      services: v.serviceOrders.flatMap((o) => o.items.map((i) => i.serviceType.name)),
+      orderStatuses: v.serviceOrders.map((o) => o.status),
+      hadRework: v.serviceOrders.some((o) => o.reworks.length > 0),
+      hadPartsWait: v.serviceOrders.some((o) => o.pauses.length > 0),
+      inspections: v.inspections.map((i) => ({
+        id: i.id,
+        inspectionNumber: i.inspectionNumber,
+        status: i.status,
+        date: i.createdAt,
+        comments: i.comments,
+        recommendations: i.recommendations,
+      })),
+    }));
   }
 
   /**

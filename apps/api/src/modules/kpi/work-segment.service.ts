@@ -225,6 +225,11 @@ export class WorkSegmentService {
    * Only assignments that are genuinely still active are reopened. A technician who
    * was removed from the job while it sat paused must not silently start accruing
    * labour again when someone else resumes it.
+   *
+   * CR-2026-101 — and a technician currently ON THE CLOCK for another job is
+   * skipped too: resuming a held job must never open a second simultaneous
+   * labour segment for the same person (the same physics rule the start guard
+   * enforces). They come back to this job through the explicit switch.
    */
   async resumeForOrder(
     params: { serviceOrderId: string; actorUserId: string | null; at?: Date },
@@ -239,6 +244,21 @@ export class WorkSegmentService {
 
     let opened = 0;
     for (const a of active) {
+      const busyElsewhere = await db.technicianWorkSegment.findFirst({
+        where: {
+          technicianId: a.technicianId,
+          endedAt: null,
+          serviceOrderId: { not: params.serviceOrderId },
+        },
+        select: { id: true },
+      });
+      if (busyElsewhere) {
+        this.logger.log(
+          `resumeForOrder: technician ${a.technicianId} is on the clock elsewhere — ` +
+            `segment on ${params.serviceOrderId} not reopened`,
+        );
+        continue;
+      }
       const seg = await this.startSegment(
         {
           serviceOrderId: params.serviceOrderId,

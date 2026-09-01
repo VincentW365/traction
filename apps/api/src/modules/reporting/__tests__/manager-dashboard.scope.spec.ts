@@ -15,6 +15,8 @@ function buildService() {
     partsRequest: { count: vi.fn(async () => 0) },
     // CR-2026-100 — pending pause approvals stat.
     serviceOrderPause: { count: vi.fn(async () => 0), findMany: vi.fn(async () => []) },
+    // CR-2026-101 — attention-items stat.
+    visitNote: { count: vi.fn(async () => 0), findMany: vi.fn(async () => []) },
   };
   return { service: new ManagerDashboardService(prisma as any), prisma };
 }

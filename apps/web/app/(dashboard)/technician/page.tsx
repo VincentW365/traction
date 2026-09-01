@@ -69,6 +69,12 @@ interface MyAssignment {
   priorityClass: string | null;
   bay: string | null;
   services: string[];
+  // CR-2026-101 — anticipate + prioritise.
+  expectedMinutes: number;
+  sourceType: string | null;
+  appointmentAt: string | null;
+  hasOpenRework: boolean;
+  concern: string | null;
   pausedMs: number;
   myWorkMs: number;
   hasOpenSegment: boolean;
@@ -84,13 +90,25 @@ interface MyAssignment {
 
 const HELD_STATUSES = ['PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER'];
 
-/** Compact identity block every job card shares (CR-2026-100 §1). */
+const fmtApptTime = (iso: string) =>
+  new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+/** Compact identity block every job card shares (CR-2026-100 §1, CR-2026-101). */
 function JobIdentity({ a }: { a: MyAssignment }) {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-lg font-bold font-mono text-blue-700">{a.ticketNumber ?? '—'}</span>
-        <div className="flex items-center gap-1.5">
+        <Link href={`/technician/jobs/${a.orderId}`} className="text-lg font-bold font-mono text-blue-700 hover:underline">
+          {a.ticketNumber ?? a.plate}
+        </Link>
+        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+          {a.hasOpenRework && <span className="badge bg-red-100 text-red-700 text-[10px] font-bold">REWORK</span>}
+          {a.appointmentAt && (
+            <span className="badge bg-blue-50 text-blue-700 text-[10px]">Appt {fmtApptTime(a.appointmentAt)}</span>
+          )}
+          {a.expectedMinutes > 0 && (
+            <span className="badge bg-slate-100 text-slate-600 text-[10px]">~{fmtMins(a.expectedMinutes * 60000)}</span>
+          )}
           {a.vehicleClass && (
             <span className="badge bg-slate-100 text-slate-600 text-[10px]">{VEHICLE_CLASS_LABEL[a.vehicleClass] ?? a.vehicleClass}</span>
           )}
@@ -102,8 +120,22 @@ function JobIdentity({ a }: { a: MyAssignment }) {
       </div>
       <p className="text-sm text-slate-700">{a.customerName} · {a.vehicle} ({a.plate})</p>
       <p className="text-xs text-slate-500">{a.services.join(', ')}</p>
+      {/* §12 — the customer's stated concern rides the card, never buried. */}
+      {a.concern && <p className="text-xs text-blue-800 bg-blue-50 rounded px-2 py-1">“{a.concern}”</p>}
       {a.visitNumber && <p className="text-[11px] font-mono text-slate-400">Visit {a.visitNumber}</p>}
     </div>
+  );
+}
+
+/** CR-2026-101 §5 — one tap into the purpose-built job workspace. */
+function OpenJobLink({ orderId }: { orderId: string }) {
+  return (
+    <Link
+      href={`/technician/jobs/${orderId}`}
+      className="block text-center rounded-lg border border-blue-200 bg-blue-50 py-2 text-sm font-semibold text-blue-800 hover:border-blue-300 transition-colors"
+    >
+      Open Job — customer, vehicle, history
+    </Link>
   );
 }
 
@@ -147,17 +179,28 @@ export default function TechnicianWorkView() {
     refetchInterval: 10000,
   });
 
+  // CR-2026-101 §10 — the workday clock: real merged labour today.
+  const workdayQuery = useQuery<{ todayWorkMs: number; activeSegmentStartedAt: string | null }>({
+    queryKey: ['my-workday'],
+    queryFn: () => api.get('/service-orders/mine/workday'),
+    refetchInterval: 30000,
+  });
+
   const assignments = myAssignmentsQuery.data ?? [];
   const openAssignments = assignments.filter((a) => !a.assignmentEndedAt);
-  const readyToStart = openAssignments.filter((a) => a.orderStatus === 'ASSIGNED');
+  // CR-2026-101 §8 — a job returned for rework is its own bucket until restarted.
+  const reworkJobs = openAssignments.filter((a) => a.orderStatus === 'ASSIGNED' && a.hasOpenRework);
+  const readyToStart = openAssignments.filter((a) => a.orderStatus === 'ASSIGNED' && !a.hasOpenRework);
   const heldJobs = openAssignments.filter((a) => HELD_STATUSES.includes(a.orderStatus));
   const inProgress = openAssignments.filter((a) => a.orderStatus === 'IN_PROGRESS');
   // On the clock = the job with my open labour segment. The API guarantees at
   // most one; work on a second job requires an explicit switch.
   const currentJob = inProgress.find((a) => a.hasOpenSegment) ?? inProgress[0] ?? null;
   const otherInProgress = inProgress.filter((a) => a.orderId !== currentJob?.orderId);
+  // CR-2026-101 §8 — QC and done-today are different answers to "where is it?".
+  const awaitingQc = assignments.filter((a) => a.assignmentEndedAt && a.orderStatus === 'QC');
   const finishedToday = assignments.filter(
-    (a) => a.assignmentEndedAt && ['QC', 'READY_TO_INVOICE', 'CLOSED'].includes(a.orderStatus),
+    (a) => a.assignmentEndedAt && ['READY_TO_INVOICE', 'CLOSED'].includes(a.orderStatus),
   );
 
   const [pauseReason, setPauseReason] = useState<string>(PAUSE_REASONS[0].value);
@@ -294,6 +337,44 @@ export default function TechnicianWorkView() {
       <div className="max-w-md mx-auto space-y-4">
         <PageHeader title="My Jobs" subtitle="Technician View" />
 
+        {/* CR-2026-101 §10 — the workday at a glance: now / blocked / next. */}
+        <div className="card">
+          <div className="card-body py-3">
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
+              <div>
+                <div className="text-lg font-bold tabular-nums text-emerald-700">{currentJob ? 1 : 0}</div>
+                <div className="text-[10px] text-slate-500 uppercase tracking-wide">Active</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold tabular-nums text-slate-900">{readyToStart.length}</div>
+                <div className="text-[10px] text-slate-500 uppercase tracking-wide">Up Next</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold tabular-nums text-amber-700">{heldJobs.length}</div>
+                <div className="text-[10px] text-slate-500 uppercase tracking-wide">Waiting</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold tabular-nums text-red-700">{reworkJobs.length}</div>
+                <div className="text-[10px] text-slate-500 uppercase tracking-wide">Rework</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold tabular-nums text-violet-700">{awaitingQc.length}</div>
+                <div className="text-[10px] text-slate-500 uppercase tracking-wide">In QC</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold tabular-nums text-slate-500">{finishedToday.length}</div>
+                <div className="text-[10px] text-slate-500 uppercase tracking-wide">Done</div>
+              </div>
+            </div>
+            {workdayQuery.data && (
+              <p className="text-center text-[11px] text-slate-500 mt-2">
+                Your work today: <span className="font-semibold text-slate-700">{fmtMins(workdayQuery.data.todayWorkMs)}</span>
+                {workdayQuery.data.activeSegmentStartedAt ? ' · clock running' : ''}
+              </p>
+            )}
+          </div>
+        </div>
+
         {myAssignmentsQuery.isError && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
             Could not load your work.{' '}
@@ -370,6 +451,8 @@ export default function TechnicianWorkView() {
 
               {/* CR-2026-100 §4 — the job sheet is never more than one tap away. */}
               <JobSheetLink visitId={currentJob.serviceVisitId} />
+              {/* CR-2026-101 §5 — full context: customer, vehicle, history, notes. */}
+              <OpenJobLink orderId={currentJob.orderId} />
 
               {currentJob.orderStatus === 'IN_PROGRESS' && (
                 <div className="space-y-2">
@@ -468,6 +551,7 @@ export default function TechnicianWorkView() {
                         : a.orderStatus === 'WAITING_PARTS' ? 'PARTS ARRIVED — RESUME' : 'RESUME WORK'}
                     </button>
                     <JobSheetLink visitId={a.serviceVisitId} />
+                    <OpenJobLink orderId={a.orderId} />
                   </div>
                 );
               })}
@@ -475,11 +559,39 @@ export default function TechnicianWorkView() {
           </div>
         )}
 
-        {/* READY TO START — assigned, not begun */}
+        {/* REWORK — returned after QC; restart like any assigned job (§8) */}
+        {reworkJobs.length > 0 && (
+          <div className="card border-red-200">
+            <div className="card-header bg-red-50">
+              <h2 className="text-sm font-semibold text-red-900">Rework ({reworkJobs.length})</h2>
+            </div>
+            <div className="card-body p-0">
+              {reworkJobs.map((a) => (
+                <div key={a.assignmentId} className="px-5 py-4 border-b border-slate-100 last:border-0 space-y-2">
+                  <JobIdentity a={a} />
+                  {switchPanel(a)}
+                  {(!switchFor || switchFor.orderId !== a.orderId) && (
+                    <button
+                      onClick={() => startMutation.mutate({ orderId: a.orderId, assignmentId: a.assignmentId })}
+                      disabled={startMutation.isPending}
+                      className="btn-success w-full py-3 text-base font-bold rounded-lg active:scale-[0.98] transition-transform"
+                    >
+                      START REWORK
+                    </button>
+                  )}
+                  <JobSheetLink visitId={a.serviceVisitId} />
+                  <OpenJobLink orderId={a.orderId} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* UP NEXT — assigned, not begun (§8/§9) */}
         {readyToStart.length > 0 && (
           <div className="card">
             <div className="card-header">
-              <h2 className="text-sm font-semibold text-slate-900">Ready to Start ({readyToStart.length})</h2>
+              <h2 className="text-sm font-semibold text-slate-900">Up Next ({readyToStart.length})</h2>
             </div>
             <div className="card-body p-0">
               {readyToStart.map((a) => (
@@ -502,6 +614,7 @@ export default function TechnicianWorkView() {
                     </button>
                   )}
                   <JobSheetLink visitId={a.serviceVisitId} />
+                  <OpenJobLink orderId={a.orderId} />
                 </div>
               ))}
             </div>
@@ -532,17 +645,39 @@ export default function TechnicianWorkView() {
                     </button>
                   )}
                   <JobSheetLink visitId={a.serviceVisitId} />
+                  <OpenJobLink orderId={a.orderId} />
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* FINISHED TODAY — sent to QC / completed, read-only */}
+        {/* AWAITING QC — handed over, read-only (§8) */}
+        {awaitingQc.length > 0 && (
+          <div className="card">
+            <div className="card-header">
+              <h2 className="text-sm font-semibold text-slate-900">Awaiting QC ({awaitingQc.length})</h2>
+            </div>
+            <div className="card-body p-0">
+              {awaitingQc.map((a) => (
+                <div key={a.assignmentId} className="px-5 py-3 border-b border-slate-100 last:border-0 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="text-sm font-bold font-mono text-slate-900">{a.ticketNumber ?? '—'}</span>
+                    <span className="text-sm text-slate-500 ml-2">{a.services.join(', ')}</span>
+                    <p className="text-[11px] text-slate-400">Your work: {fmtMins(a.myWorkMs)}</p>
+                  </div>
+                  <StatusBadge status="QC" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* COMPLETED TODAY — for reference (§8) */}
         {finishedToday.length > 0 && (
           <div className="card">
             <div className="card-header">
-              <h2 className="text-sm font-semibold text-slate-900">Finished Today ({finishedToday.length})</h2>
+              <h2 className="text-sm font-semibold text-slate-900">Completed Today ({finishedToday.length})</h2>
             </div>
             <div className="card-body p-0">
               {finishedToday.map((a) => (
@@ -552,7 +687,7 @@ export default function TechnicianWorkView() {
                     <span className="text-sm text-slate-500 ml-2">{a.services.join(', ')}</span>
                     <p className="text-[11px] text-slate-400">Your work: {fmtMins(a.myWorkMs)}</p>
                   </div>
-                  <StatusBadge status={a.orderStatus === 'QC' ? 'QC' : a.orderStatus} />
+                  <StatusBadge status={a.orderStatus} />
                 </div>
               ))}
             </div>

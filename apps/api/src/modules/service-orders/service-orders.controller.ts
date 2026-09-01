@@ -68,6 +68,14 @@ export class ServiceOrdersController {
     return this.serviceOrdersService.getMyAssignments(user.sub, status);
   }
 
+  // CR-2026-101 — the technician's own workday clock (merged labour today).
+  @Get('mine/workday')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
+  @ApiOperation({ summary: "The logged-in technician's real labour time today" })
+  async myWorkday(@CurrentUser() user: JwtPayload) {
+    return this.serviceOrdersService.getMyWorkdaySummary(user.sub);
+  }
+
   // CR-2026-100 — pause requests awaiting advisor/manager acknowledgement.
   // Declared before ':id' so the literal path is not captured by the UUID param.
   @Get('pause-approvals/pending')
@@ -89,6 +97,23 @@ export class ServiceOrdersController {
   @ApiOperation({ summary: 'Pause/hold history for an order — the shared story every role reads' })
   async listPauses(@Param('id', ParseUUIDPipe) id: string) {
     return this.serviceOrdersService.listPauses(id);
+  }
+
+  // CR-2026-101 — the technician's read-only job context: customer slice,
+  // vehicle record, visit, services + expected time, holds, inspections with
+  // authorization states, job-sheet reference. Read access, no write path.
+  @Get(':id/context')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_VIEW)
+  @ApiOperation({ summary: 'Read-only job context: customer, vehicle, visit, work, holds, inspections' })
+  async jobContext(@Param('id', ParseUUIDPipe) id: string) {
+    return this.serviceOrdersService.getJobContext(id);
+  }
+
+  @Get(':id/vehicle-history')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_VIEW)
+  @ApiOperation({ summary: "Previous visits/inspections for this job's vehicle (recent first)" })
+  async vehicleHistory(@Param('id', ParseUUIDPipe) id: string) {
+    return this.serviceOrdersService.getVehicleHistory(id);
   }
 
   @Post(':id/pauses/:pauseId/approve')

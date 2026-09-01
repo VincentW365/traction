@@ -20,6 +20,8 @@ interface DashboardStats {
   pausedJobs: number;
   // CR-2026-100 — technician pause requests awaiting acknowledgement.
   pendingPauseApprovals: number;
+  // CR-2026-101 — open safety flags / incorrect-data reports.
+  attentionItems: number;
 }
 
 interface DashboardAlert {
@@ -82,13 +84,15 @@ export default function ManagerDashboardPage() {
           </div>
 
           {/* Row 2: Monitoring */}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 mb-6">
             <StatCard value={`${stats.avgWaitMinutes}m`} label="Avg Wait" color={stats.avgWaitMinutes > 45 ? 'red' : 'slate'} />
             <StatCard value={stats.overridesToday} label="Overrides Today" color={stats.overridesToday > 0 ? 'amber' : 'slate'} />
             <StatCard value={stats.waitingParts} label="Waiting for Parts" color={stats.waitingParts > 0 ? 'red' : 'slate'} />
             <StatCard value={stats.pausedJobs} label="Paused Jobs" color={stats.pausedJobs > 0 ? 'amber' : 'slate'} />
             {/* CR-2026-100 — someone on the floor reported a stop and is waiting to be heard. */}
             <StatCard value={stats.pendingPauseApprovals ?? 0} label="Pause Approvals" color={(stats.pendingPauseApprovals ?? 0) > 0 ? 'red' : 'slate'} />
+            {/* CR-2026-101 — safety flags / incorrect-data reports from the floor. */}
+            <StatCard value={stats.attentionItems ?? 0} label="Needs Attention" color={(stats.attentionItems ?? 0) > 0 ? 'red' : 'slate'} />
           </div>
         </>
       )}

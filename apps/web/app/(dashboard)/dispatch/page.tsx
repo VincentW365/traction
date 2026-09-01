@@ -85,6 +85,21 @@ interface TechLoad {
   } | null;
 }
 
+// CR-2026-101 — an open attention item (safety flag / incorrect-data report).
+interface AttentionNoteItem {
+  noteId: string;
+  kind: 'SAFETY' | 'DATA_REPORT' | 'TECHNICIAN' | string;
+  text: string;
+  authorRole: string;
+  serviceVisitId: string;
+  queueTicketId: string | null;
+  ticketNumber: string | null;
+  customerName: string;
+  vehiclePlate: string;
+  createdAt: string;
+  waitingMinutes: number | null;
+}
+
 // CR-2026-100 — a technician pause request awaiting acknowledgement.
 interface PauseApprovalItem {
   pauseId: string;
@@ -171,6 +186,7 @@ interface DispatchOverview {
     readyForQc: number;
     overdue: number;
     pauseApprovals: number;
+    attentionNotes: number;
   };
   resources: ResourceItem[];
   technicianLoad: TechLoad[];
@@ -179,6 +195,7 @@ interface DispatchOverview {
   readyForQc: QcItem[];
   overdue: OverdueItem[];
   pauseApprovals: PauseApprovalItem[];
+  attentionNotes: AttentionNoteItem[];
 }
 
 /**
@@ -379,6 +396,7 @@ export default function DispatchBoardPage() {
           <StatChip label="In Service" value={s.occupied} tone="amber" />
           <StatChip label="Blocked" value={s.blocked} tone="red" />
           <StatChip label="Pause Approvals" value={s.pauseApprovals ?? 0} tone="amber" />
+          <StatChip label="Needs Attention" value={s.attentionNotes ?? 0} tone="red" />
           <StatChip label="Ready for QC" value={s.readyForQc} tone="violet" />
           <StatChip label="Overdue" value={s.overdue} tone="rose" />
           <StatChip label="Techs Idle / Busy" value={`${s.techniciansIdle} / ${s.techniciansBusy}`} tone="slate" />
@@ -419,6 +437,22 @@ export default function DispatchBoardPage() {
 
       {data && (
         <div className="space-y-5">
+          {/* CR-2026-101 — safety flags + incorrect-data reports from the floor. */}
+          {(data.attentionNotes ?? []).length > 0 && (
+            <Panel
+              title="Needs Attention"
+              count={(data.attentionNotes ?? []).length}
+              accent="bg-red-500"
+              empty="Nothing needs attention"
+            >
+              <div className="space-y-2">
+                {(data.attentionNotes ?? []).map((n) => (
+                  <AttentionNoteRow key={n.noteId} item={n} onDone={invalidate} />
+                ))}
+              </div>
+            </Panel>
+          )}
+
           {/* CR-2026-100 §9 — pause requests awaiting acknowledgement, never buried. */}
           {(data.pauseApprovals ?? []).length > 0 && (
             <Panel
@@ -652,6 +686,68 @@ function TechCard({ tech, jobKpi }: { tech: TechLoad; jobKpi?: JobKpi }) {
               ⏸ {j.ticketNumber ?? j.vehiclePlate} · {j.orderStatus === 'WAITING_PARTS' ? 'parts' : j.orderStatus === 'WAITING_CUSTOMER' ? 'customer' : 'paused'}
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * CR-2026-101 — one attention item: what a technician flagged (a safety
+ * concern, or master data they deliberately cannot edit), who raised it, how
+ * long it has waited — with Mark Handled and a link into the job.
+ */
+function AttentionNoteRow({ item, onDone }: { item: AttentionNoteItem; onDone: () => void }) {
+  const [resolution, setResolution] = useState('');
+  const [resolving, setResolving] = useState(false);
+  const resolve = useMutation({
+    mutationFn: () =>
+      api.post(`/visit-notes/${item.noteId}/resolve`, resolution.trim() ? { resolutionNotes: resolution.trim() } : {}),
+    onSuccess: () => { setResolving(false); setResolution(''); onDone(); },
+  });
+  const kindLabel =
+    item.kind === 'SAFETY' ? 'Safety concern' : item.kind === 'DATA_REPORT' ? 'Incorrect information' : 'Needs attention';
+  const kindClass = item.kind === 'SAFETY' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800';
+  return (
+    <div className={`rounded-lg border p-2.5 space-y-1.5 ${item.kind === 'SAFETY' ? 'border-red-200 bg-red-50/60' : 'border-amber-200 bg-amber-50/60'}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${kindClass}`}>{kindLabel}</span>
+          <span className="font-mono text-xs font-bold text-blue-700 ml-2">{item.ticketNumber ?? '—'}</span>
+          <span className="text-sm font-medium text-slate-800 ml-2">{item.customerName}</span>
+          <span className="text-[11px] text-slate-400 ml-2">{item.vehiclePlate}</span>
+        </div>
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 shrink-0">
+          {item.waitingMinutes ?? 0} min ago
+        </span>
+      </div>
+      <p className="text-xs text-slate-700">“{item.text}”</p>
+      {resolving ? (
+        <div className="space-y-1.5">
+          <input
+            value={resolution}
+            onChange={(e) => setResolution(e.target.value)}
+            placeholder="What was done about it? (optional)"
+            className="input-field text-xs"
+          />
+          {resolve.isError && (
+            <p className="text-[11px] text-red-600">{resolve.error instanceof Error ? resolve.error.message : 'Failed'}</p>
+          )}
+          <div className="flex gap-1.5">
+            <button onClick={() => resolve.mutate()} disabled={resolve.isPending} className="btn-success text-xs px-3 py-1">
+              {resolve.isPending ? 'Saving…' : 'Confirm Handled'}
+            </button>
+            <button onClick={() => setResolving(false)} className="btn-secondary text-xs px-3 py-1">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => setResolving(true)} className="btn-secondary text-xs px-3 py-1">Mark Handled</button>
+          {item.queueTicketId && (
+            <Link href={`/queue/${item.queueTicketId}`} className="text-xs text-blue-700 hover:underline ml-auto">
+              Open job →
+            </Link>
+          )}
         </div>
       )}
     </div>

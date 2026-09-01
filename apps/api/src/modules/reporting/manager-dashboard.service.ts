@@ -15,6 +15,8 @@ export interface DashboardStats {
   pausedJobs: number;
   /** Technician pause requests awaiting acknowledgement — CR-2026-100. */
   pendingPauseApprovals: number;
+  /** Open attention items: safety flags, incorrect-data reports — CR-2026-101. */
+  attentionItems: number;
 }
 
 // CR-2026-098 — INTEGRATION_ERROR removed: the platform is standalone and no
@@ -27,7 +29,8 @@ export interface DashboardAlert {
     | 'LONG_WAIT'
     | 'ABSENT_TECH'
     | 'READY_FOR_QC'
-    | 'PAUSE_APPROVAL';
+    | 'PAUSE_APPROVAL'
+    | 'NEEDS_ATTENTION';
   severity: 'warning' | 'critical';
   title: string;
   detail: string;
@@ -140,6 +143,15 @@ export class ManagerDashboardService {
       },
     });
 
+    // CR-2026-101 — open attention items (safety / incorrect-data reports).
+    const attentionItems = await this.prisma.visitNote.count({
+      where: {
+        requiresAttention: true,
+        resolvedAt: null,
+        serviceVisit: { siteId, ...operationalVisitWhere() },
+      },
+    });
+
     return {
       carsToday,
       activeTechnicians,
@@ -150,6 +162,7 @@ export class ManagerDashboardService {
       waitingParts,
       pausedJobs,
       pendingPauseApprovals,
+      attentionItems,
     };
   }
 
@@ -201,6 +214,44 @@ export class ManagerDashboardService {
         title: `Pause approval required — ${pauseReasonLabel[p.reasonCode] ?? p.reasonCode}${sv.queueTicket?.ticketNumber ? ` — ${sv.queueTicket.ticketNumber}` : ''}`,
         detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber} · requested ${waitMin} min ago`,
         entityId: p.serviceOrder.id,
+        queueTicketId: sv.queueTicket?.id,
+      });
+    }
+
+    // CR-2026-101 — safety flags and incorrect-data reports from the floor.
+    // A technician deliberately cannot edit master data; their report lands
+    // here for someone who can.
+    const attentionNotes = await this.prisma.visitNote.findMany({
+      where: {
+        requiresAttention: true,
+        resolvedAt: null,
+        serviceVisit: { siteId, ...operationalVisitWhere() },
+      },
+      include: {
+        serviceVisit: {
+          select: {
+            customer: { select: { firstName: true, lastName: true } },
+            vehicle: { select: { plateNumber: true } },
+            queueTicket: { select: { id: true, ticketNumber: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 10,
+    });
+    const noteLabel: Record<string, string> = {
+      SAFETY: 'Safety concern',
+      DATA_REPORT: 'Incorrect information reported',
+      TECHNICIAN: 'Technician needs attention',
+    };
+    for (const n of attentionNotes) {
+      const sv = n.serviceVisit;
+      alerts.push({
+        type: 'NEEDS_ATTENTION',
+        severity: n.kind === 'SAFETY' ? 'critical' : 'warning',
+        title: `${noteLabel[n.kind] ?? 'Needs attention'}${sv.queueTicket?.ticketNumber ? ` — ${sv.queueTicket.ticketNumber}` : ''}`,
+        detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber} · ${n.text.slice(0, 80)}`,
+        entityId: n.id,
         queueTicketId: sv.queueTicket?.id,
       });
     }

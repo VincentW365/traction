@@ -1037,6 +1037,7 @@ model ServiceVisit {
 
   complaints  Complaint[] // CR-2026-032 — customer complaints
   inspections VehicleInspection[] // CR-2026-034 — visual inspections
+  visitNotes  VisitNote[] // CR-2026-101 — typed operational notes
 
   jobSheetDraft JobSheetDraft?
 
@@ -1044,6 +1045,43 @@ model ServiceVisit {
   @@index([customerId, vehicleId])
   @@index([testDataRunId])
   @@map("service_visits")
+}
+
+// CR-2026-101 — typed operational notes on a visit, so nobody has to guess who
+// wrote what or why. The customer's stated concern, an advisor's context, a
+// manager's instruction and a technician's finding are different facts and are
+// stored as such. SAFETY and DATA_REPORT (incorrect customer/vehicle master
+// data noticed by a technician who cannot — by design — edit it) carry
+// requiresAttention and surface to the advisor/manager for action; resolution
+// is recorded, never deleted.
+enum VisitNoteKind {
+  CUSTOMER_CONCERN
+  ADVISOR
+  MANAGER
+  TECHNICIAN
+  SAFETY
+  DATA_REPORT
+}
+
+model VisitNote {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceVisitId    String        @map("service_visit_id") @db.Uuid
+  serviceOrderId    String?       @map("service_order_id") @db.Uuid
+  kind              VisitNoteKind
+  text              String
+  authorUserId      String        @map("author_user_id") @db.Uuid
+  authorRole        String        @map("author_role") // role snapshot at write time
+  requiresAttention Boolean       @default(false) @map("requires_attention")
+  resolvedByUserId  String?       @map("resolved_by_user_id") @db.Uuid
+  resolvedAt        DateTime?     @map("resolved_at") @db.Timestamptz
+  resolutionNotes   String?       @map("resolution_notes")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  serviceVisit ServiceVisit @relation(fields: [serviceVisitId], references: [id], onDelete: Cascade)
+
+  @@index([serviceVisitId])
+  @@index([requiresAttention])
+  @@map("visit_notes")
 }
 
 model QueueTicket {

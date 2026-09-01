@@ -313,6 +313,7 @@ export class ResourcesService {
       qcOrders,
       overdueOrders,
       pendingPauses,
+      attentionNoteRows,
     ] = await Promise.all([
       // --- System A: resources on the board, enriched via the visit's live orders ---
       this.prisma.workResource.findMany({
@@ -490,6 +491,27 @@ export class ResourcesService {
           },
         },
         orderBy: { startedAt: 'asc' },
+      }),
+
+      // --- CR-2026-101: open attention items (safety flags, incorrect-data
+      //     reports, technician requests) — surfaced for action, never buried ---
+      this.prisma.visitNote.findMany({
+        where: {
+          requiresAttention: true,
+          resolvedAt: null,
+          serviceVisit: { siteId, ...live },
+        },
+        include: {
+          serviceVisit: {
+            select: {
+              id: true,
+              customer: { select: { firstName: true, lastName: true } },
+              vehicle: { select: { plateNumber: true } },
+              queueTicket: { select: { id: true, ticketNumber: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
       }),
     ]);
 
@@ -756,6 +778,26 @@ export class ResourcesService {
       };
     });
 
+    // ---- attentionNotes[] (CR-2026-101) ----
+    // Safety flags and incorrect-data reports from the floor: the technician
+    // cannot (by design) edit master data, so the report comes here for action.
+    const attentionNotes = attentionNoteRows.map((n) => {
+      const v = n.serviceVisit;
+      return {
+        noteId: n.id,
+        kind: n.kind,
+        text: n.text,
+        authorRole: n.authorRole,
+        serviceVisitId: v.id,
+        queueTicketId: v.queueTicket?.id ?? null,
+        ticketNumber: v.queueTicket?.ticketNumber ?? null,
+        customerName: fullName(v.customer),
+        vehiclePlate: v.vehicle.plateNumber,
+        createdAt: n.createdAt,
+        waitingMinutes: minutesSince(n.createdAt),
+      };
+    });
+
     // ---- overdue[] ----
     const overdue = overdueOrders.map((o) => {
       const v = o.serviceVisit;
@@ -789,6 +831,7 @@ export class ResourcesService {
         readyForQc: readyForQc.length,
         overdue: overdue.length,
         pauseApprovals: pauseApprovals.length,
+        attentionNotes: attentionNotes.length,
       },
       resources: resourceCards,
       technicianLoad,
@@ -797,6 +840,7 @@ export class ResourcesService {
       readyForQc,
       overdue,
       pauseApprovals,
+      attentionNotes,
     };
   }
 }

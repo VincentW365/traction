@@ -32,6 +32,7 @@ const ROUTE_INVENTORY = [
   { route: '/customers/[id]', file: '(dashboard)/customers/[id]/page.tsx', access: 'auth', description: 'Customer detail' },
   { route: '/vehicles/[id]', file: '(dashboard)/vehicles/[id]/page.tsx', access: 'auth', description: 'Vehicle detail' },
   { route: '/technician', file: '(dashboard)/technician/page.tsx', access: 'auth', description: 'Technician work view' },
+  { route: '/technician/jobs/[orderId]', file: '(dashboard)/technician/jobs/[orderId]/page.tsx', access: 'auth', description: 'Technician job workspace (CR-2026-101)' },
   { route: '/reports', file: '(dashboard)/reports/page.tsx', access: 'auth', description: 'Reports/KPI' },
   { route: '/admin/settings', file: '(dashboard)/admin/settings/page.tsx', access: 'auth', description: 'Admin settings' },
   { route: '/admin/dashboard', file: '(dashboard)/admin/dashboard/page.tsx', access: 'auth', description: 'Manager control center' },

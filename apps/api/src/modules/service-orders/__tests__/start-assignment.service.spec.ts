@@ -113,11 +113,17 @@ describe('getMyAssignments (CR-2026-069)', () => {
             serviceVisitId: 'visit-1',
             startedAt: null,
             completedAt: null,
-            items: [{ serviceType: { name: 'Brake Pads' } }],
+            items: [{ serviceType: { name: 'Brake Pads', baseDurationMinutes: 45 } }],
             pauses: [],
+            // CR-2026-101 — rework flag + concern + appointment ride the row.
+            reworks: [],
             serviceVisit: {
               visitNumber: 'V-260901-001',
               queuePriorityClass: 'WALKIN_STANDARD',
+              sourceType: 'WALKIN',
+              notes: 'Brakes squealing at low speed',
+              appointment: null,
+              visitNotes: [],
               customer: { firstName: 'Ann', lastName: 'Lee' },
               vehicle: { plateNumber: 'ABC123', make: 'Toyota', model: 'Corolla', serviceClass: 'SEDAN_CLASS' },
               queueTicket: { id: 'qt-1', ticketNumber: 'A007' },
@@ -145,6 +151,13 @@ describe('getMyAssignments (CR-2026-069)', () => {
         myWorkMs: 30 * 60_000,
         hasOpenSegment: false,
         openPause: null,
+        // CR-2026-101 — anticipate + prioritise fields.
+        expectedMinutes: 45,
+        sourceType: 'WALKIN',
+        appointmentAt: null,
+        hasOpenRework: false,
+        // The customer's stated concern — the walk-in intake note here.
+        concern: 'Brakes squealing at low speed',
       }),
     );
   });

@@ -23,6 +23,8 @@ function build(data: {
   overdueOrders?: any[];
   // CR-2026-100 — technician pause requests awaiting acknowledgement.
   pendingPauses?: any[];
+  // CR-2026-101 — open attention notes (safety / data reports).
+  attentionNotes?: any[];
 }) {
   const workResourceFindMany = vi.fn(async () => data.resources ?? []);
   const technicianFindMany = vi.fn(async () => data.technicians ?? []);
@@ -43,6 +45,8 @@ function build(data: {
     serviceOrder: { findMany: serviceOrderFindMany },
     // CR-2026-100 — the pause-approvals panel; none pending by default.
     serviceOrderPause: { findMany: vi.fn(async () => data.pendingPauses ?? []) },
+    // CR-2026-101 — the attention-notes panel; none open by default.
+    visitNote: { findMany: vi.fn(async () => data.attentionNotes ?? []) },
   };
   const audit = { log: vi.fn(async () => ({})) };
   const service = new ResourcesService(prisma as any, audit as any);

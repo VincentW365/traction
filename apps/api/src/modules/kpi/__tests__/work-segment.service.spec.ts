@@ -17,7 +17,10 @@ function build(overrides: Record<string, any> = {}) {
       findFirst: vi.fn(async ({ where }: any) =>
         store.find(
           (s) =>
-            s.serviceOrderId === where.serviceOrderId &&
+            // CR-2026-101 — the busy-elsewhere probe filters serviceOrderId: { not: X }.
+            (typeof where.serviceOrderId === 'object' && where.serviceOrderId !== null
+              ? s.serviceOrderId !== where.serviceOrderId.not
+              : where.serviceOrderId === undefined || s.serviceOrderId === where.serviceOrderId) &&
             (where.technicianId === undefined || s.technicianId === where.technicianId) &&
             (where.endedAt !== null || s.endedAt === null) &&
             (where.id?.not === undefined || s.id !== where.id.not),
@@ -199,6 +202,34 @@ describe('resuming after a pause', () => {
     expect(
       await h.service.resumeForOrder({ serviceOrderId: 'so-1', actorUserId: 'user-1' }),
     ).toBe(0);
+  });
+
+  // CR-2026-101 — resuming a held job must never open a SECOND simultaneous
+  // segment for a technician who is on the clock elsewhere. Same physics rule
+  // as the start guard: one person, one open segment, however many jobs.
+  it('skips a technician currently on the clock for another job', async () => {
+    const h = build({
+      technicianAssignment: {
+        findMany: vi.fn(async () => [
+          { id: 'ta-1', technicianId: 'tech-1', isPrimary: true },
+          { id: 'ta-2', technicianId: 'tech-2', isPrimary: false },
+        ]),
+      },
+    });
+    // tech-1 is actively working ANOTHER order.
+    await h.service.startSegment(start({ serviceOrderId: 'so-OTHER', assignmentId: 'ta-x' }));
+
+    const opened = await h.service.resumeForOrder({ serviceOrderId: 'so-1', actorUserId: 'user-1' });
+
+    // Only tech-2 reopens; tech-1 stays on their current job's clock.
+    expect(opened).toBe(1);
+    const so1Segs = h.store.filter((s) => s.serviceOrderId === 'so-1');
+    expect(so1Segs).toHaveLength(1);
+    expect(so1Segs[0].technicianId).toBe('tech-2');
+    // tech-1 still has exactly ONE open segment — on the other job.
+    const tech1Open = h.store.filter((s) => s.technicianId === 'tech-1' && s.endedAt === null);
+    expect(tech1Open).toHaveLength(1);
+    expect(tech1Open[0].serviceOrderId).toBe('so-OTHER');
   });
 });
 
