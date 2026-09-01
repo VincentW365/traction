@@ -14,7 +14,13 @@ function buildService() {
   const prisma: any = {
     serviceOrder: (() => { let last = 'IN_PROGRESS'; return { update: vi.fn(async ({ data }: any) => { if (data.status) last = data.status; return { id: 'so-1', ...data }; }), findMany: vi.fn(async () => [{ status: last }]) }; })(),
     serviceVisit: { update: vi.fn(async () => ({})) },
-    technicianAssignment: { updateMany: vi.fn(async () => ({ count: 0 })) },
+    technicianAssignment: {
+      updateMany: vi.fn(async () => ({ count: 0 })),
+      // CR-2026-100 — pause attribution reads the open assignments.
+      findMany: vi.fn(async () => []),
+    },
+    // CR-2026-100 — attribution: null = staff actor (self-acknowledged pause).
+    technician: { findUnique: vi.fn(async () => null) },
     queueTicket: {
       findUnique: vi.fn(async () => ({ id: 'qt-1', displayStatus: 'WAITING' })),
       update: vi.fn(async () => ({})),

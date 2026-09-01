@@ -22,6 +22,8 @@ interface VehicleDetail {
   color: string | null;
   odometer: number | null;
   weightClass: string | null;
+  // CR-2026-100 §10 — the ONE authoritative vehicle classification.
+  serviceClass: 'SEDAN_CLASS' | 'SUV_CLASS' | 'UNKNOWN_REQUIRES_REVIEW' | null;
   fuelType: string | null;
   transmission: string | null;
   drivetrain: string | null;
@@ -68,6 +70,26 @@ export default function VehicleDetailPage() {
       setIsEditing(false);
     },
   });
+
+  // CR-2026-100 §10 — deliberate, audited correction of the vehicle type. The
+  // class lives ON the vehicle record (one authoritative copy) and flows from
+  // here through queue, dispatch, technician view, job sheet and KPI reporting.
+  const [changingClass, setChangingClass] = useState(false);
+  const [newClass, setNewClass] = useState('');
+  const classMutation = useMutation({
+    mutationFn: () =>
+      api.post(`/vehicles/classification/${vehicleId}/confirm`, { serviceClass: newClass }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vehicle', vehicleId] });
+      setChangingClass(false);
+      setNewClass('');
+    },
+  });
+  const classLabel =
+    vehicle?.serviceClass === 'SEDAN_CLASS' ? 'Sedan'
+      : vehicle?.serviceClass === 'SUV_CLASS' ? 'SUV'
+        : vehicle?.serviceClass === 'UNKNOWN_REQUIRES_REVIEW' ? 'Needs review'
+          : 'Not set';
 
   function startEdit() {
     if (!vehicle) return;
@@ -269,6 +291,42 @@ export default function VehicleDetailPage() {
               <div>
                 <div className="input-label">Weight Class</div>
                 <p className="text-sm font-medium text-slate-900">{vehicle.weightClass ?? 'Not set'}</p>
+              </div>
+              <div>
+                <div className="input-label">Vehicle Type (Sedan / SUV)</div>
+                {changingClass ? (
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <select value={newClass} onChange={(e) => setNewClass(e.target.value)} className="input-field text-xs w-auto">
+                      <option value="">Choose…</option>
+                      <option value="SEDAN_CLASS">Sedan</option>
+                      <option value="SUV_CLASS">SUV</option>
+                    </select>
+                    <button
+                      onClick={() => classMutation.mutate()}
+                      disabled={!newClass || classMutation.isPending}
+                      className="btn-primary text-xs px-2 py-1"
+                    >
+                      {classMutation.isPending ? 'Saving…' : 'Save (audited)'}
+                    </button>
+                    <button onClick={() => setChangingClass(false)} className="btn-secondary text-xs px-2 py-1">Cancel</button>
+                  </div>
+                ) : (
+                  <p className="text-sm font-medium text-slate-900">
+                    {classLabel}
+                    <button
+                      onClick={() => { setChangingClass(true); setNewClass(vehicle.serviceClass && vehicle.serviceClass !== 'UNKNOWN_REQUIRES_REVIEW' ? vehicle.serviceClass : ''); }}
+                      className="text-xs text-blue-600 hover:underline ml-2"
+                    >
+                      {vehicle.serviceClass ? 'Correct' : 'Set'}
+                    </button>
+                  </p>
+                )}
+                {classMutation.isError && (
+                  <p className="text-xs text-red-600 mt-0.5">{classMutation.error instanceof Error ? classMutation.error.message : 'Failed to save'}</p>
+                )}
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Saved to the vehicle record and used everywhere — queue, dispatch, job sheet, KPI standards.
+                </p>
               </div>
               <div>
                 <div className="input-label">Transmission</div>

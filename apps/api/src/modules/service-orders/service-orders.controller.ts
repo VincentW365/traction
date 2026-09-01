@@ -25,6 +25,11 @@ import {
   ResumeServiceOrderDto,
   ReworkServiceOrderDto,
 } from './dto/pause-rework.dto';
+import {
+  RejectPauseDto,
+  CorrectPauseStartDto,
+  StartAssignmentDto,
+} from './dto/pause-approval.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -63,11 +68,64 @@ export class ServiceOrdersController {
     return this.serviceOrdersService.getMyAssignments(user.sub, status);
   }
 
+  // CR-2026-100 — pause requests awaiting advisor/manager acknowledgement.
+  // Declared before ':id' so the literal path is not captured by the UUID param.
+  @Get('pause-approvals/pending')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_ASSIGN)
+  @ApiOperation({ summary: 'Technician pause requests awaiting acknowledgement' })
+  async pendingPauseApprovals(@Query('siteId') siteId?: string) {
+    return this.serviceOrdersService.listPendingPauseApprovals(siteId);
+  }
+
   @Get(':id')
   @RequirePermission(PERMISSIONS.SERVICE_ORDER_VIEW)
   @ApiOperation({ summary: 'Get service order by ID' })
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.serviceOrdersService.findById(id);
+  }
+
+  @Get(':id/pauses')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_VIEW)
+  @ApiOperation({ summary: 'Pause/hold history for an order — the shared story every role reads' })
+  async listPauses(@Param('id', ParseUUIDPipe) id: string) {
+    return this.serviceOrdersService.listPauses(id);
+  }
+
+  @Post(':id/pauses/:pauseId/approve')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_ASSIGN)
+  @ApiOperation({ summary: "Acknowledge a technician's pause (never moves the clock)" })
+  async approvePause(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('pauseId', ParseUUIDPipe) pauseId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.approvePause(id, pauseId, user.sub);
+  }
+
+  @Post(':id/pauses/:pauseId/reject')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_ASSIGN)
+  @ApiOperation({ summary: 'Reject a pause request (reason required; request is kept, work resumes)' })
+  async rejectPause(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('pauseId', ParseUUIDPipe) pauseId: string,
+    @Body() dto: RejectPauseDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.rejectPause(id, pauseId, dto.reason, user.sub);
+  }
+
+  @Post(':id/pauses/:pauseId/correct-start')
+  @RequirePermission(PERMISSIONS.SERVICE_ORDER_ASSIGN)
+  @ApiOperation({
+    summary: 'Correct when a pause took effect (earlier only; reasoned, original kept, audited)',
+  })
+  async correctPauseStart(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('pauseId', ParseUUIDPipe) pauseId: string,
+    @Body() dto: CorrectPauseStartDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.serviceOrdersService.correctPauseStart(id, pauseId, dto, user.sub);
   }
 
   @Get('by-visit/:serviceVisitId')
@@ -129,7 +187,7 @@ export class ServiceOrdersController {
     @Body() dto: AssignAllDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.serviceOrdersService.assignAllForVisit(serviceVisitId, dto.technicianId, user.sub);
+    return this.serviceOrdersService.assignAllForVisit(serviceVisitId, dto.technicianId, user.sub, dto.acknowledgeWorkload);
   }
 
   @Get(':id/work-timing')
@@ -205,7 +263,7 @@ export class ServiceOrdersController {
     @Body() dto: AssignAdditionalDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.serviceOrdersService.assignAdditional(id, dto.technicianId, dto.bayId, dto.resourceId, user.sub);
+    return this.serviceOrdersService.assignAdditional(id, dto.technicianId, dto.bayId, dto.resourceId, user.sub, dto.acknowledgeWorkload);
   }
 
   @Delete(':id/assignments/:assignmentId')
@@ -282,13 +340,17 @@ export class ServiceOrdersController {
 
   @Post(':id/assignments/:assignmentId/start')
   @RequirePermission(PERMISSIONS.SERVICE_ORDER_STATUS)
-  @ApiOperation({ summary: 'Record assignment start time' })
+  @ApiOperation({
+    summary:
+      'Record assignment start time (409 with the active job when the technician is still on the clock elsewhere; pass holdReasonCode to switch)',
+  })
   async startAssignment(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('assignmentId', ParseUUIDPipe) assignmentId: string,
+    @Body() dto: StartAssignmentDto,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.serviceOrdersService.startAssignment(id, assignmentId, user.sub);
+    return this.serviceOrdersService.startAssignment(id, assignmentId, user.sub, dto);
   }
 
   @Post(':id/assignments/:assignmentId/end')

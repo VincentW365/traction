@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { localDayRange } from './date-range';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { serviceVisitIsLive } from '../../common/helpers/operational-scope';
 import {
@@ -65,9 +66,8 @@ export class PerformanceService {
     startDate: string,
     endDate: string,
   ): Promise<TechnicianEfficiencyRow[]> {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // CR-2026-100 — the operator's local calendar day, not a UTC/local mix.
+    const { start, end } = localDayRange(startDate, endDate);
 
     // CR-2026-086 — rating thresholds are a manager-tunable business rule, not a
     // constant, so they are read per call rather than baked in.
@@ -155,9 +155,8 @@ export class PerformanceService {
   }
 
   async getTechnicianPerformance(technicianId: string, startDate: string, endDate: string) {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // CR-2026-100 — the operator's local calendar day, not a UTC/local mix.
+    const { start, end } = localDayRange(startDate, endDate);
 
     const tech = await this.prisma.technician.findUnique({
       where: { id: technicianId },
@@ -258,9 +257,8 @@ export class PerformanceService {
     endDate: string,
     includeHistorical = false,
   ) {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // CR-2026-100 — the operator's local calendar day, not a UTC/local mix.
+    const { start, end } = localDayRange(startDate, endDate);
 
     const assignments = await this.prisma.technicianAssignment.findMany({
       where: {

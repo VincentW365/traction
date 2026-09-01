@@ -13,6 +13,8 @@ function buildService() {
     serviceOrder: { count: vi.fn(async () => 0) },
     queueTicket: { count: vi.fn(async () => 0), findMany: vi.fn(async () => []) },
     partsRequest: { count: vi.fn(async () => 0) },
+    // CR-2026-100 — pending pause approvals stat.
+    serviceOrderPause: { count: vi.fn(async () => 0), findMany: vi.fn(async () => []) },
   };
   return { service: new ManagerDashboardService(prisma as any), prisma };
 }

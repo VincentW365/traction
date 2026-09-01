@@ -14,7 +14,13 @@ function buildService() {
     serviceVisit: { update: vi.fn(async () => ({})) },
     // CR-2026-084 — rework now also ends any open assignment and returns the
     // queue ticket to the waiting line.
-    technicianAssignment: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    technicianAssignment: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      // CR-2026-100 — pause attribution reads the open assignments.
+      findMany: vi.fn(async () => []),
+    },
+    // CR-2026-100 — attribution: null = staff actor (self-acknowledged pause).
+    technician: { findUnique: vi.fn(async () => null) },
     queueTicket: {
       findUnique: vi.fn(async () => ({ id: 'qt-1', displayStatus: 'IN_SERVICE' })),
       update: vi.fn(async () => ({})),

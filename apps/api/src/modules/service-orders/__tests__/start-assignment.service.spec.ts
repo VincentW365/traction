@@ -14,6 +14,8 @@ function build(opts: { assignment?: any; callerTech?: any; order?: any; myAssign
     },
     technician: { findUnique: vi.fn(async () => opts.callerTech ?? null) },
     serviceOrder: { findUnique: vi.fn(async () => opts.order ?? { id: 'so-1', status: 'ASSIGNED' }) },
+    // CR-2026-100 — the cross-job overlap guard reads open segments; none by default.
+    technicianWorkSegment: { findMany: vi.fn(async () => []), count: vi.fn(async () => 0) },
   };
   const statusHistory = { record: vi.fn(async () => ({})) };
   const auditService = { log: vi.fn(async () => ({})) };
@@ -102,14 +104,23 @@ describe('getMyAssignments (CR-2026-069)', () => {
           id: 'ta-1',
           serviceOrderId: 'so-1',
           bay: { code: 'B1' },
+          // CR-2026-100 — this technician's own labour segments ride along.
+          workSegments: [
+            { startedAt: new Date('2026-09-01T10:00:00Z'), endedAt: new Date('2026-09-01T10:30:00Z') },
+          ],
           serviceOrder: {
             status: 'ASSIGNED',
             serviceVisitId: 'visit-1',
+            startedAt: null,
+            completedAt: null,
             items: [{ serviceType: { name: 'Brake Pads' } }],
+            pauses: [],
             serviceVisit: {
+              visitNumber: 'V-260901-001',
+              queuePriorityClass: 'WALKIN_STANDARD',
               customer: { firstName: 'Ann', lastName: 'Lee' },
-              vehicle: { plateNumber: 'ABC123', make: 'Toyota', model: 'Corolla' },
-              queueTicket: { ticketNumber: 'A007' },
+              vehicle: { plateNumber: 'ABC123', make: 'Toyota', model: 'Corolla', serviceClass: 'SEDAN_CLASS' },
+              queueTicket: { id: 'qt-1', ticketNumber: 'A007' },
             },
           },
         },
@@ -127,6 +138,13 @@ describe('getMyAssignments (CR-2026-069)', () => {
         plate: 'ABC123',
         bay: 'B1',
         services: ['Brake Pads'],
+        // CR-2026-100 — the multi-job fields the floor screen needs.
+        visitNumber: 'V-260901-001',
+        vehicleClass: 'SEDAN_CLASS',
+        priorityClass: 'WALKIN_STANDARD',
+        myWorkMs: 30 * 60_000,
+        hasOpenSegment: false,
+        openPause: null,
       }),
     );
   });

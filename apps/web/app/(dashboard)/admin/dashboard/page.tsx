@@ -18,6 +18,8 @@ interface DashboardStats {
   // CR-2026-098 — counted from the operational states themselves.
   waitingParts: number;
   pausedJobs: number;
+  // CR-2026-100 — technician pause requests awaiting acknowledgement.
+  pendingPauseApprovals: number;
 }
 
 interface DashboardAlert {
@@ -80,13 +82,33 @@ export default function ManagerDashboardPage() {
           </div>
 
           {/* Row 2: Monitoring */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
             <StatCard value={`${stats.avgWaitMinutes}m`} label="Avg Wait" color={stats.avgWaitMinutes > 45 ? 'red' : 'slate'} />
             <StatCard value={stats.overridesToday} label="Overrides Today" color={stats.overridesToday > 0 ? 'amber' : 'slate'} />
             <StatCard value={stats.waitingParts} label="Waiting for Parts" color={stats.waitingParts > 0 ? 'red' : 'slate'} />
             <StatCard value={stats.pausedJobs} label="Paused Jobs" color={stats.pausedJobs > 0 ? 'amber' : 'slate'} />
+            {/* CR-2026-100 — someone on the floor reported a stop and is waiting to be heard. */}
+            <StatCard value={stats.pendingPauseApprovals ?? 0} label="Pause Approvals" color={(stats.pendingPauseApprovals ?? 0) > 0 ? 'red' : 'slate'} />
           </div>
         </>
+      )}
+
+      {/* CR-2026-100 — a failed dashboard read must say so, not render blanks. */}
+      {statsQuery.isError && (
+        <div className="card mb-4 p-4 border-red-200 bg-red-50">
+          <p className="text-sm text-red-700">
+            Could not load dashboard figures.{' '}
+            {statsQuery.error instanceof Error ? statsQuery.error.message : ''}
+          </p>
+        </div>
+      )}
+      {alertsQuery.isError && (
+        <div className="card mb-4 p-4 border-red-200 bg-red-50">
+          <p className="text-sm text-red-700">
+            Could not load alerts.{' '}
+            {alertsQuery.error instanceof Error ? alertsQuery.error.message : ''}
+          </p>
+        </div>
       )}
 
       {/* Alerts */}
@@ -135,7 +157,7 @@ export default function ManagerDashboardPage() {
         </div>
       )}
 
-      {alerts.length === 0 && statsQuery.isSuccess && (
+      {alerts.length === 0 && alertsQuery.isSuccess && statsQuery.isSuccess && (
         <div className="card mb-6 p-5 flex items-center gap-3">
           <span className="w-2 h-2 rounded-full bg-emerald-500" />
           <p className="text-sm text-slate-600">No active alerts — operations running smoothly.</p>

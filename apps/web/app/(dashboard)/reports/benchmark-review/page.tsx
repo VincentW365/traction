@@ -109,6 +109,14 @@ export default function BenchmarkReviewPage() {
 
       {queue.isLoading ? (
         <LoadingState />
+      ) : queue.isError ? (
+        // CR-2026-100 — a failed request must never read as a clean queue.
+        <div className="card p-6 text-center border-red-200 bg-red-50">
+          <p className="text-sm text-red-700">
+            Failed to load the review queue.
+            {queue.error instanceof Error ? ` ${queue.error.message}` : ''}
+          </p>
+        </div>
       ) : jobs.length === 0 ? (
         <div className="card">
           <div className="card-body text-sm text-slate-600">

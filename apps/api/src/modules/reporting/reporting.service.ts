@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { localDayRange } from './date-range';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import {
@@ -62,9 +63,8 @@ export class ReportingService {
     endDate: string,
     includeHistorical = false,
   ): Promise<KpiResult[]> {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // CR-2026-100 — the operator's local calendar day, not a UTC/local mix.
+    const { start, end } = localDayRange(startDate, endDate);
 
     const [
       totalCheckedIn,
@@ -233,9 +233,8 @@ export class ReportingService {
     metric: TrendMetric,
     includeHistorical = false,
   ): Promise<TrendDataPoint[]> {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // CR-2026-100 — the operator's local calendar day, not a UTC/local mix.
+    const { start, end } = localDayRange(startDate, endDate);
 
     switch (metric) {
       case 'check_ins': {
@@ -345,9 +344,8 @@ export class ReportingService {
     endDate: string,
     includeHistorical = false,
   ): Promise<TechnicianUtilizationRow[]> {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // CR-2026-100 — the operator's local calendar day, not a UTC/local mix.
+    const { start, end } = localDayRange(startDate, endDate);
 
     // Calculate total working days in the range (Mon-Sat by convention, but
     // we use calendar days for simplicity — 8h per day).
@@ -417,9 +415,8 @@ export class ReportingService {
     endDate: string,
     includeHistorical = false,
   ): Promise<ServiceFamilyBreakdownRow[]> {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // CR-2026-100 — the operator's local calendar day, not a UTC/local mix.
+    const { start, end } = localDayRange(startDate, endDate);
 
     const rows = await this.prisma.$queryRaw<
       Array<{
@@ -535,9 +532,8 @@ export class ReportingService {
     endDate: string,
     includeHistorical = false,
   ): Promise<QueuePerformanceSummary> {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // CR-2026-100 — the operator's local calendar day, not a UTC/local mix.
+    const { start, end } = localDayRange(startDate, endDate);
 
     const [rankChangesResult, avgScoreResult, overrideResult, totalVisitsResult] =
       await Promise.all([

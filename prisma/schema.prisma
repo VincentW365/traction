@@ -101,6 +101,15 @@ enum PauseReason {
   OTHER
 }
 
+// CR-2026-100 — a technician-reported pause takes effect the moment it is
+// reported, then surfaces to the advisor/manager for acknowledgement. Approval
+// never moves the clock; rejection needs a reason and keeps the original request.
+enum PauseApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum PartsRequestStatus {
   OPEN
   RESERVING
@@ -1320,9 +1329,26 @@ model ServiceOrderPause {
   notes           String?
   createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
+  // CR-2026-100 — acknowledgement workflow. `startedAt` is ALWAYS the effective
+  // moment labour stopped; approval records who acknowledged it and when, and
+  // never moves the clock. A retro correction moves `startedAt` but preserves
+  // the original in `originalStartedAt`, with actor + reason — timing records
+  // are corrected in the open, never overwritten.
+  technicianId     String?             @map("technician_id") @db.Uuid // whose labour stopped (snapshot)
+  enteredOnBehalf  Boolean             @default(false) @map("entered_on_behalf") // recorded by advisor/manager, not the technician
+  approvalStatus   PauseApprovalStatus @default(APPROVED) @map("approval_status")
+  reviewedByUserId String?             @map("reviewed_by_user_id") @db.Uuid
+  reviewedAt       DateTime?           @map("reviewed_at") @db.Timestamptz
+  reviewNotes      String?             @map("review_notes") // required on rejection
+  originalStartedAt DateTime?          @map("original_started_at") @db.Timestamptz
+  correctedByUserId String?            @map("corrected_by_user_id") @db.Uuid
+  correctedAt       DateTime?          @map("corrected_at") @db.Timestamptz
+  correctionReason  String?            @map("correction_reason")
+
   serviceOrder ServiceOrder @relation(fields: [serviceOrderId], references: [id], onDelete: Cascade)
 
   @@index([serviceOrderId])
+  @@index([approvalStatus])
   @@map("service_order_pauses")
 }
 
@@ -2709,4 +2735,7 @@ enum SegmentEndReason {
   /// flagged so a manager can tell a real record from a tidy-up.
   SYSTEM_CLOSED
   CORRECTED_BY_MANAGER
+  /// CR-2026-100 — the technician moved to another job while others kept working
+  /// this one: only their segment closes, the order stays IN_PROGRESS.
+  SWITCHED_JOB
 }

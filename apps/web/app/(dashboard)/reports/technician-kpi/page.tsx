@@ -306,6 +306,14 @@ export default function TechnicianKpiPage() {
 
       {dash.isLoading ? (
         <LoadingState message="Loading KPI results..." />
+      ) : dash.isError ? (
+        // CR-2026-100 — a failed request must never masquerade as an empty result.
+        <div className="card p-6 text-center border-red-200 bg-red-50">
+          <p className="text-sm text-red-700">
+            Failed to load KPI results.
+            {dash.error instanceof Error ? ` ${dash.error.message}` : ''}
+          </p>
+        </div>
       ) : !d || d.totalJobs === 0 ? (
         <div className="card p-6 text-sm text-slate-600">
           No completed jobs in this range yet. A job appears here once its technician

@@ -1,6 +1,7 @@
 import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { ReportingService, TrendMetric } from './reporting.service';
+import { JobTimesService } from './job-times.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -11,12 +12,15 @@ import { PERMISSIONS } from '../../common/constants/permissions';
 @UseGuards(JwtAuthGuard, RbacGuard)
 @ApiBearerAuth()
 export class ReportingController {
-  constructor(private reportingService: ReportingService) {}
+  constructor(
+    private reportingService: ReportingService,
+    private jobTimesService: JobTimesService,
+  ) {}
 
   // CR-2026-099 — bad input is the CLIENT's problem, stated plainly. These used
   // to fall through to Prisma as Invalid Dates and surface as raw 500s.
   private assertDateRange(siteId: string, startDate: string, endDate: string): void {
-    const ISO_DAY = /^d{4}-d{2}-d{2}$/;
+    const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
     if (!siteId) throw new BadRequestException('siteId is required');
     if (!startDate || !ISO_DAY.test(startDate) || Number.isNaN(Date.parse(startDate))) {
       throw new BadRequestException('startDate must be a valid date in YYYY-MM-DD format');
@@ -81,6 +85,42 @@ export class ReportingController {
   ) {
     this.assertDateRange(siteId, startDate, endDate);
     return this.reportingService.getTechnicianUtilization(siteId, startDate, endDate, includeHistorical === 'true');
+  }
+
+  /**
+   * CR-2026-100 — Job Times: elapsed vs technician work time with the waiting
+   * breakdown, per job and per technician. One payload carries BOTH bases so the
+   * on-screen toggle and the printed report can never disagree.
+   */
+  @Get('job-times')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'Job times report — elapsed vs technician work time, with hold breakdown' })
+  @ApiQuery({ name: 'technicianId', required: false, type: String })
+  @ApiQuery({ name: 'vehicleClass', required: false, type: String, description: 'SEDAN_CLASS | SUV_CLASS' })
+  @ApiQuery({ name: 'sourceType', required: false, type: String, description: 'APPOINTMENT | WALKIN' })
+  @ApiQuery({ name: 'serviceTypeId', required: false, type: String })
+  async getJobTimes(
+    @Query('siteId') siteId: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+    @Query('technicianId') technicianId?: string,
+    @Query('vehicleClass') vehicleClass?: string,
+    @Query('sourceType') sourceType?: string,
+    @Query('serviceTypeId') serviceTypeId?: string,
+  ) {
+    this.assertDateRange(siteId, startDate, endDate);
+    if (vehicleClass && !['SEDAN_CLASS', 'SUV_CLASS', 'UNKNOWN_REQUIRES_REVIEW'].includes(vehicleClass)) {
+      throw new BadRequestException('vehicleClass must be SEDAN_CLASS, SUV_CLASS or UNKNOWN_REQUIRES_REVIEW');
+    }
+    if (sourceType && !['APPOINTMENT', 'WALKIN'].includes(sourceType)) {
+      throw new BadRequestException('sourceType must be APPOINTMENT or WALKIN');
+    }
+    return this.jobTimesService.getJobTimes(siteId, startDate, endDate, {
+      technicianId,
+      vehicleClass,
+      sourceType,
+      serviceTypeId,
+    });
   }
 
   @Get('service-breakdown')

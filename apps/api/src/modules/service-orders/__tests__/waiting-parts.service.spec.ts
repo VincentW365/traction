@@ -32,7 +32,14 @@ function buildService() {
       };
     })(),
     serviceVisit: { update: vi.fn(async () => ({})) },
-    technicianAssignment: { updateMany: vi.fn(async () => ({ count: 0 })) },
+    technicianAssignment: {
+      updateMany: vi.fn(async () => ({ count: 0 })),
+      // CR-2026-100 — pause attribution reads the open assignments.
+      findMany: vi.fn(async () => []),
+    },
+    // CR-2026-100 — pause attribution resolves the actor's technician record;
+    // null = staff actor (advisor/manager), whose pauses are self-acknowledged.
+    technician: { findUnique: vi.fn(async () => null) },
     queueTicket: {
       findUnique: vi.fn(async () => ({ id: 'qt-1', displayStatus: 'IN_SERVICE' })),
       update: vi.fn(async () => ({})),

@@ -40,6 +40,8 @@ interface JobSheetData {
     fuelType: string | null;
     transmission: string | null;
     drivetrain: string | null;
+    // CR-2026-100 §10 — the authoritative vehicle type, from the vehicle record.
+    serviceClass: 'SEDAN_CLASS' | 'SUV_CLASS' | 'UNKNOWN_REQUIRES_REVIEW' | null;
   } | null;
   queueTicket: { ticketNumber: string } | null;
   jobSheetDraft: {
@@ -241,6 +243,12 @@ export default function JobSheetPage() {
           <Link href={`/visits/${visitId}`} className="text-xs text-blue-600 hover:underline" title="The complete record of this visit">Visit Record</Link>
           {q.data?.visitNumber && (
             <span className="text-[11px] font-mono text-slate-400" title="Job sheet number (derived from the visit number)">JS-{q.data.visitNumber}</span>
+          )}
+          {/* CR-2026-100 §10 — the vehicle type flows onto the job sheet automatically. */}
+          {q.data?.vehicle?.serviceClass && q.data.vehicle.serviceClass !== 'UNKNOWN_REQUIRES_REVIEW' && (
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+              {q.data.vehicle.serviceClass === 'SEDAN_CLASS' ? 'Sedan' : 'SUV'}
+            </span>
           )}
           {dirty ? (
             <span className="text-[11px] text-amber-600">Unsaved changes</span>

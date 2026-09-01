@@ -10,6 +10,7 @@ import { PickupNotificationPanel } from '../../../components/pickup-notification
 import { PageHeader } from '../../../components/ui/page-header';
 import { LoadingState } from '../../../components/ui/loading-state';
 import { KpiStrip, type LiveKpi } from '../../../components/kpi-strip';
+import { PAUSE_REASONS } from '../../../lib/service-order-actions';
 
 /* ---------- Read-model types (mirror GET /resources/overview, CR-2026-080) ---------- */
 
@@ -59,6 +60,18 @@ interface TechLoad {
   fullName: string;
   skills: string[];
   openAssignments: number;
+  // CR-2026-100 — the workload breakdown: a technician with two jobs waiting on
+  // parts is far more available than one deep in a major active job.
+  activeJobs: number;
+  heldJobs: number;
+  jobs: Array<{
+    serviceOrderId: string;
+    orderStatus: string;
+    held: boolean;
+    ticketNumber: string | null;
+    vehiclePlate: string | null;
+    elapsedMinutes: number | null;
+  }>;
   state: 'ABSENT' | 'BUSY' | 'ASSIGNED' | 'IDLE';
   shiftStatus: string;
   shift: { start: string; end: string } | null;
@@ -70,6 +83,25 @@ interface TechLoad {
     startedAt: string;
     elapsedMinutes: number | null;
   } | null;
+}
+
+// CR-2026-100 — a technician pause request awaiting acknowledgement.
+interface PauseApprovalItem {
+  pauseId: string;
+  serviceOrderId: string;
+  orderStatus: string;
+  serviceVisitId: string;
+  queueTicketId: string | null;
+  ticketNumber: string | null;
+  customerName: string;
+  vehiclePlate: string;
+  serviceDescription: string | null;
+  technicianName: string | null;
+  reasonCode: string;
+  notes: string | null;
+  requestedAt: string;
+  enteredOnBehalf: boolean;
+  waitingMinutes: number | null;
 }
 
 interface NeedsDispatchItem {
@@ -138,6 +170,7 @@ interface DispatchOverview {
     blocked: number;
     readyForQc: number;
     overdue: number;
+    pauseApprovals: number;
   };
   resources: ResourceItem[];
   technicianLoad: TechLoad[];
@@ -145,6 +178,7 @@ interface DispatchOverview {
   blocked: BlockedItem[];
   readyForQc: QcItem[];
   overdue: OverdueItem[];
+  pauseApprovals: PauseApprovalItem[];
 }
 
 /**
@@ -340,10 +374,11 @@ export default function DispatchBoardPage() {
 
       {/* Summary chips */}
       {s && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 mb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2.5 mb-5">
           <StatChip label="Needs Dispatch" value={s.needsDispatch} tone="blue" />
           <StatChip label="In Service" value={s.occupied} tone="amber" />
           <StatChip label="Blocked" value={s.blocked} tone="red" />
+          <StatChip label="Pause Approvals" value={s.pauseApprovals ?? 0} tone="amber" />
           <StatChip label="Ready for QC" value={s.readyForQc} tone="violet" />
           <StatChip label="Overdue" value={s.overdue} tone="rose" />
           <StatChip label="Techs Idle / Busy" value={`${s.techniciansIdle} / ${s.techniciansBusy}`} tone="slate" />
@@ -384,6 +419,22 @@ export default function DispatchBoardPage() {
 
       {data && (
         <div className="space-y-5">
+          {/* CR-2026-100 §9 — pause requests awaiting acknowledgement, never buried. */}
+          {(data.pauseApprovals ?? []).length > 0 && (
+            <Panel
+              title="Pause Approval Required"
+              count={(data.pauseApprovals ?? []).length}
+              accent="bg-amber-500"
+              empty="No pause requests waiting"
+            >
+              <div className="space-y-2">
+                {(data.pauseApprovals ?? []).map((p) => (
+                  <PauseApprovalRow key={p.pauseId} item={p} onDone={invalidate} />
+                ))}
+              </div>
+            </Panel>
+          )}
+
           {/* Row: Needs Dispatch + Technician Load */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
             <Panel title="Needs Dispatch" count={needsDispatch.length} accent="bg-blue-500" empty="Nothing waiting for a bay">
@@ -564,6 +615,7 @@ function TechCard({ tech, jobKpi }: { tech: TechLoad; jobKpi?: JobKpi }) {
     IDLE: 'bg-emerald-100 text-emerald-700',
     ABSENT: 'bg-slate-200 text-slate-500',
   };
+  const heldJobs = (tech.jobs ?? []).filter((j) => j.held);
   return (
     <div className="rounded-lg border border-slate-100 bg-white p-2.5">
       <div className="flex items-center justify-between">
@@ -572,7 +624,12 @@ function TechCard({ tech, jobKpi }: { tech: TechLoad; jobKpi?: JobKpi }) {
       </div>
       <div className="flex items-center gap-2 mt-1">
         <span className="font-mono text-[11px] text-slate-400">{tech.employeeCode}</span>
-        <span className="text-[11px] text-slate-400">· {tech.openAssignments} open</span>
+        {/* CR-2026-100 — the workload breakdown, not a single "busy" flag: a
+            technician with two jobs on hold is far more available than one deep
+            in a major active job. */}
+        <span className="text-[11px] text-slate-400">
+          · {tech.activeJobs ?? 0} active{(tech.heldJobs ?? 0) > 0 ? ` · ${tech.heldJobs} on hold` : ''}
+        </span>
       </div>
       {tech.currentJob ? (
         <>
@@ -587,6 +644,97 @@ function TechCard({ tech, jobKpi }: { tech: TechLoad; jobKpi?: JobKpi }) {
         </>
       ) : (
         <div className="text-[11px] text-slate-300 mt-1">No active job</div>
+      )}
+      {heldJobs.length > 0 && (
+        <div className="mt-1 space-y-0.5">
+          {heldJobs.map((j) => (
+            <div key={j.serviceOrderId} className="text-[11px] text-amber-700 truncate">
+              ⏸ {j.ticketNumber ?? j.vehiclePlate} · {j.orderStatus === 'WAITING_PARTS' ? 'parts' : j.orderStatus === 'WAITING_CUSTOMER' ? 'customer' : 'paused'}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * CR-2026-100 §5/§9 — one pending pause request: who reported the stop, why,
+ * since when — with Approve / Reject right here and a link into the job.
+ * Approval never moves the clock; the interval has been running from the
+ * technician's own timestamp all along. Rejection requires a reason and
+ * resumes the work; the original request is kept.
+ */
+function PauseApprovalRow({ item, onDone }: { item: PauseApprovalItem; onDone: () => void }) {
+  const [showReject, setShowReject] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const approve = useMutation({
+    mutationFn: () => api.post(`/service-orders/${item.serviceOrderId}/pauses/${item.pauseId}/approve`, {}),
+    onSuccess: onDone,
+  });
+  const reject = useMutation({
+    mutationFn: () =>
+      api.post(`/service-orders/${item.serviceOrderId}/pauses/${item.pauseId}/reject`, { reason: rejectReason.trim() }),
+    onSuccess: () => { setShowReject(false); setRejectReason(''); onDone(); },
+  });
+  const reasonLabel = PAUSE_REASONS.find((r) => r.value === item.reasonCode)?.label ?? item.reasonCode;
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-2.5 space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <span className="font-mono text-xs font-bold text-blue-700">{item.ticketNumber ?? '—'}</span>
+          <span className="text-sm font-medium text-slate-800 ml-2">{item.customerName}</span>
+          <span className="text-[11px] text-slate-400 ml-2">{item.vehiclePlate}</span>
+        </div>
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">
+          waiting {item.waitingMinutes ?? 0} min
+        </span>
+      </div>
+      <p className="text-xs text-slate-600">
+        <span className="font-semibold">{reasonLabel}</span>
+        {item.technicianName ? <> · {item.technicianName}</> : null}
+        {' · requested '}
+        {new Date(item.requestedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+        {item.enteredOnBehalf ? ' · entered on the technician’s behalf' : ''}
+      </p>
+      {item.notes && <p className="text-xs text-slate-500 italic">“{item.notes}”</p>}
+      {showReject ? (
+        <div className="space-y-1.5">
+          <input
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Why is this rejected? (required — the technician sees it)"
+            className="input-field text-xs"
+          />
+          {reject.isError && (
+            <p className="text-[11px] text-red-600">{reject.error instanceof Error ? reject.error.message : 'Failed'}</p>
+          )}
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => reject.mutate()}
+              disabled={reject.isPending || !rejectReason.trim()}
+              className="btn-danger text-xs px-3 py-1"
+            >
+              {reject.isPending ? 'Rejecting…' : 'Confirm Reject'}
+            </button>
+            <button onClick={() => setShowReject(false)} className="btn-secondary text-xs px-3 py-1">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <button onClick={() => approve.mutate()} disabled={approve.isPending} className="btn-success text-xs px-3 py-1">
+            {approve.isPending ? 'Approving…' : 'Approve'}
+          </button>
+          <button onClick={() => setShowReject(true)} className="btn-secondary text-xs px-3 py-1">Reject</button>
+          {item.queueTicketId && (
+            <Link href={`/queue/${item.queueTicketId}`} className="text-xs text-blue-700 hover:underline ml-auto">
+              Open job →
+            </Link>
+          )}
+          {approve.isError && (
+            <p className="text-[11px] text-red-600">{approve.error instanceof Error ? approve.error.message : 'Failed'}</p>
+          )}
+        </div>
       )}
     </div>
   );

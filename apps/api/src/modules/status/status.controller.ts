@@ -230,6 +230,8 @@ export class ServiceVisitCompletionController {
           select: {
             plateNumber: true, make: true, model: true, modelYear: true,
             engineNo: true, vin: true, fuelType: true, transmission: true, drivetrain: true,
+            // CR-2026-100 §10 — the authoritative vehicle type flows onto the sheet.
+            serviceClass: true,
           },
         },
         queueTicket: { select: { ticketNumber: true } },

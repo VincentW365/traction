@@ -312,6 +312,7 @@ export class ResourcesService {
       blockedTickets,
       qcOrders,
       overdueOrders,
+      pendingPauses,
     ] = await Promise.all([
       // --- System A: resources on the board, enriched via the visit's live orders ---
       this.prisma.workResource.findMany({
@@ -463,6 +464,33 @@ export class ResourcesService {
         orderBy: { startedAt: 'asc' },
         take: 25,
       }),
+
+      // --- CR-2026-100: technician pause requests awaiting acknowledgement ---
+      this.prisma.serviceOrderPause.findMany({
+        where: {
+          approvalStatus: 'PENDING',
+          endedAt: null,
+          serviceOrder: { serviceVisit: { siteId, ...live } },
+        },
+        include: {
+          serviceOrder: {
+            select: {
+              id: true,
+              status: true,
+              items: { select: { serviceType: { select: { name: true } } } },
+              serviceVisit: {
+                select: {
+                  id: true,
+                  customer: { select: { firstName: true, lastName: true } },
+                  vehicle: { select: { plateNumber: true } },
+                  queueTicket: { select: { id: true, ticketNumber: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { startedAt: 'asc' },
+      }),
     ]);
 
     const fullName = (c: { firstName: string; lastName: string }) => `${c.firstName} ${c.lastName}`;
@@ -563,9 +591,28 @@ export class ResourcesService {
     });
 
     // ---- technicianLoad[] ----
+    // CR-2026-100 — a technician legitimately holds several jobs at once, so the
+    // board distinguishes ACTIVE work (an IN_PROGRESS order) from HELD work
+    // (paused / waiting on parts / waiting on the customer). A technician with
+    // two jobs waiting on parts is far more available than one deep in a major
+    // job — the workload breakdown says so instead of a single "busy" flag.
+    const HELD_ORDER_STATUSES = new Set(['PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER']);
     const technicianLoad = technicians.map((t) => {
       const openAssignments = t.assignments.length;
-      const working = t.assignments.find((a) => a.startedAt && !a.endedAt) ?? null;
+      const jobs = t.assignments.map((a) => ({
+        serviceOrderId: a.serviceOrder.id,
+        orderStatus: a.serviceOrder.status,
+        held: HELD_ORDER_STATUSES.has(a.serviceOrder.status),
+        ticketNumber: a.serviceOrder.serviceVisit.queueTicket?.ticketNumber ?? null,
+        vehiclePlate: a.serviceOrder.serviceVisit.vehicle?.plateNumber ?? null,
+        startedAt: a.startedAt,
+        elapsedMinutes: minutesSince(a.startedAt),
+      }));
+      const activeJobs = jobs.filter((j) => j.orderStatus === 'IN_PROGRESS').length;
+      const heldJobs = jobs.filter((j) => j.held).length;
+      const working =
+        t.assignments.find((a) => a.serviceOrder.status === 'IN_PROGRESS' && a.startedAt && !a.endedAt) ??
+        null;
       const shiftStatus = t.availability[0]?.status ?? 'NOT_SCHEDULED';
       const state: 'ABSENT' | 'BUSY' | 'ASSIGNED' | 'IDLE' =
         shiftStatus === 'ABSENT'
@@ -581,6 +628,9 @@ export class ResourcesService {
         fullName: t.userAccount.fullName,
         skills: t.skills.map((s) => s.skillCode),
         openAssignments,
+        activeJobs,
+        heldJobs,
+        jobs,
         state,
         shiftStatus,
         shift: t.availability[0] ? { start: t.availability[0].shiftStart, end: t.availability[0].shiftEnd } : null,
@@ -680,6 +730,32 @@ export class ResourcesService {
       };
     });
 
+    // ---- pauseApprovals[] (CR-2026-100) ----
+    // Never buried in an audit log: the advisor sees who reported the stop, why,
+    // and how long it has waited for acknowledgement — and clicks into the job.
+    const pauseApprovals = pendingPauses.map((p) => {
+      const v = p.serviceOrder.serviceVisit;
+      const tech = p.technicianId ? techNameById.get(p.technicianId) : undefined;
+      return {
+        pauseId: p.id,
+        serviceOrderId: p.serviceOrder.id,
+        orderStatus: p.serviceOrder.status,
+        serviceVisitId: v.id,
+        queueTicketId: v.queueTicket?.id ?? null,
+        ticketNumber: v.queueTicket?.ticketNumber ?? null,
+        customerName: fullName(v.customer),
+        vehiclePlate: v.vehicle.plateNumber,
+        serviceDescription:
+          p.serviceOrder.items.map((i) => i.serviceType.name).join(' + ') || null,
+        technicianName: tech?.fullName ?? null,
+        reasonCode: p.reasonCode,
+        notes: p.notes,
+        requestedAt: p.startedAt,
+        enteredOnBehalf: p.enteredOnBehalf,
+        waitingMinutes: minutesSince(p.startedAt),
+      };
+    });
+
     // ---- overdue[] ----
     const overdue = overdueOrders.map((o) => {
       const v = o.serviceVisit;
@@ -712,6 +788,7 @@ export class ResourcesService {
         blocked: blocked.length,
         readyForQc: readyForQc.length,
         overdue: overdue.length,
+        pauseApprovals: pauseApprovals.length,
       },
       resources: resourceCards,
       technicianLoad,
@@ -719,6 +796,7 @@ export class ResourcesService {
       blocked,
       readyForQc,
       overdue,
+      pauseApprovals,
     };
   }
 }

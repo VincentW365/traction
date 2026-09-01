@@ -61,7 +61,10 @@ export type SegmentEndReason =
   | 'SUBMITTED_TO_QC'
   | 'JOB_CANCELLED'
   | 'SYSTEM_CLOSED'
-  | 'CORRECTED_BY_MANAGER';
+  | 'CORRECTED_BY_MANAGER'
+  // CR-2026-100 — the technician moved to another job while colleagues kept
+  // working this one: only their segment closes, the order stays IN_PROGRESS.
+  | 'SWITCHED_JOB';
 
 export interface StartSegmentInput {
   serviceOrderId: string;

@@ -18,6 +18,8 @@ function build(prismaOverrides: any = {}) {
     },
     technicianAssignment: {
       findFirst: vi.fn(async () => null),
+      // CR-2026-100 — the workload check lists ALL open assignments on other visits.
+      findMany: vi.fn(async () => []),
       create: vi.fn(async ({ data }: any) => ({ id: 'ta-1', ...data, technician: {}, bay: {} })),
       update: vi.fn(async ({ data }: any) => ({ id: 'ta-1', ...data })),
       updateMany: vi.fn(async () => ({ count: 0 })),
@@ -80,14 +82,14 @@ function order(overrides: any = {}) {
 describe('assign — same-visit double-booking (CR-2026-068)', () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it('excludes the SAME visit from the double-booking check (allows multi-order on one visit)', async () => {
+  it('excludes the SAME visit from the workload check (allows multi-order on one visit)', async () => {
     const h = build();
     vi.spyOn(h.service, 'findById').mockResolvedValue(order() as any);
 
     await h.service.assign('so-1', { technicianId: 'tech-1', bayId: 'bay-1' } as any, 'user-1');
 
-    // The guard query must exclude this visit.
-    expect(h.prisma.technicianAssignment.findFirst).toHaveBeenCalledWith(
+    // The workload query must exclude this visit (CR-2026-100 — findMany now).
+    expect(h.prisma.technicianAssignment.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           technicianId: 'tech-1',
@@ -98,10 +100,25 @@ describe('assign — same-visit double-booking (CR-2026-068)', () => {
     expect(h.prisma.technicianAssignment.create).toHaveBeenCalled();
   });
 
-  it('still blocks a tech with an active assignment on ANOTHER visit', async () => {
+  // CR-2026-100 — the hard block became a workload warning: the first attempt
+  // returns 409 with the technician's open jobs; acknowledgeWorkload proceeds
+  // and is audited. A technician CAN legitimately hold several jobs.
+  it('surfaces the open workload as a 409 instead of silently assigning', async () => {
+    const openJob = {
+      id: 'ta-other',
+      serviceOrder: {
+        id: 'so-other',
+        status: 'WAITING_PARTS',
+        serviceVisit: {
+          vehicle: { plateNumber: 'XYZ999' },
+          queueTicket: { ticketNumber: 'B01-260901-001' },
+        },
+      },
+    };
     const h = build({
       technicianAssignment: {
-        findFirst: vi.fn(async () => ({ id: 'other-visit-assignment' })),
+        findFirst: vi.fn(async () => null),
+        findMany: vi.fn(async () => [openJob]),
         create: vi.fn(),
         update: vi.fn(),
         updateMany: vi.fn(),
@@ -109,10 +126,53 @@ describe('assign — same-visit double-booking (CR-2026-068)', () => {
     });
     vi.spyOn(h.service, 'findById').mockResolvedValue(order() as any);
 
-    await expect(h.service.assign('so-1', { technicianId: 'tech-1', bayId: 'bay-1' } as any, 'user-1')).rejects.toThrow(
-      /another visit/i,
-    );
+    await expect(
+      h.service.assign('so-1', { technicianId: 'tech-1', bayId: 'bay-1' } as any, 'user-1'),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({
+        code: 'TECHNICIAN_HAS_OPEN_WORK',
+        workload: [expect.objectContaining({ orderId: 'so-other', held: true, plate: 'XYZ999' })],
+      }),
+    });
     expect(h.prisma.technicianAssignment.create).not.toHaveBeenCalled();
+  });
+
+  it('acknowledgeWorkload assigns anyway and audits the judgement', async () => {
+    const openJob = {
+      id: 'ta-other',
+      serviceOrder: {
+        id: 'so-other',
+        status: 'IN_PROGRESS',
+        serviceVisit: {
+          vehicle: { plateNumber: 'XYZ999' },
+          queueTicket: { ticketNumber: 'B01-260901-001' },
+        },
+      },
+    };
+    const h = build({
+      technicianAssignment: {
+        findFirst: vi.fn(async () => null),
+        findMany: vi.fn(async () => [openJob]),
+        create: vi.fn(async ({ data }: any) => ({ id: 'ta-1', ...data, technician: {}, bay: {} })),
+        update: vi.fn(),
+        updateMany: vi.fn(),
+      },
+    });
+    vi.spyOn(h.service, 'findById').mockResolvedValue(order() as any);
+
+    await h.service.assign(
+      'so-1',
+      { technicianId: 'tech-1', bayId: 'bay-1', acknowledgeWorkload: true } as any,
+      'user-1',
+    );
+
+    expect(h.prisma.technicianAssignment.create).toHaveBeenCalled();
+    expect(h.auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'ASSIGNMENT_WORKLOAD_ACKNOWLEDGED',
+        afterJson: expect.objectContaining({ openJobs: 1, active: 1, held: 0 }),
+      }),
+    );
   });
 });
 

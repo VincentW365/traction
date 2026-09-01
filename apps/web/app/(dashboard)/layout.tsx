@@ -48,8 +48,8 @@ export default function DashboardLayout({
           />
         )}
 
-        {/* Top bar */}
-        <header className="h-12 bg-white border-b border-slate-200 flex items-center justify-between gap-4 px-6 shrink-0">
+        {/* Top bar — never printed (CR-2026-100: reports print without app chrome) */}
+        <header className="h-12 bg-white border-b border-slate-200 flex items-center justify-between gap-4 px-6 shrink-0 print:hidden">
           <div className="text-xs text-slate-400 hidden md:block whitespace-nowrap">
             {new Date().toLocaleDateString('en-US', {
               weekday: 'long',
@@ -84,8 +84,9 @@ export default function DashboardLayout({
           </div>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 overflow-auto p-6">{children}</main>
+        {/* Page content — print:overflow-visible so a printed report paginates
+            instead of clipping to the first viewport (CR-2026-100 §16). */}
+        <main className="flex-1 overflow-auto p-6 print:overflow-visible print:p-0">{children}</main>
       </div>
 
       {/* Auto-classify exceptions — floating alert + popup; renders only when vehicles need a class */}

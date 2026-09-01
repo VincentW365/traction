@@ -125,3 +125,33 @@
   }
 
 }
+
+/* CR-2026-100 §16 — print-optimised reports: A4, sane margins, no app chrome
+   (the sidebar/topbar/filter controls carry print:hidden utilities), tables
+   paginate without splitting a row, and the flex shell stops constraining
+   height so the document flows across pages. Page numbers come from the
+   browser's own print header/footer. */
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  .min-h-screen {
+    min-height: 0 !important;
+  }
+  table {
+    font-size: 10px;
+  }
+  tr {
+    break-inside: avoid;
+  }
+  .card,
+  .table-container {
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+}

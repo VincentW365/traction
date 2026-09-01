@@ -13,12 +13,21 @@ export interface DashboardStats {
   waitingParts: number;
   /** Orders currently PAUSED (live visits) — delayed work that is not parts. */
   pausedJobs: number;
+  /** Technician pause requests awaiting acknowledgement — CR-2026-100. */
+  pendingPauseApprovals: number;
 }
 
 // CR-2026-098 — INTEGRATION_ERROR removed: the platform is standalone and no
 // generator ever produced that alert type.
 export interface DashboardAlert {
-  type: 'OVERDUE_JOB' | 'BLOCKED_PARTS' | 'WAITING_PARTS' | 'LONG_WAIT' | 'ABSENT_TECH' | 'READY_FOR_QC';
+  type:
+    | 'OVERDUE_JOB'
+    | 'BLOCKED_PARTS'
+    | 'WAITING_PARTS'
+    | 'LONG_WAIT'
+    | 'ABSENT_TECH'
+    | 'READY_FOR_QC'
+    | 'PAUSE_APPROVAL';
   severity: 'warning' | 'critical';
   title: string;
   detail: string;
@@ -121,6 +130,16 @@ export class ManagerDashboardService {
       },
     });
 
+    // CR-2026-100 — pause requests still waiting for an advisor/manager to
+    // acknowledge them.
+    const pendingPauseApprovals = await this.prisma.serviceOrderPause.count({
+      where: {
+        approvalStatus: 'PENDING',
+        endedAt: null,
+        serviceOrder: { serviceVisit: { siteId, ...operationalVisitWhere() } },
+      },
+    });
+
     return {
       carsToday,
       activeTechnicians,
@@ -130,12 +149,61 @@ export class ManagerDashboardService {
       overridesToday,
       waitingParts,
       pausedJobs,
+      pendingPauseApprovals,
     };
   }
 
   async getAlerts(siteId: string): Promise<DashboardAlert[]> {
     const alerts: DashboardAlert[] = [];
     const now = new Date();
+
+    // CR-2026-100 — technician pause requests awaiting acknowledgement come
+    // first: someone on the floor has reported a stop and is waiting to be heard.
+    const pendingPauses = await this.prisma.serviceOrderPause.findMany({
+      where: {
+        approvalStatus: 'PENDING',
+        endedAt: null,
+        serviceOrder: { serviceVisit: { siteId, ...operationalVisitWhere() } },
+      },
+      include: {
+        serviceOrder: {
+          select: {
+            id: true,
+            serviceVisit: {
+              select: {
+                customer: { select: { firstName: true, lastName: true } },
+                vehicle: { select: { plateNumber: true } },
+                queueTicket: { select: { id: true, ticketNumber: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { startedAt: 'asc' },
+      take: 10,
+    });
+    const pauseReasonLabel: Record<string, string> = {
+      WAITING_PARTS: 'Waiting for parts',
+      CUSTOMER_AUTHORIZATION: 'Waiting for authorization',
+      WAITING_TECH: 'Waiting for assistance',
+      WAITING_BAY: 'Waiting for bay / equipment',
+      FURTHER_DIAGNOSIS: 'Further diagnosis',
+      EXTERNAL_MACHINE_SHOP: 'External machine shop',
+      BREAK_OR_END_OF_DAY: 'Break / end of day',
+      OTHER: 'Other',
+    };
+    for (const p of pendingPauses) {
+      const sv = p.serviceOrder.serviceVisit;
+      const waitMin = Math.round((now.getTime() - p.startedAt.getTime()) / 60000);
+      alerts.push({
+        type: 'PAUSE_APPROVAL',
+        severity: waitMin > 30 ? 'critical' : 'warning',
+        title: `Pause approval required — ${pauseReasonLabel[p.reasonCode] ?? p.reasonCode}${sv.queueTicket?.ticketNumber ? ` — ${sv.queueTicket.ticketNumber}` : ''}`,
+        detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber} · requested ${waitMin} min ago`,
+        entityId: p.serviceOrder.id,
+        queueTicketId: sv.queueTicket?.id,
+      });
+    }
 
     // Overdue jobs (in progress > 2 hours since started)
     const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);

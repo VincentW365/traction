@@ -21,6 +21,8 @@ function build(data: {
   blockedTickets?: any[];
   qcOrders?: any[];
   overdueOrders?: any[];
+  // CR-2026-100 — technician pause requests awaiting acknowledgement.
+  pendingPauses?: any[];
 }) {
   const workResourceFindMany = vi.fn(async () => data.resources ?? []);
   const technicianFindMany = vi.fn(async () => data.technicians ?? []);
@@ -39,6 +41,8 @@ function build(data: {
     technician: { findMany: technicianFindMany },
     queueTicket: { findMany: queueTicketFindMany },
     serviceOrder: { findMany: serviceOrderFindMany },
+    // CR-2026-100 — the pause-approvals panel; none pending by default.
+    serviceOrderPause: { findMany: vi.fn(async () => data.pendingPauses ?? []) },
   };
   const audit = { log: vi.fn(async () => ({})) };
   const service = new ResourcesService(prisma as any, audit as any);
@@ -173,6 +177,105 @@ describe('ResourcesService.getDispatchOverview (CR-2026-080)', () => {
     expect(t2).toMatchObject({ state: 'IDLE', openAssignments: 0 });
     expect(t3.state).toBe('ABSENT');
     expect(res.summary).toMatchObject({ techniciansActive: 3, techniciansBusy: 1, techniciansIdle: 1, techniciansAbsent: 1 });
+  });
+
+  // CR-2026-100 — the board distinguishes active from held work: two jobs waiting
+  // on parts read as ASSIGNED-with-held-work, not BUSY, and the workload breakdown
+  // says exactly what the technician is carrying.
+  it('multi-job technician: held jobs do not read as BUSY; the breakdown says what is held', async () => {
+    const mkAssignment = (orderId: string, status: string, ticket: string) => ({
+      startedAt: new Date(Date.now() - 60 * 60 * 1000),
+      endedAt: null,
+      serviceOrder: {
+        id: orderId,
+        status,
+        serviceVisit: { vehicle: { plateNumber: 'P-' + orderId }, queueTicket: { ticketNumber: ticket } },
+      },
+    });
+    const technicians = [
+      {
+        id: 'tech1',
+        employeeCode: 'T-01',
+        userAccount: { fullName: 'Bob Smith' },
+        skills: [],
+        availability: [{ status: 'AVAILABLE', shiftStart: '08:00', shiftEnd: '17:00' }],
+        assignments: [
+          mkAssignment('soA', 'WAITING_PARTS', 'A001'),
+          mkAssignment('soB', 'WAITING_CUSTOMER', 'A002'),
+        ],
+      },
+      {
+        id: 'tech2',
+        employeeCode: 'T-02',
+        userAccount: { fullName: 'Amy Lee' },
+        skills: [],
+        availability: [{ status: 'AVAILABLE', shiftStart: '08:00', shiftEnd: '17:00' }],
+        assignments: [
+          mkAssignment('soC', 'IN_PROGRESS', 'A003'),
+          mkAssignment('soD', 'WAITING_PARTS', 'A004'),
+        ],
+      },
+    ];
+    const h = build({ technicians });
+    const res: any = await h.service.getDispatchOverview('site-1');
+    const [t1, t2] = res.technicianLoad;
+
+    // Both of Bob's jobs are held — he is available for more work, and reads so.
+    expect(t1).toMatchObject({ state: 'ASSIGNED', openAssignments: 2, activeJobs: 0, heldJobs: 2 });
+    expect(t1.currentJob).toBeNull();
+    expect(t1.jobs.map((j: any) => j.held)).toEqual([true, true]);
+
+    // Amy is genuinely working one job while another waits on parts.
+    expect(t2).toMatchObject({ state: 'BUSY', activeJobs: 1, heldJobs: 1 });
+    expect(t2.currentJob.ticketNumber).toBe('A003');
+  });
+
+  // CR-2026-100 — pending pause requests surface on the board, never buried in a log.
+  it('surfaces technician pause requests awaiting acknowledgement', async () => {
+    const pendingPauses = [
+      {
+        id: 'p1',
+        reasonCode: 'WAITING_PARTS',
+        notes: 'caliper on order',
+        startedAt: new Date(Date.now() - 18 * 60 * 1000),
+        technicianId: 'tech1',
+        enteredOnBehalf: false,
+        serviceOrder: {
+          id: 'so1',
+          status: 'WAITING_PARTS',
+          items: [{ serviceType: { name: 'Brake Job' } }],
+          serviceVisit: {
+            id: 'sv1',
+            customer: { firstName: 'Jane', lastName: 'Doe' },
+            vehicle: { plateNumber: 'ABC123' },
+            queueTicket: { id: 'qt1', ticketNumber: 'A007' },
+          },
+        },
+      },
+    ];
+    const technicians = [
+      {
+        id: 'tech1',
+        employeeCode: 'T-01',
+        userAccount: { fullName: 'Bob Smith' },
+        skills: [],
+        availability: [],
+        assignments: [],
+      },
+    ];
+    const h = build({ technicians, pendingPauses });
+    const res: any = await h.service.getDispatchOverview('site-1');
+
+    expect(res.summary.pauseApprovals).toBe(1);
+    expect(res.pauseApprovals[0]).toMatchObject({
+      pauseId: 'p1',
+      queueTicketId: 'qt1',
+      ticketNumber: 'A007',
+      technicianName: 'Bob Smith',
+      reasonCode: 'WAITING_PARTS',
+      enteredOnBehalf: false,
+    });
+    expect(res.pauseApprovals[0].waitingMinutes).toBeGreaterThanOrEqual(17);
   });
 
   it('lists needs-dispatch tickets with a service description', async () => {

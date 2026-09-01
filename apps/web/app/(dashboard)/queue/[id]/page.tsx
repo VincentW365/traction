@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { api } from '../../../../lib/api-client';
+import { api, ApiError } from '../../../../lib/api-client';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../components/status-badge';
@@ -191,6 +191,23 @@ export default function QueueTicketDetailPage() {
   const [pauseFormOrderId, setPauseFormOrderId] = useState<string | null>(null);
   const [pauseReason, setPauseReason] = useState<string>(PAUSE_REASONS[0].value);
   const [pauseNotes, setPauseNotes] = useState('');
+
+  // CR-2026-100 — the shared hold story for one order (§18): every role reads
+  // the same ledger — who reported, who acknowledged, effective from when.
+  const [holdHistoryOrderId, setHoldHistoryOrderId] = useState<string | null>(null);
+
+  // CR-2026-100 — pause acknowledgement review + retroactive correction state.
+  const [rejectingPauseId, setRejectingPauseId] = useState<string | null>(null);
+  const [rejectPauseReason, setRejectPauseReason] = useState('');
+  const [correctingPauseId, setCorrectingPauseId] = useState<string | null>(null);
+  const [correctTime, setCorrectTime] = useState('');
+  const [correctReason, setCorrectReason] = useState('');
+  // CR-2026-100 — workload warning from assign (409): shown for judgement, never a wall.
+  const [workloadWarning, setWorkloadWarning] = useState<{
+    scope: 'one' | 'all';
+    orderId?: string;
+    message: string;
+  } | null>(null);
   const [reworkFormOrderId, setReworkFormOrderId] = useState<string | null>(null);
   const [reworkReason, setReworkReason] = useState<string>(REWORK_REASONS[0].value);
   const [reworkDesc, setReworkDesc] = useState('');
@@ -405,29 +422,129 @@ export default function QueueTicketDetailPage() {
     },
   });
 
+  // CR-2026-100 — a 409 here is the technician's existing workload asking for
+  // judgement, not an error: surface it and let the advisor assign anyway.
+  const workloadMessageFrom = (err: unknown): string | null =>
+    err instanceof ApiError && (err.body as { code?: string })?.code === 'TECHNICIAN_HAS_OPEN_WORK'
+      ? ((err.body as { message?: string }).message ?? 'This technician already has open work.')
+      : null;
+
   const assignOrder = useMutation({
-    mutationFn: ({ orderId }: { orderId: string }) =>
+    mutationFn: ({ orderId, acknowledgeWorkload }: { orderId: string; acknowledgeWorkload?: boolean }) =>
       api.post(`/service-orders/${orderId}/assign`, {
         technicianId: assignTechId,
         bayId: assignBayId || undefined,
+        ...(acknowledgeWorkload ? { acknowledgeWorkload: true } : {}),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['service-orders'] });
       setAssigningOrderId(null);
       setAssignTechId('');
       setAssignBayId('');
+      setWorkloadWarning(null);
+    },
+    onError: (err, vars) => {
+      const message = workloadMessageFrom(err);
+      if (message) setWorkloadWarning({ scope: 'one', orderId: vars.orderId, message });
     },
   });
 
   // CR-2026-068 — assign one tech to ALL approved orders on the visit in one action.
   const assignAll = useMutation({
-    mutationFn: (technicianId: string) =>
-      api.post(`/service-orders/by-visit/${ticket!.serviceVisit.id}/assign-all`, { technicianId }),
+    mutationFn: ({ technicianId, acknowledgeWorkload }: { technicianId: string; acknowledgeWorkload?: boolean }) =>
+      api.post(`/service-orders/by-visit/${ticket!.serviceVisit.id}/assign-all`, {
+        technicianId,
+        ...(acknowledgeWorkload ? { acknowledgeWorkload: true } : {}),
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['service-orders'] });
       setBulkAssignOpen(false);
       setBulkTechId('');
+      setWorkloadWarning(null);
     },
+    onError: (err) => {
+      const message = workloadMessageFrom(err);
+      if (message) setWorkloadWarning({ scope: 'all', message });
+    },
+  });
+
+  // CR-2026-100 — pause requests on THIS visit awaiting acknowledgement.
+  const pendingPausesQuery = useQuery<
+    Array<{
+      pauseId: string;
+      orderId: string;
+      serviceVisitId: string;
+      ticketNumber: string | null;
+      technicianName: string | null;
+      reasonCode: string;
+      notes: string | null;
+      requestedAt: string;
+      enteredOnBehalf: boolean;
+      waitingMinutes: number;
+    }>
+  >({
+    queryKey: ['pause-approvals', siteId],
+    queryFn: () => api.get(`/service-orders/pause-approvals/pending?siteId=${siteId}`),
+    enabled: canManageOrders && !!siteId,
+    refetchInterval: 15000,
+  });
+  const invalidatePauses = () => {
+    invalidateOrders();
+    queryClient.invalidateQueries({ queryKey: ['pause-approvals'] });
+  };
+  const approvePause = useMutation({
+    mutationFn: ({ orderId, pauseId }: { orderId: string; pauseId: string }) =>
+      api.post(`/service-orders/${orderId}/pauses/${pauseId}/approve`, {}),
+    onSuccess: invalidatePauses,
+  });
+  const rejectPause = useMutation({
+    mutationFn: ({ orderId, pauseId }: { orderId: string; pauseId: string }) =>
+      api.post(`/service-orders/${orderId}/pauses/${pauseId}/reject`, { reason: rejectPauseReason.trim() }),
+    onSuccess: () => {
+      setRejectingPauseId(null);
+      setRejectPauseReason('');
+      invalidatePauses();
+    },
+  });
+  const correctPause = useMutation({
+    mutationFn: ({ orderId, pauseId }: { orderId: string; pauseId: string }) =>
+      api.post(`/service-orders/${orderId}/pauses/${pauseId}/correct-start`, {
+        effectiveFrom: new Date(correctTime).toISOString(),
+        reason: correctReason.trim(),
+      }),
+    onSuccess: () => {
+      setCorrectingPauseId(null);
+      setCorrectTime('');
+      setCorrectReason('');
+      invalidatePauses();
+      queryClient.invalidateQueries({ queryKey: ['order-pauses'] });
+    },
+  });
+
+  // CR-2026-100 §18 — the full hold ledger for one order, fetched when opened.
+  const holdHistoryQuery = useQuery<
+    Array<{
+      id: string;
+      reasonCode: string;
+      notes: string | null;
+      startedAt: string;
+      endedAt: string | null;
+      technicianName: string | null;
+      recordedByName: string | null;
+      resumedByName: string | null;
+      enteredOnBehalf: boolean;
+      approvalStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
+      reviewedByName: string | null;
+      reviewedAt: string | null;
+      reviewNotes: string | null;
+      originalStartedAt: string | null;
+      correctedByName: string | null;
+      correctionReason: string | null;
+    }>
+  >({
+    queryKey: ['order-pauses', holdHistoryOrderId],
+    queryFn: () => api.get(`/service-orders/${holdHistoryOrderId}/pauses`),
+    enabled: !!holdHistoryOrderId,
   });
 
   // CR-2026-068 — reassign a not-started order to a different technician.
@@ -877,6 +994,106 @@ export default function QueueTicketDetailPage() {
             </div>
           )}
 
+          {/* CR-2026-100 §5/§9 — technician pause requests on THIS visit awaiting
+              acknowledgement. Approval never moves the clock (it has run from the
+              technician's own timestamp all along); rejection needs a reason and
+              resumes the work; a correction moves the effective start EARLIER
+              only, reasoned and audited, original kept. */}
+          {canManageOrders &&
+            (pendingPausesQuery.data ?? [])
+              .filter((p) => p.serviceVisitId === ticket.serviceVisit.id)
+              .map((p) => (
+                <div key={p.pauseId} className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-amber-900">
+                      Pause approval required — {PAUSE_REASONS.find((r) => r.value === p.reasonCode)?.label ?? p.reasonCode}
+                    </p>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">
+                      waiting {p.waitingMinutes} min
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-800">
+                    {p.technicianName ? `${p.technicianName} requested ` : 'Requested '}
+                    {new Date(p.requestedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                    {p.enteredOnBehalf ? ' (entered on the technician’s behalf)' : ''} · the clock stopped at that
+                    moment — approving records your acknowledgement, it never moves the time.
+                  </p>
+                  {p.notes && <p className="text-xs text-amber-700 italic">“{p.notes}”</p>}
+
+                  {rejectingPauseId === p.pauseId ? (
+                    <div className="space-y-1.5">
+                      <input
+                        value={rejectPauseReason}
+                        onChange={(e) => setRejectPauseReason(e.target.value)}
+                        placeholder="Why is this rejected? (required — the technician sees it)"
+                        className="input-field text-xs"
+                      />
+                      {rejectPause.isError && (
+                        <p className="text-[11px] text-red-600">{rejectPause.error instanceof Error ? rejectPause.error.message : 'Failed'}</p>
+                      )}
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => rejectPause.mutate({ orderId: p.orderId, pauseId: p.pauseId })}
+                          disabled={rejectPause.isPending || !rejectPauseReason.trim()}
+                          className="btn-danger text-xs px-3 py-1"
+                        >
+                          {rejectPause.isPending ? 'Rejecting…' : 'Confirm Reject (resumes the job)'}
+                        </button>
+                        <button onClick={() => setRejectingPauseId(null)} className="btn-secondary text-xs px-3 py-1">Cancel</button>
+                      </div>
+                    </div>
+                  ) : correctingPauseId === p.pauseId ? (
+                    <div className="space-y-1.5">
+                      <label className="input-label">When did work actually stop? (earlier than the recorded time)</label>
+                      <input
+                        type="datetime-local"
+                        value={correctTime}
+                        onChange={(e) => setCorrectTime(e.target.value)}
+                        className="input-field text-xs"
+                      />
+                      <input
+                        value={correctReason}
+                        onChange={(e) => setCorrectReason(e.target.value)}
+                        placeholder="Why the recorded time is being corrected (required)"
+                        className="input-field text-xs"
+                      />
+                      {correctPause.isError && (
+                        <p className="text-[11px] text-red-600">{correctPause.error instanceof Error ? correctPause.error.message : 'Failed'}</p>
+                      )}
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => correctPause.mutate({ orderId: p.orderId, pauseId: p.pauseId })}
+                          disabled={correctPause.isPending || !correctTime || !correctReason.trim()}
+                          className="btn-primary text-xs px-3 py-1"
+                        >
+                          {correctPause.isPending ? 'Saving…' : 'Save corrected time (audited)'}
+                        </button>
+                        <button onClick={() => setCorrectingPauseId(null)} className="btn-secondary text-xs px-3 py-1">Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        onClick={() => approvePause.mutate({ orderId: p.orderId, pauseId: p.pauseId })}
+                        disabled={approvePause.isPending}
+                        className="btn-success text-xs px-3 py-1"
+                      >
+                        {approvePause.isPending ? 'Approving…' : 'Approve'}
+                      </button>
+                      <button onClick={() => { setRejectingPauseId(p.pauseId); setCorrectingPauseId(null); }} className="btn-secondary text-xs px-3 py-1">
+                        Reject
+                      </button>
+                      <button onClick={() => { setCorrectingPauseId(p.pauseId); setRejectingPauseId(null); }} className="btn-secondary text-xs px-3 py-1">
+                        Adjust start time
+                      </button>
+                      {approvePause.isError && (
+                        <p className="text-[11px] text-red-600">{approvePause.error instanceof Error ? approvePause.error.message : 'Failed'}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+
           {/* CR-2026-068 — assign ONE technician to all approved orders in one action */}
           {canManageOrders && orders.filter((o) => o.status === 'APPROVED').length >= 2 && (
             <div className="mb-4 pb-4 border-b border-slate-100">
@@ -897,13 +1114,27 @@ export default function QueueTicketDetailPage() {
                         options={(techsQuery.data ?? []).map((t) => ({ value: t.id, label: `${t.employeeCode} — ${t.userAccount.fullName}` }))}
                       />
                     </div>
-                    <button onClick={() => assignAll.mutate(bulkTechId)} disabled={!bulkTechId || assignAll.isPending} className="btn-primary text-xs">
+                    <button onClick={() => assignAll.mutate({ technicianId: bulkTechId })} disabled={!bulkTechId || assignAll.isPending} className="btn-primary text-xs">
                       {assignAll.isPending ? 'Assigning…' : 'Assign all'}
                     </button>
-                    <button onClick={() => { setBulkAssignOpen(false); setBulkTechId(''); }} className="btn-secondary text-xs">Cancel</button>
+                    <button onClick={() => { setBulkAssignOpen(false); setBulkTechId(''); setWorkloadWarning(null); }} className="btn-secondary text-xs">Cancel</button>
                   </div>
                   <p className="text-[10px] text-slate-400">Each order gets a compatible free bay automatically.</p>
-                  {assignAll.isError && <p className="text-xs text-red-600">{assignAll.error instanceof Error ? assignAll.error.message : 'Failed to assign all'}</p>}
+                  {/* CR-2026-100 — the workload warning: judgement, not a wall. */}
+                  {workloadWarning?.scope === 'all' ? (
+                    <div className="rounded border border-amber-300 bg-amber-50 p-2 space-y-1.5">
+                      <p className="text-xs text-amber-900">{workloadWarning.message}</p>
+                      <button
+                        onClick={() => assignAll.mutate({ technicianId: bulkTechId, acknowledgeWorkload: true })}
+                        disabled={assignAll.isPending}
+                        className="btn-primary text-xs"
+                      >
+                        Assign anyway (recorded)
+                      </button>
+                    </div>
+                  ) : (
+                    assignAll.isError && <p className="text-xs text-red-600">{assignAll.error instanceof Error ? assignAll.error.message : 'Failed to assign all'}</p>
+                  )}
                 </div>
               )}
             </div>
@@ -983,7 +1214,9 @@ export default function QueueTicketDetailPage() {
                       {/* CR-2026-011 pause/resume/rework (dedicated endpoints) */}
                       {order.status === 'IN_PROGRESS' && (
                         <button onClick={() => { setReworkFormOrderId(null); setPauseFormOrderId(pauseFormOrderId === order.id ? null : order.id); }} className="btn-secondary text-xs py-1 px-2">
-                          Pause
+                          {/* CR-2026-100 §7 — an advisor/manager recording the stop
+                              for the technician; the history says who entered it. */}
+                          Pause on behalf
                         </button>
                       )}
                       {order.status === 'PAUSED' && (
@@ -994,6 +1227,15 @@ export default function QueueTicketDetailPage() {
                       {order.status === 'QC' && (
                         <button onClick={() => { setPauseFormOrderId(null); setReworkFormOrderId(reworkFormOrderId === order.id ? null : order.id); }} className="btn-danger text-xs py-1 px-2">
                           Rework
+                        </button>
+                      )}
+                      {/* CR-2026-100 §18 — the shared hold story + retroactive correction. */}
+                      {canManageOrders && ['PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER'].includes(order.status) && (
+                        <button
+                          onClick={() => setHoldHistoryOrderId(holdHistoryOrderId === order.id ? null : order.id)}
+                          className="btn-secondary text-xs py-1 px-2"
+                        >
+                          Hold details
                         </button>
                       )}
                     </div>
@@ -1078,7 +1320,14 @@ export default function QueueTicketDetailPage() {
                   {pauseFormOrderId === order.id && (
                     <div className="card mb-3 border-orange-200 bg-orange-50">
                       <div className="card-body space-y-3">
-                        <h3 className="text-xs font-semibold text-slate-900">Pause work</h3>
+                        <h3 className="text-xs font-semibold text-slate-900">Pause work on behalf of the technician</h3>
+                        {/* CR-2026-100 §7 — recorded as entered by you, never as the
+                            technician's own press; effective from this moment. If the
+                            true stop was earlier, use "Adjust start time" afterwards. */}
+                        <p className="text-[11px] text-orange-800">
+                          Recorded as entered by you on the technician’s behalf, effective now. If work actually
+                          stopped earlier, adjust the start time after saving.
+                        </p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
                             <label className="input-label">Reason *</label>
@@ -1100,6 +1349,87 @@ export default function QueueTicketDetailPage() {
                           </button>
                           <button onClick={() => setPauseFormOrderId(null)} className="btn-secondary text-xs py-1 px-3">Cancel</button>
                         </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* CR-2026-100 §18 — hold ledger: who reported, who entered it,
+                      who acknowledged, effective from when; corrections in the open. */}
+                  {holdHistoryOrderId === order.id && (
+                    <div className="card mb-3 border-slate-200">
+                      <div className="card-body space-y-2">
+                        <h3 className="text-xs font-semibold text-slate-900">Hold details</h3>
+                        {holdHistoryQuery.isLoading && <p className="text-xs text-slate-500">Loading…</p>}
+                        {holdHistoryQuery.isError && (
+                          <p className="text-xs text-red-600">
+                            {holdHistoryQuery.error instanceof Error ? holdHistoryQuery.error.message : 'Failed to load'}
+                          </p>
+                        )}
+                        {(holdHistoryQuery.data ?? []).map((p) => {
+                          const fmt = (iso: string) =>
+                            new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+                          return (
+                            <div key={p.id} className="rounded border border-slate-100 bg-slate-50 p-2 text-xs text-slate-700 space-y-0.5">
+                              <p className="font-semibold">
+                                {PAUSE_REASONS.find((r) => r.value === p.reasonCode)?.label ?? p.reasonCode}
+                                {' · '}
+                                {fmt(p.startedAt)} → {p.endedAt ? fmt(p.endedAt) : 'still stopped'}
+                              </p>
+                              {p.technicianName && <p>Technician: {p.technicianName}</p>}
+                              {p.enteredOnBehalf && p.recordedByName && <p>Recorded by: {p.recordedByName} (on the technician’s behalf)</p>}
+                              {p.approvalStatus === 'PENDING' && <p className="text-amber-700">Awaiting acknowledgement</p>}
+                              {p.approvalStatus === 'APPROVED' && p.reviewedByName && p.reviewedAt && (
+                                <p className="text-emerald-700">
+                                  Approved by {p.reviewedByName} at {fmt(p.reviewedAt)} · effective from {fmt(p.startedAt)}
+                                </p>
+                              )}
+                              {p.approvalStatus === 'REJECTED' && (
+                                <p className="text-red-700">Rejected{p.reviewedByName ? ` by ${p.reviewedByName}` : ''}{p.reviewNotes ? `: ${p.reviewNotes}` : ''}</p>
+                              )}
+                              {p.originalStartedAt && (
+                                <p className="text-slate-500">
+                                  Corrected{p.correctedByName ? ` by ${p.correctedByName}` : ''} — originally recorded {fmt(p.originalStartedAt)}
+                                  {p.correctionReason ? ` (${p.correctionReason})` : ''}
+                                </p>
+                              )}
+                              {p.notes && <p className="italic text-slate-500">“{p.notes}”</p>}
+                              {/* Retroactive correction on the open interval (§8). */}
+                              {!p.endedAt && canManageOrders && (
+                                correctingPauseId === p.id ? (
+                                  <div className="space-y-1.5 pt-1">
+                                    <input type="datetime-local" value={correctTime} onChange={(e) => setCorrectTime(e.target.value)} className="input-field text-xs" />
+                                    <input
+                                      value={correctReason}
+                                      onChange={(e) => setCorrectReason(e.target.value)}
+                                      placeholder="Why the recorded time is being corrected (required)"
+                                      className="input-field text-xs"
+                                    />
+                                    {correctPause.isError && (
+                                      <p className="text-[11px] text-red-600">{correctPause.error instanceof Error ? correctPause.error.message : 'Failed'}</p>
+                                    )}
+                                    <div className="flex gap-1.5">
+                                      <button
+                                        onClick={() => correctPause.mutate({ orderId: order.id, pauseId: p.id })}
+                                        disabled={correctPause.isPending || !correctTime || !correctReason.trim()}
+                                        className="btn-primary text-xs px-3 py-1"
+                                      >
+                                        {correctPause.isPending ? 'Saving…' : 'Save corrected time (audited)'}
+                                      </button>
+                                      <button onClick={() => setCorrectingPauseId(null)} className="btn-secondary text-xs px-3 py-1">Cancel</button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button onClick={() => setCorrectingPauseId(p.id)} className="text-[11px] text-blue-700 hover:underline">
+                                    Adjust start time (earlier only)
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          );
+                        })}
+                        {holdHistoryQuery.isSuccess && (holdHistoryQuery.data ?? []).length === 0 && (
+                          <p className="text-xs text-slate-500">No holds recorded on this job.</p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1236,12 +1566,26 @@ export default function QueueTicketDetailPage() {
                           <p className="text-[10px] text-slate-400 mt-1">Leave blank to auto-assign a free compatible bay.</p>
                         </div>
                       </div>
-                      {assignOrder.isError && <p className="text-xs text-red-600">{assignOrder.error instanceof Error ? assignOrder.error.message : 'Failed'}</p>}
+                      {/* CR-2026-100 — the workload warning: judgement, not a wall. */}
+                      {workloadWarning?.scope === 'one' && workloadWarning.orderId === order.id ? (
+                        <div className="rounded border border-amber-300 bg-amber-50 p-2 space-y-1.5">
+                          <p className="text-xs text-amber-900">{workloadWarning.message}</p>
+                          <button
+                            onClick={() => assignOrder.mutate({ orderId: order.id, acknowledgeWorkload: true })}
+                            disabled={assignOrder.isPending}
+                            className="btn-primary text-xs"
+                          >
+                            Assign anyway (recorded)
+                          </button>
+                        </div>
+                      ) : (
+                        assignOrder.isError && <p className="text-xs text-red-600">{assignOrder.error instanceof Error ? assignOrder.error.message : 'Failed'}</p>
+                      )}
                       <div className="flex gap-2">
                         <button onClick={() => assignOrder.mutate({ orderId: order.id })} disabled={!assignTechId || assignOrder.isPending} className="btn-primary text-xs">
                           {assignOrder.isPending ? 'Assigning...' : 'Assign'}
                         </button>
-                        <button onClick={() => setAssigningOrderId(null)} className="btn-secondary text-xs">Cancel</button>
+                        <button onClick={() => { setAssigningOrderId(null); setWorkloadWarning(null); }} className="btn-secondary text-xs">Cancel</button>
                       </div>
                     </div>
                   )}

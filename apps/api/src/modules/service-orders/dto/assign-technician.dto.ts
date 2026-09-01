@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsUUID, IsNotEmpty, IsOptional } from 'class-validator';
+import { IsUUID, IsNotEmpty, IsOptional, IsBoolean } from 'class-validator';
 
 export class AssignTechnicianDto {
   @ApiProperty({ description: 'Technician ID to assign' })
@@ -13,4 +13,10 @@ export class AssignTechnicianDto {
   @IsOptional()
   @IsUUID()
   bayId?: string;
+
+  /** CR-2026-100 — assign despite an existing open workload (advisor/manager judgement; audited). */
+  @ApiPropertyOptional({ description: 'Proceed although the technician already has open work (audited)' })
+  @IsOptional()
+  @IsBoolean()
+  acknowledgeWorkload?: boolean;
 }

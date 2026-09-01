@@ -22,6 +22,8 @@ function buildService(prismaOverrides: any = {}) {
       findMany: vi.fn(async () => []),
     },
     technicianAssignment: {
+        // CR-2026-100 — workload check lists open assignments; none by default.
+        findMany: vi.fn(async () => []),
       // tech double-booking check → null (free); bay availability decided per test
       findFirst: vi.fn(async () => null),
       create: vi.fn(async ({ data }: any) => ({ id: 'ta-1', ...data, technician: {}, bay: {} })),
@@ -99,6 +101,8 @@ describe('ServiceOrder assign — bay auto-assign (CR-2026-062)', () => {
         ]),
       },
       technicianAssignment: {
+        // CR-2026-100 — workload check lists open assignments; none by default.
+        findMany: vi.fn(async () => []),
         findFirst: vi.fn(async ({ where }: any) => {
           if (where.technicianId) return null; // tech not double-booked
           if (where.bayId === 'bay-1') return { id: 'occupied' }; // bay-1 busy
@@ -128,6 +132,8 @@ describe('ServiceOrder assign — bay auto-assign (CR-2026-062)', () => {
         findMany: vi.fn(async () => [{ id: 'bay-1', code: 'B1', bayType: 'GENERAL', status: 'ACTIVE' }]),
       },
       technicianAssignment: {
+        // CR-2026-100 — workload check lists open assignments; none by default.
+        findMany: vi.fn(async () => []),
         findFirst: vi.fn(async ({ where }: any) => (where.technicianId ? null : { id: 'busy' })),
         create: vi.fn(),
       },
@@ -145,6 +151,8 @@ describe('ServiceOrder assign — bay auto-assign (CR-2026-062)', () => {
     const h = buildService({
       workBay: { findUnique: vi.fn(), findMany },
       technicianAssignment: {
+        // CR-2026-100 — workload check lists open assignments; none by default.
+        findMany: vi.fn(async () => []),
         findFirst: vi.fn(async () => null),
         create: vi.fn(async ({ data }: any) => ({ id: 'ta-1', ...data, technician: {}, bay: {} })),
       },

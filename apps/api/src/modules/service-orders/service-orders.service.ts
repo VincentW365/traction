@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ForbiddenException,
   Logger,
@@ -19,7 +20,7 @@ import {
   ResumeServiceOrderDto,
   ReworkServiceOrderDto,
 } from './dto/pause-rework.dto';
-import { ServiceOrderStatus, WorkBay } from '@prisma/client';
+import { PauseReason, ServiceOrderStatus, WorkBay } from '@prisma/client';
 
 // ---------------------------------------------------------------------------
 // Valid status transitions for ServiceOrder
@@ -619,7 +620,23 @@ export class ServiceOrdersService {
       );
     }
 
-    // 3. Resolve the bay: use the one provided, else auto-assign the first
+    // 3. Workload check (CR-2026-100 — a warning, not a wall). A technician can
+    //    legitimately hold several jobs: one waiting on parts, one on customer
+    //    authorisation, one active. Assigning MORE work while they already hold
+    //    open work on other visits is an advisor/manager judgement call, so the
+    //    first attempt returns the workload for review and `acknowledgeWorkload`
+    //    proceeds — audited. Checked BEFORE bay resolution: the workload question
+    //    is about the technician, and it should reach the advisor first, not hide
+    //    behind a bay-availability error. (Multiple orders on the SAME visit
+    //    remain one job, CR-2026-068, and never trip this.)
+    await this.assertWorkloadAcknowledged(
+      dto.technicianId,
+      order.serviceVisitId,
+      dto.acknowledgeWorkload === true,
+      userId,
+    );
+
+    // 4. Resolve the bay: use the one provided, else auto-assign the first
     //    compatible + free bay (CR-2026-062).
     let bay: WorkBay;
     if (dto.bayId) {
@@ -652,24 +669,6 @@ export class ServiceOrdersService {
         );
       }
       bay = picked;
-    }
-
-    // 4. Check for double-booking: technician not in an active assignment ON A
-    //    DIFFERENT visit. Multiple orders on the SAME visit (same vehicle) are the
-    //    same job, so the tech may hold all of them (CR-2026-068).
-    const activeAssignment = await this.prisma.technicianAssignment.findFirst({
-      where: {
-        technicianId: dto.technicianId,
-        status: { in: ['ASSIGNED', 'IN_PROGRESS'] },
-        endedAt: null,
-        serviceOrder: { serviceVisitId: { not: order.serviceVisitId } },
-      },
-    });
-
-    if (activeAssignment) {
-      throw new BadRequestException(
-        `Technician ${dto.technicianId} already has an active assignment on another visit (${activeAssignment.id})`,
-      );
     }
 
     // 5. Create TechnicianAssignment and update order status
@@ -729,7 +728,7 @@ export class ServiceOrdersService {
    * assign() per order, so skill/bay validation and the same-visit-aware double-booking
    * guard all apply. Returns the updated orders.
    */
-  async assignAllForVisit(visitId: string, technicianId: string, userId: string) {
+  async assignAllForVisit(visitId: string, technicianId: string, userId: string, acknowledgeWorkload?: boolean) {
     const orders = await this.prisma.serviceOrder.findMany({
       where: { serviceVisitId: visitId, status: 'APPROVED' },
       select: { id: true },
@@ -740,7 +739,9 @@ export class ServiceOrdersService {
     }
     const updated = [];
     for (const o of orders) {
-      updated.push(await this.assign(o.id, { technicianId } as AssignTechnicianDto, userId));
+      updated.push(
+        await this.assign(o.id, { technicianId, acknowledgeWorkload } as AssignTechnicianDto, userId),
+      );
     }
     return updated;
   }
@@ -760,28 +761,67 @@ export class ServiceOrdersService {
    * can show "ready to start" and "working on now" from one authoritative source
    * that is genuinely scoped to this technician.
    */
+  /**
+   * CR-2026-100 — ALL of the technician's current work, in one authoritative call.
+   *
+   * A job that goes Waiting-for-Parts used to vanish from this list (the default
+   * statuses stopped at PAUSED) — the exact opposite of what a multi-job workload
+   * needs. Now: every open assignment in any live order state, plus work handed
+   * to QC or completed today, each row carrying what the floor screen needs —
+   * vehicle class, visit number, priority, this technician's own labour time,
+   * pause state (including a pending acknowledgement), and whether THIS job is
+   * the one currently on the clock (`hasOpenSegment`).
+   */
   async getMyAssignments(userId: string, status?: string) {
     const tech = await this.prisma.technician.findUnique({
       where: { userAccountId: userId },
     });
     if (!tech) return [];
 
-    const statuses = status
-      ? [status]
-      : ['ASSIGNED', 'IN_PROGRESS', 'PAUSED'];
+    const openStatuses = status
+      ? [status as ServiceOrderStatus]
+      : (['ASSIGNED', 'IN_PROGRESS', 'PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER'] as ServiceOrderStatus[]);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
 
     const assignments = await this.prisma.technicianAssignment.findMany({
-      where: { technicianId: tech.id, status: { in: statuses }, endedAt: null },
+      where: {
+        technicianId: tech.id,
+        OR: [
+          // Live workload: still-open assignments on live orders.
+          { endedAt: null, serviceOrder: { status: { in: openStatuses } } },
+          // Today's finished work: submitted to QC / completed — visible, read-only.
+          {
+            endedAt: { gte: todayStart },
+            status: 'COMPLETED',
+            serviceOrder: { status: { in: ['QC', 'READY_TO_INVOICE', 'CLOSED'] } },
+          },
+        ],
+      },
       include: {
         bay: { select: { code: true } },
+        workSegments: { select: { startedAt: true, endedAt: true } },
         serviceOrder: {
           include: {
             items: { include: { serviceType: { select: { name: true } } } },
+            pauses: {
+              select: {
+                id: true,
+                reasonCode: true,
+                notes: true,
+                startedAt: true,
+                endedAt: true,
+                approvalStatus: true,
+                enteredOnBehalf: true,
+              },
+            },
             serviceVisit: {
               include: {
                 customer: { select: { firstName: true, lastName: true } },
-                vehicle: { select: { plateNumber: true, make: true, model: true } },
-                queueTicket: { select: { ticketNumber: true } },
+                vehicle: {
+                  select: { plateNumber: true, make: true, model: true, serviceClass: true },
+                },
+                queueTicket: { select: { id: true, ticketNumber: true } },
               },
             },
           },
@@ -790,25 +830,59 @@ export class ServiceOrdersService {
       orderBy: { assignedAt: 'asc' },
     });
 
+    const now = Date.now();
     return assignments.map((a) => {
-      const visit = a.serviceOrder.serviceVisit;
+      const order = a.serviceOrder;
+      const visit = order.serviceVisit;
+
+      let pausedMs = 0;
+      let openPause: (typeof order.pauses)[number] | null = null;
+      for (const p of order.pauses) {
+        if (p.endedAt) pausedMs += p.endedAt.getTime() - p.startedAt.getTime();
+        else openPause = p;
+      }
+
+      // This technician's own labour on this job — the sum of their segments,
+      // never the wall clock.
+      const myWorkMs = a.workSegments.reduce(
+        (sum, s) => sum + ((s.endedAt?.getTime() ?? now) - s.startedAt.getTime()),
+        0,
+      );
+
       return {
         assignmentId: a.id,
         orderId: a.serviceOrderId,
-        orderStatus: a.serviceOrder.status,
-        // CR-2026-084 — the technician screen renders "ready to start" vs "working
-        // on now" from these, instead of guessing from the site-wide queue board.
+        orderStatus: order.status,
         assignmentStatus: a.status,
-        startedAt: a.serviceOrder.startedAt,
-        serviceVisitId: a.serviceOrder.serviceVisitId,
+        assignmentEndedAt: a.endedAt,
+        startedAt: order.startedAt,
+        completedAt: order.completedAt,
+        serviceVisitId: order.serviceVisitId,
+        visitNumber: visit.visitNumber ?? null,
+        queueTicketId: visit.queueTicket?.id ?? null,
         ticketNumber: visit.queueTicket?.ticketNumber ?? null,
         customerName: `${visit.customer.firstName} ${visit.customer.lastName}`,
         vehicle:
           [visit.vehicle.make, visit.vehicle.model].filter(Boolean).join(' ') ||
           visit.vehicle.plateNumber,
         plate: visit.vehicle.plateNumber,
+        vehicleClass: visit.vehicle.serviceClass ?? null,
+        priorityClass: (visit as { queuePriorityClass?: string | null }).queuePriorityClass ?? null,
         bay: a.bay?.code ?? null,
-        services: a.serviceOrder.items.map((i) => i.serviceType.name),
+        services: order.items.map((i) => i.serviceType.name),
+        pausedMs,
+        myWorkMs,
+        hasOpenSegment: a.workSegments.some((s) => !s.endedAt),
+        openPause: openPause
+          ? {
+              id: openPause.id,
+              reasonCode: openPause.reasonCode,
+              notes: openPause.notes,
+              startedAt: openPause.startedAt,
+              approvalStatus: openPause.approvalStatus,
+              enteredOnBehalf: openPause.enteredOnBehalf,
+            }
+          : null,
       };
     });
   }
@@ -938,14 +1012,33 @@ export class ServiceOrdersService {
     // assigned). This is what the Waiting-for-Parts metric and every duration
     // calculation read from — the operational state itself, not an approximation.
     if (toStatus === 'WAITING_PARTS' || toStatus === 'WAITING_CUSTOMER') {
-      await this.prisma.serviceOrderPause.create({
+      // CR-2026-100 — the ledger row records whose labour stopped, whether it was
+      // entered on the technician's behalf, and whether it still needs an
+      // advisor/manager acknowledgement. The interval itself starts NOW — the
+      // moment it was reported — regardless of when anyone reviews it.
+      const attribution = await this.derivePauseAttribution(id, userId);
+      const pauseRow = await this.prisma.serviceOrderPause.create({
         data: {
           serviceOrderId: id,
           reasonCode: toStatus === 'WAITING_PARTS' ? 'WAITING_PARTS' : 'CUSTOMER_AUTHORIZATION',
           pausedByUserId: userId,
           notes: dto.notes,
+          ...attribution,
         },
       });
+      if (attribution.enteredOnBehalf) {
+        await this.auditService.log({
+          actorUserId: userId,
+          action: 'PAUSE_RECORDED_ON_BEHALF',
+          entityType: 'ServiceOrderPause',
+          entityId: pauseRow.id,
+          afterJson: {
+            reasonCode: pauseRow.reasonCode,
+            technicianId: attribution.technicianId,
+          },
+          notes: dto.notes,
+        });
+      }
       await this.segments.endAllForOrder({
         serviceOrderId: id,
         endReason: 'PAUSED',
@@ -1061,6 +1154,9 @@ export class ServiceOrdersService {
       );
     }
 
+    // CR-2026-100 — who this pause belongs to and whether it needs acknowledgement.
+    const attribution = await this.derivePauseAttribution(id, userId);
+
     const updated = await this.prisma.$transaction(async (tx) => {
       const so = await tx.serviceOrder.update({ where: { id }, data: { status: 'PAUSED' } });
       await tx.serviceOrderPause.create({
@@ -1069,6 +1165,7 @@ export class ServiceOrdersService {
           reasonCode: dto.reasonCode,
           pausedByUserId: userId,
           notes: dto.notes,
+          ...attribution,
         },
       });
 
@@ -1095,6 +1192,19 @@ export class ServiceOrdersService {
       reasonCode: dto.reasonCode,
       notes: dto.notes,
     });
+
+    // CR-2026-100 — an advisor/manager recording the stop for the technician is a
+    // distinct fact from the technician pressing the button, and reads that way.
+    if (attribution.enteredOnBehalf) {
+      await this.auditService.log({
+        actorUserId: userId,
+        action: 'PAUSE_RECORDED_ON_BEHALF',
+        entityType: 'ServiceOrder',
+        entityId: id,
+        afterJson: { reasonCode: dto.reasonCode, technicianId: attribution.technicianId },
+        notes: dto.notes,
+      });
+    }
 
     // Recording-only scope: do NOT sync ServiceVisit status and do NOT recompute
     // the queue — a pause must not affect rank/ETA (deferred to a follow-up CR).
@@ -1152,6 +1262,348 @@ export class ServiceOrdersService {
 
     // The visit was never changed on pause, so there is nothing to re-sync and no recompute.
     this.logger.log(`ServiceOrder ${id} resumed by ${userId}`);
+    return updated;
+  }
+
+  // ---------------------------------------------------------------------------
+  // PAUSE ACKNOWLEDGEMENT WORKFLOW (CR-2026-100)
+  //
+  // A technician-reported pause takes effect the moment it is reported — the
+  // labour clock stops at the technician's timestamp, never at whenever an
+  // advisor happens to open the application. The advisor/manager then
+  // acknowledges (approves) or rejects it. Approval never moves the clock;
+  // rejection needs a reason, resumes the work, and keeps the original request.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Who does this pause belong to, and does it need acknowledgement?
+   *
+   *  - The assigned technician pausing their own job → PENDING acknowledgement.
+   *  - An advisor/manager recording it (on the technician's behalf) → APPROVED
+   *    immediately: they ARE the acknowledger, and the history says who entered it.
+   *  - A technician recording it for a job they are not assigned to → on-behalf,
+   *    but still PENDING: an advisor has to see it.
+   */
+  private async derivePauseAttribution(orderId: string, actorUserId: string) {
+    const [actorTech, openAssignments] = await Promise.all([
+      this.prisma.technician.findUnique({
+        where: { userAccountId: actorUserId },
+        select: { id: true },
+      }),
+      this.prisma.technicianAssignment.findMany({
+        where: { serviceOrderId: orderId, endedAt: null },
+        select: { technicianId: true, isPrimary: true },
+      }),
+    ]);
+
+    const isAssignedTech =
+      !!actorTech && openAssignments.some((a) => a.technicianId === actorTech.id);
+    const technicianId = isAssignedTech
+      ? actorTech!.id
+      : (openAssignments.find((a) => a.isPrimary)?.technicianId ??
+        openAssignments[0]?.technicianId ??
+        null);
+    const isStaffActor = !actorTech;
+
+    return {
+      technicianId,
+      enteredOnBehalf: !isAssignedTech,
+      approvalStatus: (isStaffActor ? 'APPROVED' : 'PENDING') as 'APPROVED' | 'PENDING',
+      reviewedByUserId: isStaffActor ? actorUserId : null,
+      reviewedAt: isStaffActor ? new Date() : null,
+    };
+  }
+
+  /**
+   * Pause requests awaiting advisor/manager acknowledgement — the open, pending
+   * rows only. A pause that ended before anyone reviewed it drops off this list
+   * (there is nothing left to act on) but stays PENDING in the job's history.
+   */
+  async listPendingPauseApprovals(siteId?: string) {
+    const rows = await this.prisma.serviceOrderPause.findMany({
+      where: {
+        approvalStatus: 'PENDING',
+        endedAt: null,
+        ...(siteId ? { serviceOrder: { serviceVisit: { siteId } } } : {}),
+      },
+      include: {
+        serviceOrder: {
+          select: {
+            id: true,
+            status: true,
+            items: { select: { serviceType: { select: { name: true } } } },
+            serviceVisit: {
+              select: {
+                id: true,
+                visitNumber: true,
+                customer: { select: { firstName: true, lastName: true } },
+                vehicle: { select: { plateNumber: true, make: true, model: true } },
+                queueTicket: { select: { id: true, ticketNumber: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { startedAt: 'asc' },
+    });
+
+    const techIds = [...new Set(rows.map((r) => r.technicianId).filter(Boolean))] as string[];
+    const techs = techIds.length
+      ? await this.prisma.technician.findMany({
+          where: { id: { in: techIds } },
+          select: { id: true, employeeCode: true, userAccount: { select: { fullName: true } } },
+        })
+      : [];
+    const techById = new Map(techs.map((t) => [t.id, t]));
+
+    const now = Date.now();
+    return rows.map((r) => {
+      const visit = r.serviceOrder.serviceVisit;
+      const tech = r.technicianId ? techById.get(r.technicianId) : undefined;
+      return {
+        pauseId: r.id,
+        orderId: r.serviceOrder.id,
+        orderStatus: r.serviceOrder.status,
+        serviceVisitId: visit.id,
+        visitNumber: visit.visitNumber ?? null,
+        queueTicketId: visit.queueTicket?.id ?? null,
+        ticketNumber: visit.queueTicket?.ticketNumber ?? null,
+        customerName: `${visit.customer.firstName} ${visit.customer.lastName}`,
+        vehicle:
+          [visit.vehicle.make, visit.vehicle.model].filter(Boolean).join(' ') ||
+          visit.vehicle.plateNumber,
+        plate: visit.vehicle.plateNumber,
+        services: r.serviceOrder.items.map((i) => i.serviceType.name),
+        technicianName: tech?.userAccount?.fullName ?? null,
+        technicianCode: tech?.employeeCode ?? null,
+        reasonCode: r.reasonCode,
+        notes: r.notes,
+        requestedAt: r.startedAt,
+        enteredOnBehalf: r.enteredOnBehalf,
+        waitingMinutes: Math.floor((now - r.startedAt.getTime()) / 60000),
+      };
+    });
+  }
+
+  /** Full pause history for one order — the shared story every role reads (CR-2026-100). */
+  async listPauses(orderId: string) {
+    await this.findById(orderId); // 404 on unknown order
+    const rows = await this.prisma.serviceOrderPause.findMany({
+      where: { serviceOrderId: orderId },
+      orderBy: { startedAt: 'asc' },
+    });
+
+    const userIds = [
+      ...new Set(
+        rows
+          .flatMap((r) => [r.pausedByUserId, r.resumedByUserId, r.reviewedByUserId, r.correctedByUserId])
+          .filter(Boolean),
+      ),
+    ] as string[];
+    const techIds = [...new Set(rows.map((r) => r.technicianId).filter(Boolean))] as string[];
+    const [users, techs] = await Promise.all([
+      userIds.length
+        ? this.prisma.userAccount.findMany({
+            where: { id: { in: userIds } },
+            select: { id: true, fullName: true },
+          })
+        : [],
+      techIds.length
+        ? this.prisma.technician.findMany({
+            where: { id: { in: techIds } },
+            select: { id: true, userAccount: { select: { fullName: true } } },
+          })
+        : [],
+    ]);
+    const nameById = new Map(users.map((u) => [u.id, u.fullName]));
+    const techNameById = new Map(techs.map((t) => [t.id, t.userAccount?.fullName ?? null]));
+
+    return rows.map((r) => ({
+      id: r.id,
+      reasonCode: r.reasonCode,
+      notes: r.notes,
+      startedAt: r.startedAt,
+      endedAt: r.endedAt,
+      technicianName: r.technicianId ? (techNameById.get(r.technicianId) ?? null) : null,
+      recordedByName: r.pausedByUserId ? (nameById.get(r.pausedByUserId) ?? null) : null,
+      resumedByName: r.resumedByUserId ? (nameById.get(r.resumedByUserId) ?? null) : null,
+      enteredOnBehalf: r.enteredOnBehalf,
+      approvalStatus: r.approvalStatus,
+      reviewedByName: r.reviewedByUserId ? (nameById.get(r.reviewedByUserId) ?? null) : null,
+      reviewedAt: r.reviewedAt,
+      reviewNotes: r.reviewNotes,
+      originalStartedAt: r.originalStartedAt,
+      correctedByName: r.correctedByUserId ? (nameById.get(r.correctedByUserId) ?? null) : null,
+      correctedAt: r.correctedAt,
+      correctionReason: r.correctionReason,
+    }));
+  }
+
+  /** Acknowledge a technician's pause. The interval is untouched — it has been
+   *  running from the technician's own timestamp all along. */
+  async approvePause(orderId: string, pauseId: string, userId: string) {
+    const pause = await this.prisma.serviceOrderPause.findFirst({
+      where: { id: pauseId, serviceOrderId: orderId },
+    });
+    if (!pause) throw new NotFoundException(`Pause ${pauseId} not found on order ${orderId}`);
+    if (pause.approvalStatus !== 'PENDING') {
+      throw new BadRequestException(`This pause has already been reviewed (${pause.approvalStatus}).`);
+    }
+
+    const updated = await this.prisma.serviceOrderPause.update({
+      where: { id: pauseId },
+      data: { approvalStatus: 'APPROVED', reviewedByUserId: userId, reviewedAt: new Date() },
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: 'PAUSE_APPROVED',
+      entityType: 'ServiceOrderPause',
+      entityId: pauseId,
+      afterJson: { reasonCode: pause.reasonCode, effectiveFrom: pause.startedAt },
+      notes: `Pause acknowledged; effective from ${pause.startedAt.toISOString()} (the technician's own timestamp).`,
+    });
+
+    return updated;
+  }
+
+  /**
+   * Reject a pending pause. Requires a reason; the original request is kept in
+   * full (marked REJECTED, never deleted). If the job is still stopped, it is
+   * resumed — the interval closes honestly at the moment of rejection, because
+   * the work genuinely was stopped until then.
+   */
+  async rejectPause(orderId: string, pauseId: string, reason: string, userId: string) {
+    if (!reason?.trim()) {
+      throw new BadRequestException('Rejecting a pause requires a reason.');
+    }
+    const pause = await this.prisma.serviceOrderPause.findFirst({
+      where: { id: pauseId, serviceOrderId: orderId },
+    });
+    if (!pause) throw new NotFoundException(`Pause ${pauseId} not found on order ${orderId}`);
+    if (pause.approvalStatus !== 'PENDING') {
+      throw new BadRequestException(`This pause has already been reviewed (${pause.approvalStatus}).`);
+    }
+
+    const updated = await this.prisma.serviceOrderPause.update({
+      where: { id: pauseId },
+      data: {
+        approvalStatus: 'REJECTED',
+        reviewedByUserId: userId,
+        reviewedAt: new Date(),
+        reviewNotes: reason.trim(),
+      },
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: 'PAUSE_REJECTED',
+      entityType: 'ServiceOrderPause',
+      entityId: pauseId,
+      beforeJson: { reasonCode: pause.reasonCode, requestedAt: pause.startedAt },
+      afterJson: { approvalStatus: 'REJECTED' },
+      notes: reason.trim(),
+    });
+
+    // Resume the work if this pause still has it stopped.
+    if (!pause.endedAt) {
+      const order = await this.findById(orderId);
+      if (['PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER'].includes(order.status)) {
+        await this.resume(orderId, { notes: `Pause rejected: ${reason.trim()}` }, userId);
+      }
+    }
+
+    return updated;
+  }
+
+  /**
+   * Controlled retroactive correction of when a pause took effect (CR-2026-100).
+   *
+   * "I actually stopped at 11:05" — recorded at 11:20. The effective start can
+   * only move EARLIER than the recorded time (the recorded press proves work had
+   * stopped by then; moving it later would fabricate labour). The original
+   * timestamp is preserved on the row, the change is reasoned and audited, and
+   * the labour segments that ran past the true stop are trimmed through the
+   * segment-correction path, which writes its own audit trail.
+   */
+  async correctPauseStart(
+    orderId: string,
+    pauseId: string,
+    dto: { effectiveFrom: string; reason: string },
+    userId: string,
+  ) {
+    if (!dto.reason?.trim()) {
+      throw new BadRequestException('Correcting a pause time requires a reason.');
+    }
+    const newStart = new Date(dto.effectiveFrom);
+    if (Number.isNaN(newStart.getTime())) {
+      throw new BadRequestException('effectiveFrom must be a valid date/time.');
+    }
+
+    const pause = await this.prisma.serviceOrderPause.findFirst({
+      where: { id: pauseId, serviceOrderId: orderId },
+    });
+    if (!pause) throw new NotFoundException(`Pause ${pauseId} not found on order ${orderId}`);
+    if (newStart >= pause.startedAt) {
+      throw new BadRequestException(
+        'The effective start can only be moved earlier than the recorded time.',
+      );
+    }
+    const order = await this.prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+      select: { startedAt: true },
+    });
+    if (order?.startedAt && newStart < order.startedAt) {
+      throw new BadRequestException('The pause cannot start before work started on the job.');
+    }
+
+    const updated = await this.prisma.serviceOrderPause.update({
+      where: { id: pauseId },
+      data: {
+        startedAt: newStart,
+        // Only the FIRST correction sets this — the original is never lost.
+        originalStartedAt: pause.originalStartedAt ?? pause.startedAt,
+        correctedByUserId: userId,
+        correctedAt: new Date(),
+        correctionReason: dto.reason.trim(),
+      },
+    });
+
+    await this.auditService.log({
+      actorUserId: userId,
+      action: 'PAUSE_TIME_CORRECTED',
+      entityType: 'ServiceOrderPause',
+      entityId: pauseId,
+      beforeJson: { startedAt: pause.startedAt },
+      afterJson: { startedAt: newStart },
+      notes: dto.reason.trim(),
+    });
+
+    // Trim the labour segments this pause closed: anything that kept accruing
+    // between the true stop and the recorded press is not labour. The 60-second
+    // tolerance covers the two clock reads at pause time (ledger row vs segment
+    // close are milliseconds apart, never minutes).
+    const closedByThisPause = await this.prisma.technicianWorkSegment.findMany({
+      where: {
+        serviceOrderId: orderId,
+        endReason: 'PAUSED',
+        endedAt: { gt: newStart, lte: new Date(pause.startedAt.getTime() + 60_000) },
+      },
+      select: { id: true, startedAt: true },
+    });
+    for (const seg of closedByThisPause) {
+      const trimmedEnd = newStart < seg.startedAt ? seg.startedAt : newStart;
+      await this.segments.correctSegment(
+        seg.id,
+        { endedAt: trimmedEnd, reason: `Pause time corrected: ${dto.reason.trim()}` },
+        userId,
+      );
+    }
+
+    this.logger.log(
+      `Pause ${pauseId} effective start corrected to ${newStart.toISOString()} by ${userId} ` +
+        `(${closedByThisPause.length} labour segment(s) trimmed)`,
+    );
     return updated;
   }
 
@@ -1236,24 +1688,20 @@ export class ServiceOrdersService {
   // MULTI-TECH ASSIGNMENT MANAGEMENT
   // ---------------------------------------------------------------------------
 
-  async assignAdditional(orderId: string, technicianId: string, bayId?: string, resourceId?: string, userId?: string) {
+  async assignAdditional(orderId: string, technicianId: string, bayId?: string, resourceId?: string, userId?: string, acknowledgeWorkload?: boolean) {
     const order = await this.findById(orderId);
     if (!['APPROVED', 'ASSIGNED', 'IN_PROGRESS'].includes(order.status)) {
       throw new BadRequestException(`Cannot add technician to order in status ${order.status}`);
     }
 
-    // Double-booking check — allow the same tech on other orders of the SAME visit (CR-2026-068).
-    const active = await this.prisma.technicianAssignment.findFirst({
-      where: {
-        technicianId,
-        status: { in: ['ASSIGNED', 'IN_PROGRESS'] },
-        endedAt: null,
-        serviceOrder: { serviceVisitId: { not: order.serviceVisitId } },
-      },
-    });
-    if (active) {
-      throw new BadRequestException(`Technician already has an active assignment on another visit (${active.id})`);
-    }
+    // CR-2026-100 — same workload warning as assign(): open work on other visits
+    // is surfaced for judgement, not hard-blocked. Same-visit orders never trip it.
+    await this.assertWorkloadAcknowledged(
+      technicianId,
+      order.serviceVisitId,
+      acknowledgeWorkload === true,
+      userId ?? null,
+    );
 
     const assignment = await this.prisma.technicianAssignment.create({
       data: {
@@ -1357,7 +1805,12 @@ export class ServiceOrdersService {
     return updated;
   }
 
-  async startAssignment(orderId: string, assignmentId: string, userId: string) {
+  async startAssignment(
+    orderId: string,
+    assignmentId: string,
+    userId: string,
+    dto?: { holdReasonCode?: PauseReason; holdNotes?: string },
+  ) {
     const assignment = await this.prisma.technicianAssignment.findFirst({
       where: { id: assignmentId, serviceOrderId: orderId },
     });
@@ -1375,10 +1828,58 @@ export class ServiceOrdersService {
       );
     }
 
+    // CR-2026-100 — one person cannot productively work two jobs at once. An open
+    // labour segment on ANOTHER order means the previous job's clock is still
+    // running; starting here without settling that would double-count the same
+    // real hour on two jobs. The technician is prompted to switch: the previous
+    // job is held (with a stated reason), or — when colleagues are still working
+    // it — only this technician's segment closes and the job carries on.
+    const openElsewhere = await this.prisma.technicianWorkSegment.findMany({
+      where: { technicianId: tech.id, endedAt: null, serviceOrderId: { not: orderId } },
+      select: {
+        id: true,
+        serviceOrderId: true,
+        serviceOrder: {
+          select: {
+            status: true,
+            serviceVisit: {
+              select: {
+                vehicle: { select: { plateNumber: true } },
+                queueTicket: { select: { ticketNumber: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (openElsewhere.length > 0) {
+      const activeJobs = [...new Map(openElsewhere.map((s) => [s.serviceOrderId, s])).values()].map(
+        (s) => ({
+          orderId: s.serviceOrderId,
+          ticketNumber: s.serviceOrder.serviceVisit.queueTicket?.ticketNumber ?? null,
+          plate: s.serviceOrder.serviceVisit.vehicle.plateNumber,
+        }),
+      );
+
+      if (!dto?.holdReasonCode) {
+        throw new ConflictException({
+          message:
+            'You are still on the clock for another job. Hold it (with a reason) to switch, or finish it first.',
+          code: 'ACTIVE_WORK_ELSEWHERE',
+          activeJobs,
+        });
+      }
+    }
+
     // CR-2026-088 — KPI-tracked work needs a confirmed Sedan/SUV class, because the
     // class picks the standard the job will be measured against. Asking at the point
     // of starting is the last honest moment: afterwards the clock is already running
     // and any classification looks like it was chosen to suit the result.
+    //
+    // CR-2026-100 — these gates run BEFORE the switch below is executed: if this
+    // job cannot start, the previous job must not have been held for it. The live
+    // validation caught exactly that half-applied switch.
     await this.kpi.assertVehicleClassConfirmed(orderId);
 
     // CR-2026-092 — a conditional service with no qualifier cannot be benchmarked, and
@@ -1395,6 +1896,43 @@ export class ServiceOrdersService {
         readiness.missingQualifiers.map((m) => m.message).join(' ') +
           ' A service advisor can set this on the work order.',
       );
+    }
+
+    // Execute the switch: this job is clear to start, so the previous work is
+    // settled now — held (sole worker) or stepped off (colleagues remain).
+    if (openElsewhere.length > 0 && dto?.holdReasonCode) {
+      const activeJobs = [...new Map(openElsewhere.map((s) => [s.serviceOrderId, s])).values()];
+      for (const job of activeJobs) {
+        const colleaguesStillWorking = await this.prisma.technicianWorkSegment.count({
+          where: { serviceOrderId: job.serviceOrderId, endedAt: null, technicianId: { not: tech.id } },
+        });
+        if (colleaguesStillWorking > 0) {
+          // Others keep the job going — only this technician steps off it.
+          await this.segments.endSegment({
+            serviceOrderId: job.serviceOrderId,
+            technicianId: tech.id,
+            endReason: 'SWITCHED_JOB',
+            actorUserId: userId,
+          });
+        } else {
+          // Sole worker: the job itself is held, honestly and with the stated
+          // reason (WAITING_PARTS / WAITING_CUSTOMER route to their first-class
+          // states; attribution marks it as the technician's own pause).
+          await this.pause(
+            job.serviceOrderId,
+            { reasonCode: dto.holdReasonCode, notes: dto.holdNotes },
+            userId,
+          );
+        }
+        await this.auditService.log({
+          actorUserId: userId,
+          action: 'WORK_SWITCHED',
+          entityType: 'ServiceOrder',
+          entityId: job.serviceOrderId,
+          afterJson: { switchedToOrderId: orderId, holdReason: dto.holdReasonCode },
+          notes: dto.holdNotes,
+        });
+      }
     }
 
     const updated = await this.prisma.technicianAssignment.update({
@@ -1478,25 +2016,40 @@ export class ServiceOrdersService {
 
     const pauses = await this.prisma.serviceOrderPause.findMany({
       where: { serviceOrderId: orderId },
-      select: { startedAt: true, endedAt: true, reasonCode: true, notes: true },
+      select: {
+        startedAt: true,
+        endedAt: true,
+        reasonCode: true,
+        notes: true,
+        approvalStatus: true,
+        enteredOnBehalf: true,
+      },
     });
 
     let pausedMs = 0;
     let openPauseStartedAt: Date | null = null;
     let openPauseReason: string | null = null;
     let openPauseNotes: string | null = null;
+    let openPauseApprovalStatus: string | null = null;
+    let openPauseEnteredOnBehalf = false;
     // CR-2026-098 — parts delays broken out so the UI and metrics can show
     // "waiting on parts" distinctly from ordinary pauses.
+    // CR-2026-100 — the full breakdown: parts / customer / other, so a job's
+    // elapsed time is explainable, not an unexplained average.
     let waitingPartsMs = 0;
+    let waitingCustomerMs = 0;
     for (const p of pauses) {
       if (p.endedAt) {
         const ms = p.endedAt.getTime() - p.startedAt.getTime();
         pausedMs += ms;
         if (p.reasonCode === 'WAITING_PARTS') waitingPartsMs += ms;
+        else if (p.reasonCode === 'CUSTOMER_AUTHORIZATION') waitingCustomerMs += ms;
       } else {
         openPauseStartedAt = p.startedAt;
         openPauseReason = p.reasonCode;
         openPauseNotes = p.notes;
+        openPauseApprovalStatus = p.approvalStatus;
+        openPauseEnteredOnBehalf = p.enteredOnBehalf;
       }
     }
 
@@ -1506,9 +2059,13 @@ export class ServiceOrdersService {
       status: order.status,
       pausedMs,
       waitingPartsMs,
+      waitingCustomerMs,
+      otherPausedMs: pausedMs - waitingPartsMs - waitingCustomerMs,
       openPauseStartedAt,
       openPauseReason,
       openPauseNotes,
+      openPauseApprovalStatus,
+      openPauseEnteredOnBehalf,
     };
   }
 
@@ -1654,6 +2211,79 @@ export class ServiceOrdersService {
    * the technician's assignment, so by the time anyone can pass the check their
    * assignment is already closed.
    */
+  /**
+   * CR-2026-100 — workload visibility instead of a hard block.
+   *
+   * The old rule ("has an active assignment on another visit → refuse") pretended
+   * a technician can only ever hold one job. In the real workshop one car waits
+   * on parts while another is worked, and a third small job may sit assigned. So:
+   * the FIRST attempt returns a 409 carrying the technician's current workload —
+   * active vs held jobs, spelled out — and the advisor/manager assigns anyway
+   * with `acknowledgeWorkload`, which is audited. Multiple orders on the same
+   * visit are one job (CR-2026-068) and never trip this.
+   */
+  private async assertWorkloadAcknowledged(
+    technicianId: string,
+    serviceVisitId: string,
+    acknowledged: boolean,
+    actorUserId: string | null,
+  ): Promise<void> {
+    const openAssignments = await this.prisma.technicianAssignment.findMany({
+      where: {
+        technicianId,
+        endedAt: null,
+        status: { notIn: ['COMPLETED', 'REMOVED', 'CANCELLED'] },
+        serviceOrder: { serviceVisitId: { not: serviceVisitId } },
+      },
+      select: {
+        id: true,
+        serviceOrder: {
+          select: {
+            id: true,
+            status: true,
+            serviceVisit: {
+              select: {
+                vehicle: { select: { plateNumber: true } },
+                queueTicket: { select: { ticketNumber: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    if (openAssignments.length === 0) return;
+
+    const HELD = new Set(['PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER']);
+    const workload = openAssignments.map((a) => ({
+      orderId: a.serviceOrder.id,
+      orderStatus: a.serviceOrder.status,
+      held: HELD.has(a.serviceOrder.status),
+      ticketNumber: a.serviceOrder.serviceVisit.queueTicket?.ticketNumber ?? null,
+      plate: a.serviceOrder.serviceVisit.vehicle.plateNumber,
+    }));
+    const activeCount = workload.filter((w) => !w.held).length;
+    const heldCount = workload.length - activeCount;
+
+    if (!acknowledged) {
+      throw new ConflictException({
+        message:
+          `This technician already has ${workload.length} open job(s) ` +
+          `(${activeCount} active, ${heldCount} on hold). Review the workload and assign anyway if appropriate.`,
+        code: 'TECHNICIAN_HAS_OPEN_WORK',
+        workload,
+      });
+    }
+
+    await this.auditService.log({
+      actorUserId,
+      action: 'ASSIGNMENT_WORKLOAD_ACKNOWLEDGED',
+      entityType: 'Technician',
+      entityId: technicianId,
+      afterJson: { openJobs: workload.length, active: activeCount, held: heldCount, workload },
+      notes: 'Assigned with existing open workload, acknowledged by the assigner.',
+    });
+  }
+
   private async assertQcNotSelfApproved(
     serviceOrderId: string,
     userId: string,

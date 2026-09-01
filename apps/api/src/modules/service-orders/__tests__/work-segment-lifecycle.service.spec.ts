@@ -50,8 +50,12 @@ function buildService(overrides: Record<string, any> = {}) {
       })),
       update: vi.fn(async () => ({ id: 'ta-1' })),
       updateMany: vi.fn(async () => ({ count: 1 })),
+      // CR-2026-100 — pause attribution reads the open assignments.
+      findMany: vi.fn(async () => [{ technicianId: 'tech-1', isPrimary: true }]),
     },
     technician: { findUnique: vi.fn(async () => ({ id: 'tech-1' })) },
+    // CR-2026-100 — the cross-job overlap guard reads open segments; none by default.
+    technicianWorkSegment: { findMany: vi.fn(async () => []), count: vi.fn(async () => 0) },
     resourceOccupancy: { updateMany: vi.fn(async () => ({ count: 0 })) },
     queueTicket: { findUnique: vi.fn(async () => null), update: vi.fn(async () => ({})) },
     ...overrides,
