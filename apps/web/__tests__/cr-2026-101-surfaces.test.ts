@@ -70,8 +70,10 @@ describe('My Jobs workday view (§8/§10/§11/§12)', () => {
   const src = read(APP, '(dashboard)/technician/page.tsx');
   it('has the workday summary and every bucket', () => {
     expect(src).toContain("api.get('/service-orders/mine/workday')");
-    expect(src).toContain('Your work today:');
-    for (const bucket of ['Up Next', 'Waiting / On Hold', 'Rework', 'Awaiting QC', 'Completed Today']) {
+    // CR-2026-103 — the workday clock is a stat card in the "My Workday" strip.
+    expect(src).toContain('My Workday');
+    expect(src).toContain('Work Time');
+    for (const bucket of ['Up Next', 'Waiting / Held', 'Rework', 'Awaiting QC', 'Completed Today']) {
       expect(src).toContain(bucket);
     }
   });

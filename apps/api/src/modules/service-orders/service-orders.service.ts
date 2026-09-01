@@ -805,7 +805,13 @@ export class ServiceOrdersService {
           include: {
             items: { include: { serviceType: { select: { name: true, baseDurationMinutes: true } } } },
             // CR-2026-101 — a job sent back for rework is its own bucket.
-            reworks: { where: { closedAt: null }, select: { id: true } },
+            // CR-2026-103 — the card says WHY it came back, not just that it did.
+            reworks: {
+              where: { closedAt: null },
+              select: { id: true, reasonCode: true, description: true },
+              orderBy: { openedAt: 'desc' },
+              take: 1,
+            },
             pauses: {
               select: {
                 id: true,
@@ -891,6 +897,9 @@ export class ServiceOrdersService {
         sourceType: (visit as { sourceType?: string }).sourceType ?? null,
         appointmentAt: visit.appointment?.scheduledStartAt ?? null,
         hasOpenRework: order.reworks.length > 0,
+        openRework: order.reworks[0]
+          ? { reasonCode: order.reworks[0].reasonCode, description: order.reworks[0].description }
+          : null,
         concern: visit.visitNotes[0]?.text ?? visit.notes ?? null,
         pausedMs,
         myWorkMs,

@@ -16,20 +16,22 @@ describe('technician My Jobs (CR-2026-100 §1/§2/§4)', () => {
   const src = read('(dashboard)/technician/page.tsx');
 
   it('renders every workload bucket, not just a single current job', () => {
-    expect(src).toContain('Waiting / On Hold');
-    // CR-2026-101 renamed "Ready to Start" → "Up Next" and split "Finished
-    // Today" into "Awaiting QC" + "Completed Today".
+    // CR-2026-103 restructure: Working Now → Up Next → Waiting / Held →
+    // Rework → Awaiting QC → Completed Today.
+    expect(src).toContain('Working Now');
     expect(src).toContain('Up Next');
-    expect(src).toContain('Also In Progress');
+    expect(src).toContain('Waiting / Held');
     expect(src).toContain('Awaiting QC');
     expect(src).toContain('Completed Today');
   });
 
-  it('every job card reaches the job sheet in one tap', () => {
+  it('the job sheet stays one tap away (hero card + the workspace on every card)', () => {
     expect(src).toContain('View Job Sheet');
     expect(src).toContain('/inspections/job-sheet/');
-    // The link renders from a shared component used across all buckets.
-    expect((src.match(/JobSheetLink visitId=/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    // CR-2026-103 progressive disclosure: the hero keeps the direct link; every
+    // other card opens the workspace, which carries the job sheet itself.
+    expect((src.match(/JobSheetLink visitId=/g) ?? []).length).toBeGreaterThanOrEqual(1);
+    expect((src.match(/OpenJobLink orderId=/g) ?? []).length).toBeGreaterThanOrEqual(4);
   });
 
   it('starting a second job goes through the explicit switch dialog, never silently', () => {

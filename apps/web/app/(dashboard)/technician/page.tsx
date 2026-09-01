@@ -1,10 +1,23 @@
 'use client';
 
+/**
+ * CR-2026-103 — the Technician dashboard, restructured for the workshop.
+ *
+ * Two different questions, two visually separate areas:
+ *   MY WORKDAY  — how is my day going? (compact personal statistics)
+ *   MY JOBS     — what do I work on now / next? (operational job cards)
+ *
+ * The scan order is fixed: Working Now → Up Next → Waiting → Rework →
+ * Awaiting QC → Completed (collapsed). Registration numbers lead every card;
+ * one primary action per state; deeper detail lives in the Job Workspace
+ * (progressive disclosure). The multi-job model underneath (CR-2026-100/101 —
+ * one open labour segment, measured holds, acknowledged pauses) is unchanged.
+ */
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../../lib/api-client';
-import { PageHeader } from '../../../components/ui/page-header';
+import { useAuth } from '../../../hooks/use-auth';
 import { EmptyState } from '../../../components/ui/empty-state';
 import { LoadingState } from '../../../components/ui/loading-state';
 import { StatusBadge } from '../../../components/status-badge';
@@ -27,6 +40,7 @@ function fmtMins(ms: number): string {
   return h > 0 ? `${h}h ${m % 60}m` : `${m}m`;
 }
 const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+const fmtApptTime = fmtTime;
 
 const VEHICLE_CLASS_LABEL: Record<string, string> = {
   SEDAN_CLASS: 'Sedan',
@@ -44,11 +58,8 @@ const PRIORITY_LABEL: Record<string, string> = {
 
 /**
  * CR-2026-100 — one assignment belonging to the logged-in technician.
- *
- * A technician legitimately holds SEVERAL jobs at once: one being worked, one
- * waiting on parts, one on customer authorisation, a small job not yet started.
- * Every job renders as its own card with its own actions; the one with an open
- * labour segment is "on the clock" — and only one can be, the API enforces it.
+ * A technician legitimately holds SEVERAL jobs; the one with an open labour
+ * segment is "on the clock" — at most one, the API enforces it.
  */
 interface MyAssignment {
   assignmentId: string;
@@ -74,6 +85,8 @@ interface MyAssignment {
   sourceType: string | null;
   appointmentAt: string | null;
   hasOpenRework: boolean;
+  // CR-2026-103 — WHY the job came back.
+  openRework: { reasonCode: string; description: string | null } | null;
   concern: string | null;
   pausedMs: number;
   myWorkMs: number;
@@ -90,56 +103,128 @@ interface MyAssignment {
 
 const HELD_STATUSES = ['PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER'];
 
-const fmtApptTime = (iso: string) =>
-  new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+type JobsFilter = 'ALL' | 'ACTIVE' | 'UP_NEXT' | 'WAITING' | 'REWORK' | 'QC' | 'DONE';
+const FILTERS: Array<{ key: JobsFilter; label: string }> = [
+  { key: 'ALL', label: 'All' },
+  { key: 'ACTIVE', label: 'Active' },
+  { key: 'UP_NEXT', label: 'Up Next' },
+  { key: 'WAITING', label: 'Waiting' },
+  { key: 'REWORK', label: 'Rework' },
+  { key: 'QC', label: 'QC' },
+  { key: 'DONE', label: 'Done' },
+];
 
-/** Compact identity block every job card shares (CR-2026-100 §1, CR-2026-101). */
-function JobIdentity({ a }: { a: MyAssignment }) {
+/* ---------------- presentation pieces ---------------- */
+
+/** §9 — a compact workday statistic: label + strong number + optional support. */
+function WorkdayStat({ label, value, tone, sub }: { label: string; value: string | number; tone: string; sub?: string }) {
+  const tones: Record<string, string> = {
+    emerald: 'border-l-emerald-500 text-emerald-700',
+    slate: 'border-l-slate-400 text-slate-900',
+    amber: 'border-l-amber-500 text-amber-700',
+    red: 'border-l-red-500 text-red-700',
+    violet: 'border-l-violet-500 text-violet-700',
+    muted: 'border-l-slate-300 text-slate-500',
+    blue: 'border-l-blue-500 text-blue-800',
+  };
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2">
-        <Link href={`/technician/jobs/${a.orderId}`} className="text-lg font-bold font-mono text-blue-700 hover:underline">
-          {a.ticketNumber ?? a.plate}
-        </Link>
-        <div className="flex items-center gap-1.5 flex-wrap justify-end">
-          {a.hasOpenRework && <span className="badge bg-red-100 text-red-700 text-[10px] font-bold">REWORK</span>}
-          {a.appointmentAt && (
-            <span className="badge bg-blue-50 text-blue-700 text-[10px]">Appt {fmtApptTime(a.appointmentAt)}</span>
-          )}
-          {a.expectedMinutes > 0 && (
-            <span className="badge bg-slate-100 text-slate-600 text-[10px]">~{fmtMins(a.expectedMinutes * 60000)}</span>
-          )}
-          {a.vehicleClass && (
-            <span className="badge bg-slate-100 text-slate-600 text-[10px]">{VEHICLE_CLASS_LABEL[a.vehicleClass] ?? a.vehicleClass}</span>
-          )}
-          {a.priorityClass && PRIORITY_LABEL[a.priorityClass] && (
-            <span className="badge bg-indigo-50 text-indigo-700 text-[10px]">{PRIORITY_LABEL[a.priorityClass]}</span>
-          )}
-          {a.bay && <span className="badge bg-slate-100 text-slate-600 text-[10px]">Bay {a.bay}</span>}
-        </div>
-      </div>
-      <p className="text-sm text-slate-700">{a.customerName} · {a.vehicle} ({a.plate})</p>
-      <p className="text-xs text-slate-500">{a.services.join(', ')}</p>
-      {/* §12 — the customer's stated concern rides the card, never buried. */}
-      {a.concern && <p className="text-xs text-blue-800 bg-blue-50 rounded px-2 py-1">“{a.concern}”</p>}
-      {a.visitNumber && <p className="text-[11px] font-mono text-slate-400">Visit {a.visitNumber}</p>}
+    <div className={`card border-l-4 px-3 py-2 min-w-[5.5rem] ${tones[tone] ?? tones.slate}`}>
+      <div className="text-xl font-bold tabular-nums leading-tight">{value}</div>
+      <div className="text-[10px] text-slate-500 uppercase tracking-wide">{label}</div>
+      {sub && <div className="text-[10px] text-slate-400">{sub}</div>}
     </div>
   );
 }
 
-/** CR-2026-101 §5 — one tap into the purpose-built job workspace. */
-function OpenJobLink({ orderId }: { orderId: string }) {
+/** §2 — a labelled job section with a colour cue and a light empty state. */
+function JobSection({
+  title,
+  count,
+  accent,
+  emptyText,
+  children,
+}: {
+  title: string;
+  count: number;
+  accent: string;
+  emptyText?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <span className={`w-2 h-2 rounded-full ${accent}`} />
+        <h3 className="text-sm font-bold text-slate-800">{title}</h3>
+        <span className="text-xs text-slate-400">({count})</span>
+      </div>
+      {count === 0
+        ? emptyText && <p className="text-xs text-slate-400 pl-4 pb-1">{emptyText}</p>
+        : children}
+    </section>
+  );
+}
+
+/** §5 — registration first, always: the fastest thing to match to a car. */
+function PlateHeading({ a, big = false }: { a: MyAssignment; big?: boolean }) {
+  return (
+    <div>
+      <Link
+        href={`/technician/jobs/${a.orderId}`}
+        className={`font-black font-mono tracking-wide text-slate-900 hover:underline ${big ? 'text-3xl' : 'text-2xl'}`}
+      >
+        {a.plate}
+      </Link>
+      <span className="text-sm text-slate-500 ml-2">{a.vehicle}</span>
+    </div>
+  );
+}
+
+/** §4 context chips — small, consistent, never competing with the plate. */
+function JobChips({ a }: { a: MyAssignment }) {
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {a.appointmentAt ? (
+        <span className="badge bg-blue-50 text-blue-700 text-[10px]">Appt {fmtApptTime(a.appointmentAt)}</span>
+      ) : (
+        a.sourceType === 'WALKIN' && <span className="badge bg-slate-100 text-slate-500 text-[10px]">Walk-in</span>
+      )}
+      {a.expectedMinutes > 0 && (
+        <span className="badge bg-slate-100 text-slate-600 text-[10px]">~{fmtMins(a.expectedMinutes * 60000)}</span>
+      )}
+      {a.priorityClass && PRIORITY_LABEL[a.priorityClass] && (
+        <span className="badge bg-indigo-50 text-indigo-700 text-[10px]">{PRIORITY_LABEL[a.priorityClass]}</span>
+      )}
+      {a.vehicleClass && (
+        <span className="badge bg-slate-100 text-slate-600 text-[10px]">{VEHICLE_CLASS_LABEL[a.vehicleClass] ?? a.vehicleClass}</span>
+      )}
+      {a.bay && <span className="badge bg-slate-100 text-slate-600 text-[10px]">Bay {a.bay}</span>}
+    </div>
+  );
+}
+
+/** §5 — the short service request, quoted, never buried. */
+function ConcernLine({ a }: { a: MyAssignment }) {
+  if (!a.concern) return null;
+  return <p className="text-xs text-blue-900 bg-blue-50 rounded px-2 py-1">“{a.concern}”</p>;
+}
+
+/** §7 — the one secondary path into the full workspace. */
+function OpenJobLink({ orderId, subtle = true }: { orderId: string; subtle?: boolean }) {
   return (
     <Link
       href={`/technician/jobs/${orderId}`}
-      className="block text-center rounded-lg border border-blue-200 bg-blue-50 py-2 text-sm font-semibold text-blue-800 hover:border-blue-300 transition-colors"
+      className={
+        subtle
+          ? 'inline-block text-xs font-semibold text-blue-700 hover:underline'
+          : 'block text-center rounded-lg border border-blue-200 bg-blue-50 py-2 text-sm font-semibold text-blue-800 hover:border-blue-300 transition-colors'
+      }
     >
-      Open Job — customer, vehicle, history
+      Open Job →
     </Link>
   );
 }
 
-/** CR-2026-100 §4 — the job sheet is one tap from every job card. */
+/** CR-2026-100 §4 — the hero card's one-tap job sheet. */
 function JobSheetLink({ visitId }: { visitId: string }) {
   return (
     <Link
@@ -170,8 +255,11 @@ function PauseAckLine({ p }: { p: NonNullable<MyAssignment['openPause']> }) {
   return <p className="text-xs text-red-700">Rejected — see the advisor</p>;
 }
 
+/* ---------------- the page ---------------- */
+
 export default function TechnicianWorkView() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const myAssignmentsQuery = useQuery<MyAssignment[]>({
     queryKey: ['my-assignments'],
@@ -202,6 +290,11 @@ export default function TechnicianWorkView() {
   const finishedToday = assignments.filter(
     (a) => a.assignmentEndedAt && ['READY_TO_INVOICE', 'CLOSED'].includes(a.orderStatus),
   );
+  const waitingParts = heldJobs.filter((a) => a.orderStatus === 'WAITING_PARTS').length;
+  const waitingCustomer = heldJobs.filter((a) => a.orderStatus === 'WAITING_CUSTOMER').length;
+
+  const [filter, setFilter] = useState<JobsFilter>('ALL');
+  const show = (key: Exclude<JobsFilter, 'ALL'>) => filter === 'ALL' || filter === key;
 
   const [pauseReason, setPauseReason] = useState<string>(PAUSE_REASONS[0].value);
   const [pauseNotes, setPauseNotes] = useState('');
@@ -215,7 +308,7 @@ export default function TechnicianWorkView() {
   const invalidateWork = () => {
     queryClient.invalidateQueries({ queryKey: ['my-assignments'] });
     queryClient.invalidateQueries({ queryKey: ['work-timing'] });
-    queryClient.invalidateQueries({ queryKey: ['tech-inspections'] });
+    queryClient.invalidateQueries({ queryKey: ['my-workday'] });
   };
 
   const startMutation = useMutation({
@@ -278,23 +371,24 @@ export default function TechnicianWorkView() {
     refetchInterval: 30000,
   });
 
-  const inspectionsQuery = useQuery<{ items: Array<{ id: string; inspectionNumber: string; status: string }> }>({
-    queryKey: ['tech-inspections', currentJob?.serviceVisitId],
-    queryFn: () => api.get(`/inspections?serviceVisitId=${currentJob!.serviceVisitId}`),
-    enabled: !!currentJob,
-  });
-
-  // Timer math for the on-the-clock job: elapsed since start, and ACTUAL working time.
+  // Timer math for the on-the-clock job (§6 — JOB timing, not workday timing).
   const timing = workTimingQuery.data;
   const startedMs = timing?.startedAt ? new Date(timing.startedAt).getTime() : null;
   const openPauseMs = timing?.openPauseStartedAt ? now - new Date(timing.openPauseStartedAt).getTime() : 0;
   const elapsedMs = startedMs ? now - startedMs : 0;
   const workingMs = startedMs ? elapsedMs - (timing?.pausedMs ?? 0) - openPauseMs : 0;
+  const expectedMs = (currentJob?.expectedMinutes ?? 0) * 60000;
+  const overExpected = !!startedMs && expectedMs > 0 && elapsedMs > expectedMs;
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const firstName = user?.fullName?.split(' ')[0] ?? '';
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
   if (myAssignmentsQuery.isLoading) {
     return (
       <div className="min-h-screen bg-slate-100 p-4">
-        <div className="max-w-md mx-auto">
+        <div className="max-w-2xl mx-auto">
           <LoadingState message="Loading your assignments..." />
         </div>
       </div>
@@ -334,46 +428,44 @@ export default function TechnicianWorkView() {
 
   return (
     <div className="min-h-screen bg-slate-100 p-4">
-      <div className="max-w-md mx-auto space-y-4">
-        <PageHeader title="My Jobs" subtitle="Technician View" />
-
-        {/* CR-2026-101 §10 — the workday at a glance: now / blocked / next. */}
-        <div className="card">
-          <div className="card-body py-3">
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
-              <div>
-                <div className="text-lg font-bold tabular-nums text-emerald-700">{currentJob ? 1 : 0}</div>
-                <div className="text-[10px] text-slate-500 uppercase tracking-wide">Active</div>
-              </div>
-              <div>
-                <div className="text-lg font-bold tabular-nums text-slate-900">{readyToStart.length}</div>
-                <div className="text-[10px] text-slate-500 uppercase tracking-wide">Up Next</div>
-              </div>
-              <div>
-                <div className="text-lg font-bold tabular-nums text-amber-700">{heldJobs.length}</div>
-                <div className="text-[10px] text-slate-500 uppercase tracking-wide">Waiting</div>
-              </div>
-              <div>
-                <div className="text-lg font-bold tabular-nums text-red-700">{reworkJobs.length}</div>
-                <div className="text-[10px] text-slate-500 uppercase tracking-wide">Rework</div>
-              </div>
-              <div>
-                <div className="text-lg font-bold tabular-nums text-violet-700">{awaitingQc.length}</div>
-                <div className="text-[10px] text-slate-500 uppercase tracking-wide">In QC</div>
-              </div>
-              <div>
-                <div className="text-lg font-bold tabular-nums text-slate-500">{finishedToday.length}</div>
-                <div className="text-[10px] text-slate-500 uppercase tracking-wide">Done</div>
-              </div>
-            </div>
-            {workdayQuery.data && (
-              <p className="text-center text-[11px] text-slate-500 mt-2">
-                Your work today: <span className="font-semibold text-slate-700">{fmtMins(workdayQuery.data.todayWorkMs)}</span>
-                {workdayQuery.data.activeSegmentStartedAt ? ' · clock running' : ''}
-              </p>
-            )}
-          </div>
+      <div className="max-w-2xl mx-auto space-y-4">
+        {/* ---- Technician header (§3) ---- */}
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">
+            {greeting}{firstName ? `, ${firstName}` : ''}
+          </h1>
+          <p className="text-xs text-slate-500">{today} · Technician workspace</p>
         </div>
+
+        {/* ================= MY WORKDAY (§1/§9) ================= */}
+        <section>
+          <h2 className="text-sm font-bold text-slate-800 mb-2">My Workday</h2>
+          <div className="flex flex-wrap gap-2">
+            <WorkdayStat label="Active" value={currentJob ? 1 : 0} tone="emerald" />
+            <WorkdayStat label="Up Next" value={readyToStart.length} tone="slate" />
+            <WorkdayStat
+              label="Waiting"
+              value={heldJobs.length}
+              tone="amber"
+              sub={
+                heldJobs.length > 0
+                  ? [waitingParts ? `${waitingParts} parts` : '', waitingCustomer ? `${waitingCustomer} customer` : '']
+                      .filter(Boolean)
+                      .join(' · ') || undefined
+                  : undefined
+              }
+            />
+            <WorkdayStat label="Rework" value={reworkJobs.length} tone="red" />
+            <WorkdayStat label="QC" value={awaitingQc.length} tone="violet" />
+            <WorkdayStat label="Done" value={finishedToday.length} tone="muted" />
+            <WorkdayStat
+              label="Work Time"
+              value={workdayQuery.data ? fmtMins(workdayQuery.data.todayWorkMs) : '—'}
+              tone="blue"
+              sub={workdayQuery.data?.activeSegmentStartedAt ? 'clock running' : undefined}
+            />
+          </div>
+        </section>
 
         {myAssignmentsQuery.isError && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -382,330 +474,381 @@ export default function TechnicianWorkView() {
           </div>
         )}
 
-        {/* ON THE CLOCK — the one job whose labour timer is running */}
-        {currentJob && (
-          <div className="card overflow-hidden">
-            <div className="bg-blue-600 text-white px-5 py-4 text-center">
-              <div className="text-[11px] uppercase tracking-wider text-blue-100">
-                {currentJob.hasOpenSegment ? 'Working Now' : 'Current Job'}
-              </div>
-              <div className="text-3xl font-bold font-mono mt-0.5">{currentJob.ticketNumber ?? '—'}</div>
-              <div className="text-xs text-blue-100 mt-1">
-                {currentJob.customerName} · {currentJob.vehicle} ({currentJob.plate})
-                {currentJob.vehicleClass ? ` · ${VEHICLE_CLASS_LABEL[currentJob.vehicleClass] ?? ''}` : ''}
-                {currentJob.bay ? ` · Bay ${currentJob.bay}` : ''}
-              </div>
-              {currentJob.visitNumber && (
-                <div className="text-[10px] font-mono text-blue-200 mt-0.5">Visit {currentJob.visitNumber}</div>
-              )}
+        {/* ================= MY JOBS (§2) ================= */}
+        <div className="border-t border-slate-200 pt-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+            <h2 className="text-sm font-bold text-slate-800">My Jobs</h2>
+            {/* §14 — simple filtering; the default order already prioritises work. */}
+            <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 overflow-x-auto">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  onClick={() => setFilter(f.key)}
+                  className={`rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors ${
+                    filter === f.key ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
             </div>
+          </div>
 
-            <div className="card-body space-y-4">
-              {startedMs ? (
-                <>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-center">
-                      <div className="input-label">Elapsed</div>
-                      <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 mt-0.5">{fmtClock(elapsedMs)}</div>
-                    </div>
-                    <div className="rounded-xl border p-3 text-center bg-emerald-50 border-emerald-200">
-                      <div className="input-label">Working</div>
-                      <div className="text-2xl font-bold font-mono tabular-nums mt-0.5 text-emerald-700">{fmtClock(workingMs)}</div>
-                    </div>
-                  </div>
-                  {timing?.startedAt && <p className="text-[11px] text-slate-400 text-center">Started at {fmtTime(timing.startedAt)}</p>}
-                </>
-              ) : (
-                <div className="text-center">
-                  <StatusBadge status={currentJob.orderStatus} />
-                </div>
-              )}
-
-              {/* CR-2026-088 — where this job stands against its standard. */}
-              <KpiStrip kpi={kpiQuery.data} />
-
-              <div>
-                <div className="input-label">Services</div>
-                <p className="text-base font-medium text-slate-900 mt-0.5">
-                  {currentJob.services.length > 0 ? currentJob.services.join(', ') : 'No services recorded'}
-                </p>
-                <ServiceQualifiers
-                  orderId={currentJob.orderId}
-                  invalidateKeys={[['kpi-live', currentJob.orderId]]}
-                />
-              </div>
-
-              {(inspectionsQuery.data?.items ?? []).length > 0 && (
-                <div>
-                  <div className="input-label">Vehicle Inspection</div>
-                  <div className="mt-1 space-y-1.5">
-                    {inspectionsQuery.data!.items.map((insp) => (
-                      <Link key={insp.id} href={`/inspections/${insp.id}`} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 hover:border-blue-300 transition-colors">
-                        <span className="font-mono text-xs font-semibold text-blue-600">{insp.inspectionNumber}</span>
-                        <StatusBadge status={insp.status} />
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* CR-2026-100 §4 — the job sheet is never more than one tap away. */}
-              <JobSheetLink visitId={currentJob.serviceVisitId} />
-              {/* CR-2026-101 §5 — full context: customer, vehicle, history, notes. */}
-              <OpenJobLink orderId={currentJob.orderId} />
-
-              {currentJob.orderStatus === 'IN_PROGRESS' && (
-                <div className="space-y-2">
-                  {showPause ? (
-                    <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50 p-3">
-                      <label className="input-label">Why is work stopping?</label>
-                      <select value={pauseReason} onChange={(e) => setPauseReason(e.target.value)} className="input-field">
-                        {PAUSE_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                      </select>
-                      <textarea
-                        value={pauseNotes}
-                        onChange={(e) => setPauseNotes(e.target.value)}
-                        rows={2}
-                        placeholder={pauseReason === 'OTHER' ? 'Briefly, what happened?' : 'Note (optional)'}
-                        className="input-field text-sm"
-                      />
-                      {/* CR-2026-100 §5 — honest expectation: the stop takes effect
-                          NOW; the advisor acknowledges it after the fact. */}
-                      <p className="text-[11px] text-orange-800">
-                        The clock stops the moment you confirm. An advisor/manager will acknowledge it.
-                      </p>
-                      {pauseMutation.isError && (
-                        <p className="text-xs text-red-700">{pauseMutation.error instanceof Error ? pauseMutation.error.message : 'Failed to pause'}</p>
-                      )}
-                      <div className="flex gap-2">
-                        <button onClick={() => pauseMutation.mutate(currentJob.orderId)} disabled={pauseMutation.isPending} className="btn-primary flex-1 py-3 font-semibold rounded-lg">
-                          {pauseMutation.isPending
-                            ? 'Stopping…'
-                            : pauseReason === 'WAITING_PARTS' ? 'Mark Waiting for Parts' : 'Confirm Pause'}
-                        </button>
-                        <button onClick={() => { setShowPause(false); setPauseNotes(''); }} className="btn-secondary py-3 px-4 rounded-lg">Cancel</button>
+          <div className="space-y-5">
+            {/* ---- WORKING NOW (§3) — the most important card on the page ---- */}
+            {show('ACTIVE') && (
+              <JobSection title="Working Now" count={currentJob ? 1 : 0} accent="bg-emerald-500">
+                {currentJob ? (
+                  <div className="card overflow-hidden border-emerald-200 shadow-md">
+                    <div className="bg-emerald-600 text-white px-5 py-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          {/* §5 — registration first, biggest thing on the card. */}
+                          <Link href={`/technician/jobs/${currentJob.orderId}`} className="text-3xl font-black font-mono tracking-wide hover:underline">
+                            {currentJob.plate}
+                          </Link>
+                          <div className="text-sm text-emerald-100 mt-0.5">{currentJob.vehicle}</div>
+                          <div className="text-xs text-emerald-200 mt-0.5">
+                            {currentJob.customerName}
+                            {currentJob.ticketNumber ? ` · ${currentJob.ticketNumber}` : ''}
+                            {currentJob.bay ? ` · Bay ${currentJob.bay}` : ''}
+                          </div>
+                        </div>
+                        <span className="badge bg-white/20 text-white text-[10px] font-bold shrink-0">WORKING</span>
                       </div>
                     </div>
-                  ) : (
-                    <button onClick={() => setShowPause(true)} className="btn-secondary w-full py-3 text-base font-semibold rounded-lg">
-                      Pause / Report a Hold-up
-                    </button>
-                  )}
 
-                  {readyForQcMutation.isError && (
-                    <p className="text-xs text-red-600 text-center">{readyForQcMutation.error instanceof Error ? readyForQcMutation.error.message : 'Failed to send to QC'}</p>
-                  )}
-                  <button
-                    onClick={() => readyForQcMutation.mutate(currentJob.orderId)}
-                    disabled={readyForQcMutation.isPending}
-                    className="btn-success w-full py-4 text-lg font-bold rounded-lg active:scale-[0.98] transition-transform"
-                  >
-                    {readyForQcMutation.isPending ? 'Sending…' : 'FINISHED AND READY FOR REVIEW'}
-                  </button>
-                  <p className="text-[11px] text-slate-400 text-center">Marks your work finished and notifies the manager for a quality check.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ON HOLD — parts / customer / paused. Each with its own resume. */}
-        {heldJobs.length > 0 && (
-          <div className="card">
-            <div className="card-header">
-              <h2 className="text-sm font-semibold text-slate-900">Waiting / On Hold ({heldJobs.length})</h2>
-            </div>
-            <div className="card-body p-0">
-              {heldJobs.map((a) => {
-                const label =
-                  a.orderStatus === 'WAITING_PARTS' ? 'Waiting for Parts'
-                    : a.orderStatus === 'WAITING_CUSTOMER' ? 'Waiting on the Customer'
-                      : `Paused — ${PAUSE_REASONS.find((r) => r.value === a.openPause?.reasonCode)?.label ?? 'work stopped'}`;
-                const heldMs = a.openPause ? now - new Date(a.openPause.startedAt).getTime() : 0;
-                return (
-                  <div key={a.assignmentId} className="px-5 py-4 border-b border-slate-100 last:border-0 space-y-2">
-                    <JobIdentity a={a} />
-                    <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-900">
-                      <span className="font-semibold">{label}</span>
-                      {a.openPause && (
-                        <p className="text-xs mt-0.5 text-amber-800">
-                          Since {fmtTime(a.openPause.startedAt)} · {fmtMins(heldMs)} waiting
+                    <div className="card-body space-y-3">
+                      <ConcernLine a={currentJob} />
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">
+                          {currentJob.services.join(', ') || 'No services recorded'}
                         </p>
+                        <JobChips a={currentJob} />
+                        <ServiceQualifiers
+                          orderId={currentJob.orderId}
+                          invalidateKeys={[['kpi-live', currentJob.orderId]]}
+                        />
+                      </div>
+
+                      {/* §6 — JOB timing lives here, on the job. */}
+                      {startedMs ? (
+                        <>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className={`rounded-xl border p-3 text-center ${overExpected ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200'}`}>
+                              <div className="input-label">Elapsed{overExpected ? ' · over expected' : ''}</div>
+                              <div className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${overExpected ? 'text-amber-700' : 'text-slate-900'}`}>{fmtClock(elapsedMs)}</div>
+                            </div>
+                            <div className="rounded-xl border p-3 text-center bg-emerald-50 border-emerald-200">
+                              <div className="input-label">Working</div>
+                              <div className="text-2xl font-bold font-mono tabular-nums mt-0.5 text-emerald-700">{fmtClock(workingMs)}</div>
+                            </div>
+                          </div>
+                          {timing?.startedAt && (
+                            <p className="text-[11px] text-slate-400 text-center">
+                              Started {fmtTime(timing.startedAt)}
+                              {currentJob.expectedMinutes > 0 ? ` · expected ${fmtMins(expectedMs)}` : ''}
+                            </p>
+                          )}
+                          <KpiStrip kpi={kpiQuery.data} />
+                        </>
+                      ) : (
+                        <div className="text-center"><StatusBadge status={currentJob.orderStatus} /></div>
                       )}
-                      {a.openPause?.notes && <p className="text-xs mt-0.5 text-amber-700 italic">“{a.openPause.notes}”</p>}
-                      {a.openPause && <PauseAckLine p={a.openPause} />}
+
+                      {/* Actions — pause + finish are the two real choices here. */}
+                      {showPause ? (
+                        <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50 p-3">
+                          <label className="input-label">Why is work stopping?</label>
+                          <select value={pauseReason} onChange={(e) => setPauseReason(e.target.value)} className="input-field">
+                            {PAUSE_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                          </select>
+                          <textarea
+                            value={pauseNotes}
+                            onChange={(e) => setPauseNotes(e.target.value)}
+                            rows={2}
+                            placeholder={pauseReason === 'OTHER' ? 'Briefly, what happened?' : 'Note (optional)'}
+                            className="input-field text-sm"
+                          />
+                          <p className="text-[11px] text-orange-800">
+                            The clock stops the moment you confirm. An advisor/manager will acknowledge it.
+                          </p>
+                          {pauseMutation.isError && (
+                            <p className="text-xs text-red-700">{pauseMutation.error instanceof Error ? pauseMutation.error.message : 'Failed to pause'}</p>
+                          )}
+                          <div className="flex gap-2">
+                            <button onClick={() => pauseMutation.mutate(currentJob.orderId)} disabled={pauseMutation.isPending} className="btn-primary flex-1 py-3 font-semibold rounded-lg">
+                              {pauseMutation.isPending
+                                ? 'Stopping…'
+                                : pauseReason === 'WAITING_PARTS' ? 'Mark Waiting for Parts' : 'Confirm Pause'}
+                            </button>
+                            <button onClick={() => { setShowPause(false); setPauseNotes(''); }} className="btn-secondary py-3 px-4 rounded-lg">Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button onClick={() => setShowPause(true)} className="btn-secondary py-3 text-sm font-semibold rounded-lg">
+                            Pause / Hold-up
+                          </button>
+                          <button
+                            onClick={() => readyForQcMutation.mutate(currentJob.orderId)}
+                            disabled={readyForQcMutation.isPending}
+                            className="btn-success py-3 text-sm font-bold rounded-lg active:scale-[0.98] transition-transform"
+                          >
+                            {readyForQcMutation.isPending ? 'Sending…' : 'FINISHED → QC'}
+                          </button>
+                        </div>
+                      )}
+                      {readyForQcMutation.isError && (
+                        <p className="text-xs text-red-600 text-center">{readyForQcMutation.error instanceof Error ? readyForQcMutation.error.message : 'Failed to send to QC'}</p>
+                      )}
+
+                      {/* §3 — View Job + View Job Sheet, one tap each. */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <OpenJobLink orderId={currentJob.orderId} subtle={false} />
+                        <JobSheetLink visitId={currentJob.serviceVisitId} />
+                      </div>
                     </div>
-                    <p className="text-[11px] text-slate-500">
-                      Your work so far: {fmtMins(a.myWorkMs)}
-                    </p>
-                    {resumeMutation.isError && resumeMutation.variables === a.orderId && (
-                      <p className="text-xs text-red-600">{resumeMutation.error instanceof Error ? resumeMutation.error.message : 'Failed to resume'}</p>
+                  </div>
+                ) : (
+                  // §13 — a useful empty state that points at the next action.
+                  <div className="card p-5 text-center">
+                    <p className="text-sm text-slate-600">No job currently active.</p>
+                    {readyToStart.length > 0 ? (
+                      <p className="text-xs text-slate-400 mt-1">Select an assigned job below to begin.</p>
+                    ) : (
+                      <p className="text-xs text-slate-400 mt-1">When the front desk assigns you work it appears here.</p>
                     )}
-                    <button
-                      onClick={() => resumeMutation.mutate(a.orderId)}
-                      disabled={resumeMutation.isPending}
-                      className="btn-success w-full py-3 text-base font-bold rounded-lg active:scale-[0.98] transition-transform"
-                    >
-                      {resumeMutation.isPending && resumeMutation.variables === a.orderId
-                        ? 'Resuming…'
-                        : a.orderStatus === 'WAITING_PARTS' ? 'PARTS ARRIVED — RESUME' : 'RESUME WORK'}
-                    </button>
-                    <JobSheetLink visitId={a.serviceVisitId} />
-                    <OpenJobLink orderId={a.orderId} />
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+                )}
 
-        {/* REWORK — returned after QC; restart like any assigned job (§8) */}
-        {reworkJobs.length > 0 && (
-          <div className="card border-red-200">
-            <div className="card-header bg-red-50">
-              <h2 className="text-sm font-semibold text-red-900">Rework ({reworkJobs.length})</h2>
-            </div>
-            <div className="card-body p-0">
-              {reworkJobs.map((a) => (
-                <div key={a.assignmentId} className="px-5 py-4 border-b border-slate-100 last:border-0 space-y-2">
-                  <JobIdentity a={a} />
-                  {switchPanel(a)}
-                  {(!switchFor || switchFor.orderId !== a.orderId) && (
-                    <button
-                      onClick={() => startMutation.mutate({ orderId: a.orderId, assignmentId: a.assignmentId })}
-                      disabled={startMutation.isPending}
-                      className="btn-success w-full py-3 text-base font-bold rounded-lg active:scale-[0.98] transition-transform"
-                    >
-                      START REWORK
-                    </button>
-                  )}
-                  <JobSheetLink visitId={a.serviceVisitId} />
-                  <OpenJobLink orderId={a.orderId} />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* UP NEXT — assigned, not begun (§8/§9) */}
-        {readyToStart.length > 0 && (
-          <div className="card">
-            <div className="card-header">
-              <h2 className="text-sm font-semibold text-slate-900">Up Next ({readyToStart.length})</h2>
-            </div>
-            <div className="card-body p-0">
-              {readyToStart.map((a) => (
-                <div key={a.assignmentId} className="px-5 py-4 border-b border-slate-100 last:border-0 space-y-2">
-                  <JobIdentity a={a} />
-                  <ServiceQualifiers orderId={a.orderId} showCalculation={false} />
-                  {switchPanel(a)}
-                  {startMutation.isError &&
-                    startMutation.variables?.assignmentId === a.assignmentId &&
-                    !(startMutation.error instanceof ApiError && (startMutation.error.body as { code?: string })?.code === 'ACTIVE_WORK_ELSEWHERE') && (
-                      <p className="text-xs text-red-600">{startMutation.error instanceof Error ? startMutation.error.message : 'Failed to start'}</p>
-                    )}
-                  {(!switchFor || switchFor.orderId !== a.orderId) && (
-                    <button
-                      onClick={() => startMutation.mutate({ orderId: a.orderId, assignmentId: a.assignmentId })}
-                      disabled={startMutation.isPending}
-                      className="btn-success w-full py-3 text-base font-bold rounded-lg active:scale-[0.98] transition-transform"
-                    >
-                      {startMutation.isPending && startMutation.variables?.assignmentId === a.assignmentId ? 'Starting…' : 'START WORK'}
-                    </button>
-                  )}
-                  <JobSheetLink visitId={a.serviceVisitId} />
-                  <OpenJobLink orderId={a.orderId} />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* IN PROGRESS, NOT ON MY CLOCK — e.g. after switching away on a shared job */}
-        {otherInProgress.length > 0 && (
-          <div className="card">
-            <div className="card-header">
-              <h2 className="text-sm font-semibold text-slate-900">Also In Progress ({otherInProgress.length})</h2>
-            </div>
-            <div className="card-body p-0">
-              {otherInProgress.map((a) => (
-                <div key={a.assignmentId} className="px-5 py-4 border-b border-slate-100 last:border-0 space-y-2">
-                  <JobIdentity a={a} />
-                  <p className="text-[11px] text-slate-500">
-                    Not on your clock · your work so far: {fmtMins(a.myWorkMs)}
-                  </p>
-                  {switchPanel(a)}
-                  {(!switchFor || switchFor.orderId !== a.orderId) && (
-                    <button
-                      onClick={() => startMutation.mutate({ orderId: a.orderId, assignmentId: a.assignmentId })}
-                      disabled={startMutation.isPending}
-                      className="btn-secondary w-full py-2.5 text-sm font-semibold rounded-lg"
-                    >
-                      BACK TO THIS JOB
-                    </button>
-                  )}
-                  <JobSheetLink visitId={a.serviceVisitId} />
-                  <OpenJobLink orderId={a.orderId} />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* AWAITING QC — handed over, read-only (§8) */}
-        {awaitingQc.length > 0 && (
-          <div className="card">
-            <div className="card-header">
-              <h2 className="text-sm font-semibold text-slate-900">Awaiting QC ({awaitingQc.length})</h2>
-            </div>
-            <div className="card-body p-0">
-              {awaitingQc.map((a) => (
-                <div key={a.assignmentId} className="px-5 py-3 border-b border-slate-100 last:border-0 flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <span className="text-sm font-bold font-mono text-slate-900">{a.ticketNumber ?? '—'}</span>
-                    <span className="text-sm text-slate-500 ml-2">{a.services.join(', ')}</span>
-                    <p className="text-[11px] text-slate-400">Your work: {fmtMins(a.myWorkMs)}</p>
+                {/* Shared jobs the technician stepped off — still theirs, not on their clock. */}
+                {otherInProgress.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    {otherInProgress.map((a) => (
+                      <div key={a.assignmentId} className="card px-4 py-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <PlateHeading a={a} />
+                          <span className="badge bg-slate-100 text-slate-500 text-[10px] shrink-0">NOT ON YOUR CLOCK</span>
+                        </div>
+                        <p className="text-xs text-slate-500">{a.services.join(', ')} · your work so far {fmtMins(a.myWorkMs)}</p>
+                        {switchPanel(a)}
+                        {(!switchFor || switchFor.orderId !== a.orderId) && (
+                          <div className="flex items-center justify-between gap-2">
+                            <button
+                              onClick={() => startMutation.mutate({ orderId: a.orderId, assignmentId: a.assignmentId })}
+                              disabled={startMutation.isPending}
+                              className="btn-secondary text-sm font-semibold py-2 px-4 rounded-lg"
+                            >
+                              Back to this job
+                            </button>
+                            <OpenJobLink orderId={a.orderId} />
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                  <StatusBadge status="QC" />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+                )}
+              </JobSection>
+            )}
 
-        {/* COMPLETED TODAY — for reference (§8) */}
-        {finishedToday.length > 0 && (
-          <div className="card">
-            <div className="card-header">
-              <h2 className="text-sm font-semibold text-slate-900">Completed Today ({finishedToday.length})</h2>
-            </div>
-            <div className="card-body p-0">
-              {finishedToday.map((a) => (
-                <div key={a.assignmentId} className="px-5 py-3 border-b border-slate-100 last:border-0 flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <span className="text-sm font-bold font-mono text-slate-900">{a.ticketNumber ?? '—'}</span>
-                    <span className="text-sm text-slate-500 ml-2">{a.services.join(', ')}</span>
-                    <p className="text-[11px] text-slate-400">Your work: {fmtMins(a.myWorkMs)}</p>
-                  </div>
-                  <StatusBadge status={a.orderStatus} />
+            {/* ---- UP NEXT (§3) ---- */}
+            {show('UP_NEXT') && (
+              <JobSection
+                title="Up Next"
+                count={readyToStart.length}
+                accent="bg-blue-500"
+                emptyText="Nothing else assigned yet."
+              >
+                <div className="space-y-2">
+                  {readyToStart.map((a) => (
+                    <div key={a.assignmentId} className="card px-4 py-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <PlateHeading a={a} />
+                        <span className="badge bg-blue-50 text-blue-700 text-[10px] shrink-0">UP NEXT</span>
+                      </div>
+                      <p className="text-sm text-slate-700">{a.services.join(', ')}</p>
+                      <ConcernLine a={a} />
+                      <JobChips a={a} />
+                      {/* CR-2026-092 — missing qualifiers are answerable here, not a refusal on Start. */}
+                      <ServiceQualifiers orderId={a.orderId} showCalculation={false} />
+                      {switchPanel(a)}
+                      {startMutation.isError &&
+                        startMutation.variables?.assignmentId === a.assignmentId &&
+                        !(startMutation.error instanceof ApiError && (startMutation.error.body as { code?: string })?.code === 'ACTIVE_WORK_ELSEWHERE') && (
+                          <p className="text-xs text-red-600">{startMutation.error instanceof Error ? startMutation.error.message : 'Failed to start'}</p>
+                        )}
+                      {(!switchFor || switchFor.orderId !== a.orderId) && (
+                        <div className="flex items-center justify-between gap-3">
+                          {/* §4 — ONE primary action per state. */}
+                          <button
+                            onClick={() => startMutation.mutate({ orderId: a.orderId, assignmentId: a.assignmentId })}
+                            disabled={startMutation.isPending}
+                            className="btn-success flex-1 py-3 text-base font-bold rounded-lg active:scale-[0.98] transition-transform"
+                          >
+                            {startMutation.isPending && startMutation.variables?.assignmentId === a.assignmentId ? 'Starting…' : 'START WORK'}
+                          </button>
+                          <OpenJobLink orderId={a.orderId} />
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
+              </JobSection>
+            )}
 
-        {assignments.length === 0 && !myAssignmentsQuery.isError && (
-          <EmptyState
-            icon={
-              <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            }
-            title="Nothing assigned to you"
-            description="When the front desk assigns you a job it will appear here."
-          />
-        )}
+            {/* ---- WAITING / HELD (§3) — hold styling, never active-looking ---- */}
+            {show('WAITING') && (
+              <JobSection
+                title="Waiting / Held"
+                count={heldJobs.length}
+                accent="bg-amber-500"
+                emptyText="No jobs currently on hold."
+              >
+                <div className="space-y-2">
+                  {heldJobs.map((a) => {
+                    const label =
+                      a.orderStatus === 'WAITING_PARTS' ? 'WAITING FOR PARTS'
+                        : a.orderStatus === 'WAITING_CUSTOMER' ? 'WAITING FOR CUSTOMER'
+                          : 'PAUSED';
+                    const heldMs = a.openPause ? now - new Date(a.openPause.startedAt).getTime() : 0;
+                    return (
+                      <div key={a.assignmentId} className="card px-4 py-3 space-y-2 border-amber-200 bg-amber-50/40">
+                        <div className="flex items-center justify-between gap-2">
+                          <PlateHeading a={a} />
+                          <span className="badge bg-amber-100 text-amber-800 text-[10px] font-bold shrink-0">{label}</span>
+                        </div>
+                        <p className="text-sm text-slate-700">{a.services.join(', ')}</p>
+                        <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+                          {a.openPause && (
+                            <p className="text-xs text-amber-900">
+                              {PAUSE_REASONS.find((r) => r.value === a.openPause!.reasonCode)?.label ?? a.openPause.reasonCode}
+                              {' · '}since {fmtTime(a.openPause.startedAt)} · {fmtMins(heldMs)} waiting
+                            </p>
+                          )}
+                          {a.openPause?.notes && <p className="text-xs text-amber-700 italic mt-0.5">“{a.openPause.notes}”</p>}
+                          {a.openPause && <PauseAckLine p={a.openPause} />}
+                        </div>
+                        {resumeMutation.isError && resumeMutation.variables === a.orderId && (
+                          <p className="text-xs text-red-600">{resumeMutation.error instanceof Error ? resumeMutation.error.message : 'Failed to resume'}</p>
+                        )}
+                        <div className="flex items-center justify-between gap-3">
+                          <button
+                            onClick={() => resumeMutation.mutate(a.orderId)}
+                            disabled={resumeMutation.isPending}
+                            className="btn-success flex-1 py-3 text-base font-bold rounded-lg active:scale-[0.98] transition-transform"
+                          >
+                            {resumeMutation.isPending && resumeMutation.variables === a.orderId
+                              ? 'Resuming…'
+                              : a.orderStatus === 'WAITING_PARTS' ? 'PARTS ARRIVED — RESUME' : 'RESUME WORK'}
+                          </button>
+                          <OpenJobLink orderId={a.orderId} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </JobSection>
+            )}
+
+            {/* ---- REWORK (§3) — high attention: why it came back ---- */}
+            {show('REWORK') && (
+              <JobSection
+                title="Rework"
+                count={reworkJobs.length}
+                accent="bg-red-500"
+                emptyText="No rework assigned."
+              >
+                <div className="space-y-2">
+                  {reworkJobs.map((a) => (
+                    <div key={a.assignmentId} className="card px-4 py-3 space-y-2 border-red-200 bg-red-50/40">
+                      <div className="flex items-center justify-between gap-2">
+                        <PlateHeading a={a} />
+                        <span className="badge bg-red-100 text-red-700 text-[10px] font-bold shrink-0">REWORK</span>
+                      </div>
+                      <p className="text-sm text-slate-700">{a.services.join(', ')}</p>
+                      {a.openRework && (
+                        <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2">
+                          <p className="text-xs font-semibold text-red-900">QC feedback: {a.openRework.reasonCode}</p>
+                          {a.openRework.description && <p className="text-xs text-red-800 mt-0.5">{a.openRework.description}</p>}
+                        </div>
+                      )}
+                      <JobChips a={a} />
+                      {switchPanel(a)}
+                      {(!switchFor || switchFor.orderId !== a.orderId) && (
+                        <div className="flex items-center justify-between gap-3">
+                          <button
+                            onClick={() => startMutation.mutate({ orderId: a.orderId, assignmentId: a.assignmentId })}
+                            disabled={startMutation.isPending}
+                            className="btn-danger flex-1 py-3 text-base font-bold rounded-lg active:scale-[0.98] transition-transform"
+                          >
+                            ADDRESS REWORK
+                          </button>
+                          <OpenJobLink orderId={a.orderId} />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </JobSection>
+            )}
+
+            {/* ---- AWAITING QC (§3) — distinct, not urgent ---- */}
+            {show('QC') && (
+              <JobSection
+                title="Awaiting QC"
+                count={awaitingQc.length}
+                accent="bg-violet-500"
+                emptyText="Nothing awaiting QC."
+              >
+                <div className="card divide-y divide-slate-100">
+                  {awaitingQc.map((a) => (
+                    <div key={a.assignmentId} className="px-4 py-2.5 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="text-sm font-bold font-mono text-slate-800">{a.plate}</span>
+                        <span className="text-xs text-slate-500 ml-2">{a.services.join(', ')}</span>
+                        <p className="text-[11px] text-slate-400">Your work: {fmtMins(a.myWorkMs)}</p>
+                      </div>
+                      <span className="badge bg-violet-50 text-violet-700 text-[10px] shrink-0">AWAITING QC</span>
+                    </div>
+                  ))}
+                </div>
+              </JobSection>
+            )}
+
+            {/* ---- COMPLETED TODAY (§3) — collapsed, muted, reference only ---- */}
+            {show('DONE') && finishedToday.length > 0 && (
+              <details className="group" open={filter === 'DONE'}>
+                <summary className="flex items-center gap-2 mb-2 cursor-pointer list-none">
+                  <span className="w-2 h-2 rounded-full bg-slate-300" />
+                  <h3 className="text-sm font-bold text-slate-600">Completed Today</h3>
+                  <span className="text-xs text-slate-400">({finishedToday.length})</span>
+                  <span className="text-xs text-slate-400 group-open:hidden">— show</span>
+                  <span className="text-xs text-slate-400 hidden group-open:inline">— hide</span>
+                </summary>
+                <div className="card divide-y divide-slate-100">
+                  {finishedToday.map((a) => (
+                    <div key={a.assignmentId} className="px-4 py-2.5 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="text-sm font-bold font-mono text-slate-500">{a.plate}</span>
+                        <span className="text-xs text-slate-400 ml-2">{a.services.join(', ')}</span>
+                        <p className="text-[11px] text-slate-400">Your work: {fmtMins(a.myWorkMs)}</p>
+                      </div>
+                      <span className="badge bg-emerald-50 text-emerald-600 text-[10px] shrink-0">DONE</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {assignments.length === 0 && !myAssignmentsQuery.isError && (
+              <EmptyState
+                title="Nothing assigned to you"
+                description="When the front desk assigns you a job it will appear here."
+              />
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
