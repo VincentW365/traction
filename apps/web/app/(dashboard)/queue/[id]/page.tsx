@@ -45,11 +45,15 @@ interface TicketDetail {
     oilBrandRequested: string | null;
     oilGradeRequested: string | null;
     partsReadiness: string;
+    // CR-2026-102 §6 — the intake note (what the walk-in customer asked for).
+    notes?: string | null;
     customer: { id: string; firstName: string; lastName: string; phone: string };
     vehicle: { id: string; plateNumber: string; make: string | null; model: string | null };
     appointment: {
       id: string;
       scheduledStartAt: string;
+      // CR-2026-102 §6 — the appointment's stated reason for the visit.
+      notes?: string | null;
       services: Array<{ serviceType: { name: string; code: string } }>;
     } | null;
     serviceOrders?: Array<{ items: Array<{ serviceType: { name: string; code: string } }> }>;
@@ -160,6 +164,10 @@ export default function QueueTicketDetailPage() {
   const canInspect = ['ADMIN', 'SERVICE_ADVISOR', 'TECHNICIAN'].includes(user?.roleCode ?? '');
   // CR-2026-057 — who can create/approve/assign service orders (API enforces).
   const canManageOrders = ['ADMIN', 'SERVICE_ADVISOR'].includes(user?.roleCode ?? '');
+  // CR-2026-102 — Ticket Details adapts to the role: technicians get the
+  // technician-safe vehicle view and NO customer-directory navigation. Every
+  // visible link must lead somewhere this role can actually go.
+  const isTechnician = user?.roleCode === 'TECHNICIAN';
 
   // Override form state
   const [showOverrideForm, setShowOverrideForm] = useState(false);
@@ -619,7 +627,10 @@ export default function QueueTicketDetailPage() {
   // so a walk-in shows what it actually came in for instead of "Walk-in service".
   const services = ticket.serviceDescription ?? 'No services recorded';
   const orders = ordersQuery.data ?? [];
-  const canOverride = !ticket.overrideActive && DISPATCHABLE_STATUSES.includes(ticket.displayStatus);
+  // CR-2026-102 §8 — overrides are advisor/manager actions (QUEUE_OVERRIDE);
+  // never show a technician a button that can only 403.
+  const canOverride =
+    canManageOrders && !ticket.overrideActive && DISPATCHABLE_STATUSES.includes(ticket.displayStatus);
   const showCompletionSection = sv.status === 'READY_FOR_PICKUP' || sv.status === 'QC';
   const isManager = ['ADMIN'].includes(user?.roleCode ?? '');
   // CR-2026-085 — the customer's own status link, available for every visit rather
@@ -785,6 +796,35 @@ export default function QueueTicketDetailPage() {
         </div>
       )}
 
+      {/* CR-2026-102 §6 — the SERVICE REQUEST front and centre: why the vehicle
+          is here and what was asked for, before any administration. */}
+      {(sv.appointment?.notes || sv.notes || ticket.serviceDescription) && (
+        <div className="card mb-6 border-blue-200">
+          <div className="card-header bg-blue-50/60">
+            <h2 className="text-sm font-semibold text-blue-900">Service Request</h2>
+          </div>
+          <div className="card-body space-y-2">
+            {(sv.appointment?.notes || sv.notes) && (
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-wide text-blue-800">Reason for visit</div>
+                <p className="text-sm text-slate-900 mt-0.5">“{sv.appointment?.notes ?? sv.notes}”</p>
+              </div>
+            )}
+            {ticket.serviceDescription && (
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Requested services</div>
+                <p className="text-sm text-slate-900 mt-0.5">{ticket.serviceDescription}</p>
+              </div>
+            )}
+            {sv.appointment?.scheduledStartAt && (
+              <p className="text-[11px] text-slate-500">
+                Appointment · {new Date(sv.appointment.scheduledStartAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Main Info Card */}
       <div className="card mb-6">
         <div className="card-header">
@@ -800,9 +840,17 @@ export default function QueueTicketDetailPage() {
             <div>
               <div className="input-label">Customer</div>
               <p className="text-sm font-medium">
-                <Link href={`/customers/${sv.customer.id}`} className="text-blue-600 hover:underline">
-                  {sv.customer.firstName} {sv.customer.lastName}
-                </Link>
+                {/* §4 — for technicians the name is INFORMATION, not a gateway
+                    into the Customer Directory they cannot access. */}
+                {isTechnician ? (
+                  <span className="text-slate-900">
+                    {sv.customer.firstName} {sv.customer.lastName}
+                  </span>
+                ) : (
+                  <Link href={`/customers/${sv.customer.id}`} className="text-blue-600 hover:underline">
+                    {sv.customer.firstName} {sv.customer.lastName}
+                  </Link>
+                )}
               </p>
             </div>
             <div>
@@ -812,7 +860,12 @@ export default function QueueTicketDetailPage() {
             <div>
               <div className="input-label">Vehicle</div>
               <p className="text-sm font-medium">
-                <Link href={`/vehicles/${sv.vehicle.id}`} className="text-blue-600 hover:underline">
+                {/* §1 — the vehicle is ALWAYS clickable; technicians land on the
+                    technician-safe read-only view, staff on the admin record. */}
+                <Link
+                  href={isTechnician ? `/technician/vehicles/${sv.vehicle.id}` : `/vehicles/${sv.vehicle.id}`}
+                  className="text-blue-600 hover:underline"
+                >
                   {sv.vehicle.plateNumber}
                 </Link>
                 <span className="text-slate-500 ml-1.5">
@@ -1650,25 +1703,30 @@ export default function QueueTicketDetailPage() {
         />
       </div>
 
-      {/* CR-2026-096 — customer contact via the shared composer + history */}
-      <div className="card mb-6">
-        <div className="card-header flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-900">Customer Communication</h2>
-          <div className="flex items-center gap-1.5">
-            <button onClick={openComposer} className="btn-primary text-xs py-1 px-3">Contact Customer</button>
-            <button onClick={() => logCall.mutate()} disabled={logCall.isPending} className="btn-secondary text-xs py-1 px-2" title="Record that the customer was called — nothing is sent">
-              {logCall.isPending ? 'Logging…' : 'Log Call'}
-            </button>
+      {/* CR-2026-096 — customer contact via the shared composer + history.
+          CR-2026-102 §5/§8 — customer communication is advisor/manager work
+          (NOTIFY_SEND); technicians never see actions that can only 403. */}
+      {canManageOrders && (
+        <div className="card mb-6">
+          <div className="card-header flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900">Customer Communication</h2>
+            <div className="flex items-center gap-1.5">
+              <button onClick={openComposer} className="btn-primary text-xs py-1 px-3">Contact Customer</button>
+              <button onClick={() => logCall.mutate()} disabled={logCall.isPending} className="btn-secondary text-xs py-1 px-2" title="Record that the customer was called — nothing is sent">
+                {logCall.isPending ? 'Logging…' : 'Log Call'}
+              </button>
+            </div>
+          </div>
+          <div className="card-body p-0">
+            {logCall.isError && <p className="text-xs text-red-600 px-4 pt-3">{logCall.error instanceof Error ? logCall.error.message : 'Failed to log call'}</p>}
+            <CommunicationHistory serviceVisitId={sv.id} bare />
           </div>
         </div>
-        <div className="card-body p-0">
-          {logCall.isError && <p className="text-xs text-red-600 px-4 pt-3">{logCall.error instanceof Error ? logCall.error.message : 'Failed to log call'}</p>}
-          <CommunicationHistory serviceVisitId={sv.id} bare />
-        </div>
-      </div>
+      )}
 
       {/* CR-2026-085 — one prominent button; the details live in a modal. */}
-      {showCompletionSection && (
+      {/* CR-2026-102 §8 — completion is front-desk work (CHECKIN_PERFORM). */}
+      {canManageOrders && showCompletionSection && (
         <div className="card mb-6 border-emerald-200">
           <div className="card-body flex flex-wrap items-center justify-between gap-3">
             <div>

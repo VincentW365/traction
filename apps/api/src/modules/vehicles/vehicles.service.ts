@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
@@ -125,6 +126,216 @@ export class VehiclesService {
     }
 
     return vehicle;
+  }
+
+  /**
+   * CR-2026-102 — the technician-safe, read-only vehicle view.
+   *
+   * CONTEXTUAL authorization, not directory permission: a technician may read
+   * the operational record of a vehicle they have (or have had) an assignment
+   * on — never browse the fleet. Advisors/managers pass through (their
+   * directory access is broader anyway). The payload is a read model: vehicle
+   * facts, the customer SUMMARY (name/phone — context, not a gateway), the
+   * current live visit with its jobs and inspections, and the vehicle's
+   * previous service history. Nothing in it is writable.
+   */
+  async getTechnicianView(vehicleId: string, user: { sub: string; role: string }) {
+    const vehicle = await this.prisma.vehicle.findUnique({
+      where: { id: vehicleId },
+      select: {
+        id: true,
+        vehicleCode: true,
+        plateNumber: true,
+        vin: true,
+        make: true,
+        model: true,
+        modelYear: true,
+        color: true,
+        odometer: true,
+        serviceClass: true,
+        weightClass: true,
+        fuelType: true,
+        transmission: true,
+        drivetrain: true,
+        engineNo: true,
+        driveSide: true,
+        customer: { select: { firstName: true, lastName: true, phone: true, notes: true } },
+      },
+    });
+    if (!vehicle) throw new NotFoundException(`Vehicle with id ${vehicleId} not found`);
+
+    // §2 — contextual gate for technicians: this vehicle must be on THEIR work.
+    if (user.role === 'TECHNICIAN') {
+      const tech = await this.prisma.technician.findUnique({
+        where: { userAccountId: user.sub },
+        select: { id: true },
+      });
+      const association = tech
+        ? await this.prisma.technicianAssignment.findFirst({
+            where: {
+              technicianId: tech.id,
+              serviceOrder: { serviceVisit: { vehicleId } },
+            },
+            select: { id: true },
+          })
+        : null;
+      if (!association) {
+        throw new ForbiddenException(
+          'This vehicle is not on your work. Open vehicles from your assigned jobs.',
+        );
+      }
+    }
+
+    const TERMINAL = ['CLOSED', 'ABANDONED', 'CANCELLED'];
+    const currentVisitRow = await this.prisma.serviceVisit.findFirst({
+      where: {
+        vehicleId,
+        status: { notIn: TERMINAL as never[] },
+        sourceType: { not: 'HISTORICAL_IMPORT' },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        visitNumber: true,
+        status: true,
+        sourceType: true,
+        checkedInAt: true,
+        mileageIn: true,
+        notes: true,
+        appointment: { select: { scheduledStartAt: true, notes: true } },
+        queueTicket: { select: { id: true, ticketNumber: true } },
+        serviceOrders: {
+          where: { status: { not: 'CANCELLED' } },
+          select: {
+            id: true,
+            status: true,
+            notes: true,
+            items: { select: { serviceType: { select: { name: true } } } },
+            assignments: {
+              where: { endedAt: null },
+              select: {
+                technician: {
+                  select: { employeeCode: true, userAccount: { select: { fullName: true } } },
+                },
+              },
+            },
+          },
+        },
+        inspections: {
+          select: { id: true, inspectionNumber: true, status: true, kind: true, createdAt: true },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    // Previous visits — same shape as the job workspace's history (CR-2026-101).
+    const historyRows = await this.prisma.serviceVisit.findMany({
+      where: { vehicleId, ...(currentVisitRow ? { id: { not: currentVisitRow.id } } : {}) },
+      select: {
+        id: true,
+        visitNumber: true,
+        sourceType: true,
+        status: true,
+        checkedInAt: true,
+        createdAt: true,
+        mileageIn: true,
+        notes: true,
+        serviceOrders: {
+          select: {
+            status: true,
+            items: { select: { serviceType: { select: { name: true } } } },
+            reworks: { select: { id: true } },
+            pauses: { where: { reasonCode: 'WAITING_PARTS' }, select: { id: true } },
+          },
+        },
+        inspections: {
+          select: {
+            id: true,
+            inspectionNumber: true,
+            status: true,
+            createdAt: true,
+            comments: true,
+            recommendations: {
+              select: { severity: true, description: true, customerDecision: true },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    return {
+      vehicle: {
+        id: vehicle.id,
+        vehicleCode: vehicle.vehicleCode,
+        plateNumber: vehicle.plateNumber,
+        vin: vehicle.vin,
+        make: vehicle.make,
+        model: vehicle.model,
+        modelYear: vehicle.modelYear,
+        color: vehicle.color,
+        odometer: vehicle.odometer,
+        serviceClass: vehicle.serviceClass,
+        weightClass: vehicle.weightClass,
+        fuelType: vehicle.fuelType,
+        transmission: vehicle.transmission,
+        drivetrain: vehicle.drivetrain,
+        engineNo: vehicle.engineNo,
+        driveSide: vehicle.driveSide,
+      },
+      // The customer SUMMARY (§5): job context, never a directory gateway.
+      customer: {
+        name: `${vehicle.customer.firstName} ${vehicle.customer.lastName}`,
+        phone: vehicle.customer.phone,
+        serviceNotes: vehicle.customer.notes,
+      },
+      currentVisit: currentVisitRow
+        ? {
+            serviceVisitId: currentVisitRow.id,
+            visitNumber: currentVisitRow.visitNumber ?? null,
+            status: currentVisitRow.status,
+            sourceType: currentVisitRow.sourceType,
+            checkedInAt: currentVisitRow.checkedInAt,
+            mileageIn: currentVisitRow.mileageIn,
+            // The stated reason for the visit (§6).
+            concern: currentVisitRow.appointment?.notes ?? currentVisitRow.notes ?? null,
+            appointmentAt: currentVisitRow.appointment?.scheduledStartAt ?? null,
+            queueTicketId: currentVisitRow.queueTicket?.id ?? null,
+            ticketNumber: currentVisitRow.queueTicket?.ticketNumber ?? null,
+            jobs: currentVisitRow.serviceOrders.map((o) => ({
+              orderId: o.id,
+              status: o.status,
+              advisorNotes: o.notes,
+              services: o.items.map((i) => i.serviceType.name),
+              technicians: o.assignments.map(
+                (a) => a.technician.userAccount?.fullName ?? a.technician.employeeCode,
+              ),
+            })),
+            inspections: currentVisitRow.inspections,
+          }
+        : null,
+      history: historyRows.map((v) => ({
+        serviceVisitId: v.id,
+        visitNumber: v.visitNumber ?? null,
+        sourceType: v.sourceType,
+        status: v.status,
+        date: v.checkedInAt ?? v.createdAt,
+        mileageIn: v.mileageIn,
+        notes: v.notes,
+        services: v.serviceOrders.flatMap((o) => o.items.map((i) => i.serviceType.name)),
+        hadRework: v.serviceOrders.some((o) => o.reworks.length > 0),
+        hadPartsWait: v.serviceOrders.some((o) => o.pauses.length > 0),
+        inspections: v.inspections.map((i) => ({
+          id: i.id,
+          inspectionNumber: i.inspectionNumber,
+          status: i.status,
+          date: i.createdAt,
+          comments: i.comments,
+          recommendations: i.recommendations,
+        })),
+      })),
+    };
   }
 
   /**

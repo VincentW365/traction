@@ -15,6 +15,7 @@ import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { api, getToken } from '../../../../lib/api-client';
+import { useAuth } from '../../../../hooks/use-auth';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../components/status-badge';
@@ -144,6 +145,10 @@ export default function VisitRecordPage() {
   const params = useParams();
   const visitId = params.id as string;
   const [tab, setTab] = useState<Tab>('Overview');
+  // CR-2026-102 §8 — links adapt to the role: technicians get the
+  // technician-safe vehicle view and no Customer Directory navigation.
+  const { user } = useAuth();
+  const isTechnician = user?.roleCode === 'TECHNICIAN';
 
   const q = useQuery<VisitRecord>({
     queryKey: ['visit-record', visitId],
@@ -213,11 +218,20 @@ export default function VisitRecordPage() {
         <div className="card-body grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-3 text-sm">
           <div>
             <p className="text-[11px] uppercase tracking-wide text-slate-400">Customer</p>
-            <Link href={`/customers/${v.customer.id}`} className="font-medium text-blue-600 hover:underline">{customerName}</Link>
+            {isTechnician ? (
+              <p className="font-medium text-slate-900">{customerName}</p>
+            ) : (
+              <Link href={`/customers/${v.customer.id}`} className="font-medium text-blue-600 hover:underline">{customerName}</Link>
+            )}
           </div>
           <div>
             <p className="text-[11px] uppercase tracking-wide text-slate-400">Vehicle</p>
-            <Link href={`/vehicles/${v.vehicle.id}`} className="font-medium text-blue-600 hover:underline">{vehicleLabel}</Link>
+            <Link
+              href={isTechnician ? `/technician/vehicles/${v.vehicle.id}` : `/vehicles/${v.vehicle.id}`}
+              className="font-medium text-blue-600 hover:underline"
+            >
+              {vehicleLabel}
+            </Link>
           </div>
           <div>
             <p className="text-[11px] uppercase tracking-wide text-slate-400">Plate</p>

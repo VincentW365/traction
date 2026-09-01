@@ -302,7 +302,11 @@ export default function TechnicianJobWorkspace() {
           <div className="bg-blue-600 text-white px-5 py-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-3xl font-black font-mono tracking-wide">{vehicle.plateNumber}</div>
+                {/* CR-2026-102 §1/§10 — the vehicle itself opens the technician-safe
+                    vehicle view (full record + history). */}
+                <Link href={`/technician/vehicles/${vehicle.id}`} className="text-3xl font-black font-mono tracking-wide hover:underline">
+                  {vehicle.plateNumber}
+                </Link>
                 <div className="text-sm text-blue-100 mt-0.5">
                   {[vehicle.modelYear, vehicle.make, vehicle.model].filter(Boolean).join(' ')}
                   {vehicle.serviceClass ? ` · ${VEHICLE_CLASS_LABEL[vehicle.serviceClass] ?? ''}` : ''}

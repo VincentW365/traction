@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api-client';
+import { useAuth } from '../hooks/use-auth';
 
 interface SearchResults {
   query: string;
@@ -28,6 +29,11 @@ function fmtD(iso: string): string {
 
 export function GlobalSearch() {
   const router = useRouter();
+  // CR-2026-102 §8 — results adapt to the role: technicians get the
+  // technician-safe vehicle view, and no Customer Directory rows at all
+  // (that destination can only 403 for them).
+  const { user } = useAuth();
+  const isTechnician = user?.roleCode === 'TECHNICIAN';
   const [term, setTerm] = useState('');
   const [debounced, setDebounced] = useState('');
   const [open, setOpen] = useState(false);
@@ -60,7 +66,9 @@ export function GlobalSearch() {
   };
 
   const r = q.data;
-  const hasResults = !!r && (r.customers.length + r.vehicles.length + r.visits.length + r.inspections.length > 0);
+  const hasResults =
+    !!r &&
+    (isTechnician ? 0 : r.customers.length) + r.vehicles.length + r.visits.length + r.inspections.length > 0;
 
   return (
     <div ref={boxRef} className="relative w-full max-w-md">
@@ -82,7 +90,7 @@ export function GlobalSearch() {
           {q.isLoading && <p className="px-4 py-3 text-sm text-slate-500">Searching…</p>}
           {q.data && !hasResults && <p className="px-4 py-3 text-sm text-slate-500">No records match “{q.data.query}”.</p>}
 
-          {r && r.customers.length > 0 && (
+          {r && !isTechnician && r.customers.length > 0 && (
             <div className="py-1">
               <p className="px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Customers</p>
               {r.customers.map((c) => (
@@ -98,7 +106,7 @@ export function GlobalSearch() {
             <div className="py-1 border-t border-slate-100">
               <p className="px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Vehicles</p>
               {r.vehicles.map((v) => (
-                <button key={v.id} onClick={() => go(`/vehicles/${v.id}`)} className="w-full text-left px-4 py-2 hover:bg-blue-50/50">
+                <button key={v.id} onClick={() => go(isTechnician ? `/technician/vehicles/${v.id}` : `/vehicles/${v.id}`)} className="w-full text-left px-4 py-2 hover:bg-blue-50/50">
                   <p className="text-sm font-medium text-slate-900">{v.label} · <span className="font-mono">{v.plateNumber}</span></p>
                   {v.owner && <p className="text-xs text-slate-500">Owner: {v.owner.name}</p>}
                 </button>

@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { api } from '../../../../lib/api-client';
+import { useAuth } from '../../../../hooks/use-auth';
 import { useSiteId } from '../../../../hooks/use-site';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
@@ -122,6 +123,12 @@ export default function CustomerDetailPage() {
   const params = useParams();
   const customerId = params.id as string;
   const queryClient = useQueryClient();
+  // CR-2026-102 §12 — Customer Directory is advisor/manager territory. A
+  // technician landing here gets a clean role-appropriate card, not a raw 403;
+  // their job screens carry the customer context they need. (The conditional
+  // return lives after every hook — see below — to keep hook order stable.)
+  const { user } = useAuth();
+  const isTechnician = user?.roleCode === 'TECHNICIAN';
 
   const [showAddVehicle, setShowAddVehicle] = useState(false);
   const [showComposer, setShowComposer] = useState(false);
@@ -160,7 +167,8 @@ export default function CustomerDetailPage() {
   const { data: customer, isLoading, error } = useQuery<CustomerDetail>({
     queryKey: ['customer', customerId],
     queryFn: () => api.get(`/customers/${customerId}`),
-    enabled: !!customerId,
+    // CR-2026-102 — never fire the directory read for a technician.
+    enabled: !!customerId && !isTechnician,
   });
 
   // Check-in is an appointment action: only offer it when this customer has an
@@ -264,6 +272,25 @@ export default function CustomerDetailPage() {
       setEditingNotes(false);
     },
   });
+
+  // CR-2026-102 §12 — clean role-appropriate response for a technician who
+  // navigates here directly (after all hooks; hook order stays stable).
+  if (isTechnician) {
+    return (
+      <div className="page-container">
+        <PageHeader title="Customer" breadcrumbs={[{ label: 'My Jobs', href: '/technician' }, { label: 'Customer' }]} />
+        <div className="card p-6 text-center border-blue-200 bg-blue-50">
+          <p className="text-sm text-blue-900">
+            Customer records are managed by the advisor. The customer context for your work is on the
+            job itself — open it from My Jobs.
+          </p>
+          <Link href="/technician" className="btn-primary text-sm inline-block mt-3">
+            Back to My Jobs
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return <div className="page-container"><LoadingState message="Loading customer..." /></div>;

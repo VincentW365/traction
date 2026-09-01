@@ -17,6 +17,7 @@ import { VehicleSearchDto } from './dto/vehicle-search.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
 
 @ApiTags('Vehicles')
@@ -52,6 +53,26 @@ export class VehiclesController {
       customerId,
       includeHistorical === 'true',
     );
+  }
+
+  /**
+   * CR-2026-102 — the technician-safe read-only vehicle view.
+   *
+   * QUEUE_VIEW (every operational role) + a CONTEXTUAL gate in the service:
+   * a technician reads only vehicles tied to their own assignments — never the
+   * directory. Data visibility, administrative permission and navigation
+   * permission are three different things; this endpoint grants the first only.
+   */
+  @Get(':id/operational')
+  @RequirePermission(PERMISSIONS.QUEUE_VIEW)
+  @ApiOperation({
+    summary: 'Read-only operational vehicle view (technician: contextual — own assignments only)',
+  })
+  async operationalView(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.vehiclesService.getTechnicianView(id, { sub: user.sub, role: user.role });
   }
 
   @Get(':id')

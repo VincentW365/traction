@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { api } from '../../../../lib/api-client';
+import { useAuth } from '../../../../hooks/use-auth';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { CustomerNotificationComposer } from '../../../../components/notification-composer';
@@ -41,6 +42,11 @@ interface VehicleDetail {
 export default function VehicleDetailPage() {
   const params = useParams();
   const vehicleId = params.id as string;
+  // CR-2026-102 §12 — this is the vehicle ADMINISTRATION screen. A technician
+  // landing here (old link, typed URL) gets a clean redirect to the
+  // technician-safe view of the same vehicle, not a raw permission error.
+  const { user } = useAuth();
+  const isTechnician = user?.roleCode === 'TECHNICIAN';
 
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
@@ -60,7 +66,8 @@ export default function VehicleDetailPage() {
   const { data: vehicle, isLoading, error } = useQuery<VehicleDetail>({
     queryKey: ['vehicle', vehicleId],
     queryFn: () => api.get(`/vehicles/${vehicleId}`),
-    enabled: !!vehicleId,
+    // Never fire the admin read for a technician — their view is elsewhere.
+    enabled: !!vehicleId && !isTechnician,
   });
 
   const editMutation = useMutation({
@@ -121,6 +128,26 @@ export default function VehicleDetailPage() {
       engineNo: editEngineNo || undefined,
       driveSide: editDriveSide || undefined,
     });
+  }
+
+  if (isTechnician) {
+    return (
+      <div className="page-container">
+        <PageHeader title="Vehicle" breadcrumbs={[{ label: 'My Jobs', href: '/technician' }, { label: 'Vehicle' }]} />
+        <div className="card p-6 text-center border-blue-200 bg-blue-50">
+          <p className="text-sm text-blue-900">
+            This is the vehicle administration screen. Your read-only vehicle view has everything you
+            need for the job.
+          </p>
+          <Link
+            href={`/technician/vehicles/${vehicleId}`}
+            className="btn-primary text-sm inline-block mt-3"
+          >
+            Open Vehicle (technician view)
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   if (isLoading) {
