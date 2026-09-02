@@ -84,9 +84,10 @@ describe('Job Times report (§12–§17)', () => {
   });
 
   it('shows the waiting breakdown, not an unexplained average', () => {
-    expect(src).toContain('Waiting Parts');
-    expect(src).toContain('Waiting Customer');
-    expect(src).toContain('Other Paused');
+    // CR-2026-104 — the delay breakdown lives in the Operational Delays table.
+    expect(src).toContain('Waiting for Parts');
+    expect(src).toContain('Waiting for Customer');
+    expect(src).toContain('Other Paused Time');
   });
 
   it('supports the required filters', () => {

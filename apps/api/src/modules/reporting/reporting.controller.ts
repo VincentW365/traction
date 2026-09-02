@@ -2,6 +2,8 @@ import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { ReportingService, TrendMetric } from './reporting.service';
 import { JobTimesService } from './job-times.service';
+import { PerformanceReportService } from './performance-report.service';
+import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -15,6 +17,7 @@ export class ReportingController {
   constructor(
     private reportingService: ReportingService,
     private jobTimesService: JobTimesService,
+    private performanceReport: PerformanceReportService,
   ) {}
 
   // CR-2026-099 — bad input is the CLIENT's problem, stated plainly. These used
@@ -85,6 +88,47 @@ export class ReportingController {
   ) {
     this.assertDateRange(siteId, startDate, endDate);
     return this.reportingService.getTechnicianUtilization(siteId, startDate, endDate, includeHistorical === 'true');
+  }
+
+  /**
+   * CR-2026-104 — the Service Center Performance Report: ONE shared reporting
+   * model composed from the verified engines (KPIs, Job Times, rework), so the
+   * screen, the print and the CSV can never disagree.
+   */
+  @Get('performance-report')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'The management performance report model (executive summary → detail)' })
+  @ApiQuery({ name: 'technicianId', required: false, type: String })
+  @ApiQuery({ name: 'vehicleClass', required: false, type: String })
+  @ApiQuery({ name: 'sourceType', required: false, type: String })
+  @ApiQuery({ name: 'serviceTypeId', required: false, type: String })
+  @ApiQuery({ name: 'compare', required: false, type: Boolean, description: 'Compare with the previous period of equal length' })
+  async getPerformanceReport(
+    @Query('siteId') siteId: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+    @CurrentUser() user: JwtPayload,
+    @Query('technicianId') technicianId?: string,
+    @Query('vehicleClass') vehicleClass?: string,
+    @Query('sourceType') sourceType?: string,
+    @Query('serviceTypeId') serviceTypeId?: string,
+    @Query('compare') compareFlag?: string,
+  ) {
+    this.assertDateRange(siteId, startDate, endDate);
+    if (vehicleClass && !['SEDAN_CLASS', 'SUV_CLASS', 'UNKNOWN_REQUIRES_REVIEW'].includes(vehicleClass)) {
+      throw new BadRequestException('vehicleClass must be SEDAN_CLASS, SUV_CLASS or UNKNOWN_REQUIRES_REVIEW');
+    }
+    if (sourceType && !['APPOINTMENT', 'WALKIN'].includes(sourceType)) {
+      throw new BadRequestException('sourceType must be APPOINTMENT or WALKIN');
+    }
+    return this.performanceReport.getReport(
+      siteId,
+      startDate,
+      endDate,
+      { technicianId, vehicleClass, sourceType, serviceTypeId },
+      compareFlag === 'true',
+      user.sub,
+    );
   }
 
   /**

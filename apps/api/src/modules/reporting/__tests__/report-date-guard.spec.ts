@@ -16,8 +16,9 @@ function build() {
     getKpis: vi.fn(async () => []),
   };
   const jobTimes = { getJobTimes: vi.fn(async () => ({ jobs: [], byTechnician: [], summary: {} })) };
+  const perfReport = { getReport: vi.fn(async () => ({})) };
   return {
-    controller: new ReportingController(reporting as never, jobTimes as never),
+    controller: new ReportingController(reporting as never, jobTimes as never, perfReport as never),
     reporting,
     jobTimes,
   };

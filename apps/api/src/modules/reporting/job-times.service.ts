@@ -93,7 +93,11 @@ export class JobTimesService {
           : {}),
       },
       include: {
-        items: { select: { serviceType: { select: { id: true, name: true } } } },
+        items: {
+          select: {
+            serviceType: { select: { id: true, code: true, name: true, baseDurationMinutes: true } },
+          },
+        },
         pauses: { select: { reasonCode: true, startedAt: true, endedAt: true } },
         assignments: {
           select: {
@@ -161,6 +165,14 @@ export class JobTimesService {
       return {
         orderId: o.id,
         status: o.status,
+        // CR-2026-104 — distinct-visit counting ("one car, many jobs" must never
+        // inflate vehicle counts) and booked-time targets ride the row.
+        serviceVisitId: o.serviceVisitId,
+        expectedMinutes: o.items.reduce(
+          (sum, i) => sum + (i.serviceType.baseDurationMinutes ?? 0),
+          0,
+        ),
+        serviceCodes: o.items.map((i) => i.serviceType.code),
         ticketNumber: v.queueTicket?.ticketNumber ?? null,
         visitNumber: v.visitNumber ?? null,
         customerName: `${v.customer.firstName} ${v.customer.lastName}`,
