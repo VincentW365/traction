@@ -62,6 +62,62 @@ function compare(value: number, prev: number | null) {
 
 type JobRow = Awaited<ReturnType<JobTimesService['getJobTimes']>>['jobs'][number];
 
+/* -------------------------------------------------------------------------
+ * CR-2026-104b — the executive insight engine.
+ *
+ * Deterministic, factual, traceable: every insight is computed from the SAME
+ * aggregates the KPI cards render, states WHAT changed and BY HOW MUCH, and
+ * never speculates about why. Insights are ranked by BUSINESS SIGNIFICANCE —
+ * magnitude × volume affected — not by percentage change, so a 100% jump from
+ * 1 to 2 events never outranks a 20-minute shift across 40 vehicles. Small
+ * samples are suppressed by explicit minimums, published in the payload.
+ * ------------------------------------------------------------------------- */
+
+export interface ExecInsight {
+  id: string;
+  tone: 'positive' | 'attention';
+  title: string;
+  /** The full factual sentence, value + comparison included. */
+  detail: string;
+  /** Business-significance score used for ranking (minutes-weighted). */
+  significance: number;
+  /** The numbers behind the sentence — traceable to the report dataset. */
+  evidence: Record<string, number | string | null>;
+}
+
+export const INSIGHT_MINIMUMS = {
+  /** Time-movement insights need at least this many completed jobs per period. */
+  timeSampleJobs: 5,
+  /** …and the average must move by ≥ this share and ≥ this many minutes. */
+  timeMovePct: 10,
+  timeMoveMinMs: 5 * 60000,
+  /** Wait-time movement: minutes threshold. */
+  waitMoveMinMinutes: 5,
+  /** Rework movement: percentage points, with a minimum eligible base. */
+  reworkMovePts: 2,
+  reworkMinOrders: 10,
+  /** Throughput movement: share and absolute floor. */
+  throughputMovePct: 15,
+  throughputMinVehicles: 5,
+  /** Delay-frequency insights: minimum affected jobs (either period) or total delay. */
+  delayMinJobs: 3,
+  delayMinTotalMs: 2 * 3600_000,
+  /** Source-gap insight: completed jobs per source and the gap share. */
+  sourceMinJobs: 5,
+  sourceGapPct: 25,
+  /** Over-target service insight: volume, +share of target and absolute floor. */
+  serviceMinVolume: 3,
+  serviceOverPct: 25,
+  serviceOverMinMs: 10 * 60000,
+} as const;
+
+function fmtDurS(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60000));
+  const h = Math.floor(m / 60);
+  return h > 0 ? `${h}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`;
+}
+const pctOf = (diff: number, base: number) => (base > 0 ? Math.round((Math.abs(diff) / base) * 100) : null);
+
 @Injectable()
 export class PerformanceReportService {
   constructor(
@@ -446,6 +502,16 @@ export class PerformanceReportService {
       });
     }
 
+    // ---- CR-2026-104b: executive insights — ranked by business significance ----
+    const insights = this.buildInsights({
+      summary,
+      delays,
+      sourceComparison,
+      serviceRows: serviceTypes.rows,
+      attentionCount: attention.length,
+      hasCompare: comparePrevious,
+    });
+
     return {
       meta: {
         title: "Service Center Performance Report",
@@ -476,7 +542,249 @@ export class PerformanceReportService {
       serviceTypes,
       trend,
       attention,
+      insights,
+      insightMinimums: INSIGHT_MINIMUMS,
       hasData: jobs.length > 0 || flow.totalArrivals > 0,
+    };
+  }
+
+  /**
+   * CR-2026-104b — build the ranked highlight/attention insights.
+   *
+   * Every candidate has an explicit data minimum; every emitted insight
+   * carries its evidence. Significance ≈ minutes of impact × jobs affected,
+   * never raw percentage change.
+   */
+  private buildInsights(input: {
+    summary: {
+      vehiclesServiced: { value: number; prev: number | null; diff: number | null };
+      jobsCompleted: { value: number; prev: number | null };
+      avgElapsedMs: { value: number; prev: number | null; diff: number | null };
+      medianElapsedMs: number;
+      avgWaitMinutes: { value: number; prev: number | null; diff: number | null };
+      waitingPartsJobs: { value: number; prev: number | null };
+      reworkRate: { value: number; prev: number | null; diff: number | null };
+    };
+    delays: Array<{ type: string; jobsAffected: number; totalMs: number; avgMs: number }>;
+    sourceComparison: {
+      appointment: { jobsCompleted: number; avgElapsedMs: number };
+      walkIn: { jobsCompleted: number; avgElapsedMs: number };
+    };
+    serviceRows: Array<{ name: string; volume: number; targetMinutes: number; avgElapsedMs: number; varianceElapsedMs: number }>;
+    attentionCount: number;
+    hasCompare: boolean;
+  }): { highlights: ExecInsight[]; attention: ExecInsight[] } {
+    const M = INSIGHT_MINIMUMS;
+    const s = input.summary;
+    const out: ExecInsight[] = [];
+    const sampleOk =
+      s.jobsCompleted.value >= M.timeSampleJobs && (s.jobsCompleted.prev ?? 0) >= M.timeSampleJobs;
+
+    // 1. Average service time movement (elapsed base; median quoted alongside).
+    if (input.hasCompare && sampleOk && s.avgElapsedMs.prev != null && s.avgElapsedMs.diff != null) {
+      const pct = pctOf(s.avgElapsedMs.diff, s.avgElapsedMs.prev);
+      if (
+        Math.abs(s.avgElapsedMs.diff) >= M.timeMoveMinMs &&
+        pct != null &&
+        pct >= M.timeMovePct
+      ) {
+        const improved = s.avgElapsedMs.diff < 0;
+        out.push({
+          id: 'SERVICE_TIME_MOVE',
+          tone: improved ? 'positive' : 'attention',
+          title: improved ? 'Improved Service Time' : 'Service Time Increased',
+          detail:
+            `Average elapsed service time ${improved ? 'decreased' : 'increased'} from ` +
+            `${fmtDurS(s.avgElapsedMs.prev)} to ${fmtDurS(s.avgElapsedMs.value)}` +
+            `${pct != null ? `, ${improved ? 'an' : 'a'} ${pct}% ${improved ? 'improvement' : 'increase'}` : ''} ` +
+            `(median now ${fmtDurS(s.medianElapsedMs)}, across ${s.jobsCompleted.value} completed jobs).`,
+          // minutes moved × jobs affected — volume-weighted, not percentage.
+          significance: (Math.abs(s.avgElapsedMs.diff) / 60000) * s.jobsCompleted.value,
+          evidence: {
+            metric: 'avgElapsedMs',
+            value: s.avgElapsedMs.value,
+            prev: s.avgElapsedMs.prev,
+            jobs: s.jobsCompleted.value,
+          },
+        });
+      }
+    }
+
+    // 2. Queue wait movement.
+    if (
+      input.hasCompare &&
+      s.avgWaitMinutes.prev != null &&
+      s.avgWaitMinutes.diff != null &&
+      Math.abs(s.avgWaitMinutes.diff) >= M.waitMoveMinMinutes &&
+      s.vehiclesServiced.value >= M.timeSampleJobs
+    ) {
+      const improved = s.avgWaitMinutes.diff < 0;
+      out.push({
+        id: 'WAIT_TIME_MOVE',
+        tone: improved ? 'positive' : 'attention',
+        title: improved ? 'Customer Wait Reduced' : 'Customer Wait Increased',
+        detail:
+          `Average queue wait ${improved ? 'fell' : 'rose'} from ${fmtDurS(s.avgWaitMinutes.prev * 60000)} to ` +
+          `${fmtDurS(s.avgWaitMinutes.value * 60000)}.`,
+        significance: Math.abs(s.avgWaitMinutes.diff) * s.vehiclesServiced.value,
+        evidence: { metric: 'avgWaitMinutes', value: s.avgWaitMinutes.value, prev: s.avgWaitMinutes.prev },
+      });
+    }
+
+    // 3/4. Delay movement (parts and customer) — frequency AND duration.
+    // Without comparison these still surface when the period itself is heavy.
+    for (const [type, label] of [
+      ['WAITING_PARTS', 'Waiting for Parts'],
+      ['WAITING_CUSTOMER', 'Waiting for Customer'],
+    ] as const) {
+      const d = input.delays.find((x) => x.type === type);
+      if (!d) continue;
+      const heavy = d.jobsAffected >= M.delayMinJobs || d.totalMs >= M.delayMinTotalMs;
+      if (!heavy) continue;
+      if (type === 'WAITING_PARTS' && input.hasCompare && s.waitingPartsJobs.prev != null) {
+        const diff = s.waitingPartsJobs.value - s.waitingPartsJobs.prev;
+        if (diff !== 0) {
+          const worse = diff > 0;
+          out.push({
+            id: 'PARTS_DELAY_MOVE',
+            tone: worse ? 'attention' : 'positive',
+            title: worse ? 'Parts Delays Increased' : 'Parts Delays Reduced',
+            detail:
+              `${s.waitingPartsJobs.value} job${s.waitingPartsJobs.value === 1 ? '' : 's'} experienced Waiting for Parts ` +
+              `compared with ${s.waitingPartsJobs.prev} in the previous period. ` +
+              `Total parts-related delay ${worse ? 'increased to' : 'was'} ${fmtDurS(d.totalMs)}.`,
+            significance: d.totalMs / 60000 + Math.abs(diff) * 30,
+            evidence: {
+              metric: 'waitingPartsJobs',
+              value: s.waitingPartsJobs.value,
+              prev: s.waitingPartsJobs.prev,
+              totalMs: d.totalMs,
+            },
+          });
+          continue;
+        }
+      }
+      // Within-period weight (no comparison, or unchanged frequency).
+      out.push({
+        id: `${type}_LOAD`,
+        tone: 'attention',
+        title: `${label} Load`,
+        detail:
+          `${d.jobsAffected} job${d.jobsAffected === 1 ? '' : 's'} recorded ${label.toLowerCase()} ` +
+          `totalling ${fmtDurS(d.totalMs)} (average ${fmtDurS(d.avgMs)} per affected job).`,
+        significance: d.totalMs / 60000,
+        evidence: { metric: type, jobsAffected: d.jobsAffected, totalMs: d.totalMs },
+      });
+    }
+
+    // 5. Rework movement.
+    if (
+      input.hasCompare &&
+      s.reworkRate.prev != null &&
+      s.reworkRate.diff != null &&
+      Math.abs(s.reworkRate.diff) >= M.reworkMovePts &&
+      s.jobsCompleted.value >= M.reworkMinOrders
+    ) {
+      const worse = s.reworkRate.diff > 0;
+      out.push({
+        id: 'REWORK_MOVE',
+        tone: worse ? 'attention' : 'positive',
+        title: worse ? 'Rework Increased' : 'Rework Reduced',
+        detail: `Rework rate moved from ${s.reworkRate.prev}% to ${s.reworkRate.value}% of orders.`,
+        significance: Math.abs(s.reworkRate.diff) * s.jobsCompleted.value,
+        evidence: { metric: 'reworkRate', value: s.reworkRate.value, prev: s.reworkRate.prev },
+      });
+    }
+
+    // 6. Throughput movement.
+    if (input.hasCompare && s.vehiclesServiced.prev != null && s.vehiclesServiced.diff != null) {
+      const pct = pctOf(s.vehiclesServiced.diff, s.vehiclesServiced.prev);
+      if (
+        Math.abs(s.vehiclesServiced.diff) >= M.throughputMinVehicles &&
+        pct != null &&
+        pct >= M.throughputMovePct
+      ) {
+        const up = s.vehiclesServiced.diff > 0;
+        out.push({
+          id: 'THROUGHPUT_MOVE',
+          tone: up ? 'positive' : 'attention',
+          title: up ? 'Throughput Increased' : 'Throughput Decreased',
+          detail:
+            `${s.vehiclesServiced.value} vehicles were serviced, ` +
+            `${up ? 'up' : 'down'} from ${s.vehiclesServiced.prev} in the previous period ` +
+            `(${up ? '+' : '−'}${Math.abs(s.vehiclesServiced.diff)}).`,
+          significance: Math.abs(s.vehiclesServiced.diff) * 20,
+          evidence: { metric: 'vehiclesServiced', value: s.vehiclesServiced.value, prev: s.vehiclesServiced.prev },
+        });
+      }
+    }
+
+    // 7. Appointment vs walk-in gap (within-period).
+    const a = input.sourceComparison.appointment;
+    const w = input.sourceComparison.walkIn;
+    if (a.jobsCompleted >= M.sourceMinJobs && w.jobsCompleted >= M.sourceMinJobs) {
+      const slower = a.avgElapsedMs > w.avgElapsedMs ? a : w;
+      const faster = slower === a ? w : a;
+      const gapPct = pctOf(slower.avgElapsedMs - faster.avgElapsedMs, faster.avgElapsedMs);
+      if (gapPct != null && gapPct >= M.sourceGapPct) {
+        out.push({
+          id: 'SOURCE_GAP',
+          tone: 'attention',
+          title: `${slower === a ? 'Appointments' : 'Walk-Ins'} Running Slower`,
+          detail:
+            `${slower === a ? 'Appointment' : 'Walk-in'} jobs averaged ${fmtDurS(slower.avgElapsedMs)} elapsed ` +
+            `against ${fmtDurS(faster.avgElapsedMs)} for ${slower === a ? 'walk-ins' : 'appointments'} — a ${gapPct}% gap.`,
+          significance: ((slower.avgElapsedMs - faster.avgElapsedMs) / 60000) * slower.jobsCompleted,
+          evidence: {
+            metric: 'sourceGap',
+            appointmentAvgMs: a.avgElapsedMs,
+            walkInAvgMs: w.avgElapsedMs,
+          },
+        });
+      }
+    }
+
+    // 8. Services materially over target (within-period).
+    const over = input.serviceRows
+      .filter(
+        (r) =>
+          r.volume >= M.serviceMinVolume &&
+          r.varianceElapsedMs >= M.serviceOverMinMs &&
+          r.targetMinutes > 0 &&
+          r.varianceElapsedMs >= (r.targetMinutes * 60000 * M.serviceOverPct) / 100,
+      )
+      .sort((x, y) => y.varianceElapsedMs * y.volume - x.varianceElapsedMs * x.volume);
+    if (over.length > 0) {
+      const top = over[0];
+      out.push({
+        id: 'SERVICE_OVER_TARGET',
+        tone: 'attention',
+        title: 'Service Running Over Target',
+        detail:
+          `${top.name} averaged ${fmtDurS(top.avgElapsedMs)} against a booked ${fmtDurS(top.targetMinutes * 60000)} ` +
+          `(+${fmtDurS(top.varianceElapsedMs)}) across ${top.volume} jobs` +
+          `${over.length > 1 ? `; ${over.length - 1} other service(s) also over target` : ''}.`,
+        significance: (top.varianceElapsedMs / 60000) * top.volume,
+        evidence: { metric: 'serviceOverTarget', service: top.name, varianceMs: top.varianceElapsedMs, volume: top.volume },
+      });
+    }
+
+    // 9. Operational exceptions from the attention list.
+    if (input.attentionCount > 0) {
+      out.push({
+        id: 'EXCEPTIONS',
+        tone: 'attention',
+        title: 'Operational Exceptions Recorded',
+        detail: `${input.attentionCount} item${input.attentionCount === 1 ? '' : 's'} exceeded the report's explicit thresholds — see Items Requiring Attention.`,
+        significance: input.attentionCount * 15,
+        evidence: { metric: 'attentionItems', count: input.attentionCount },
+      });
+    }
+
+    const rank = (rows: ExecInsight[]) => rows.sort((x, y) => y.significance - x.significance).slice(0, 4);
+    return {
+      highlights: rank(out.filter((i) => i.tone === 'positive')),
+      attention: rank(out.filter((i) => i.tone === 'attention')),
     };
   }
 }

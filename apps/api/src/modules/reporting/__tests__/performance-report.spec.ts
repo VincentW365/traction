@@ -251,6 +251,100 @@ describe('empty dataset (§29)', () => {
   });
 });
 
+describe('executive insights (CR-2026-104b)', () => {
+  it('business significance outranks percentage: 40 affected vehicles beat a 1→2 jump', async () => {
+    // Rework doubles (1 → 2 events, +100%) while the average service time rises
+    // 20 minutes across 40 completed jobs. The service-time insight must rank
+    // first — significance is minutes × volume, never raw percentage.
+    const mkJobs = (n: number, elapsedMin: number) =>
+      Array.from({ length: n }, (_, i) =>
+        job({
+          serviceVisitId: `sv-${i}`,
+          elapsedMs: elapsedMin * 60000,
+          techWorkMs: 30 * 60000,
+          // booked ≈ actual so the over-target insight stays quiet and the
+          // MOVEMENT insight carries the ranking question.
+          expectedMinutes: elapsedMin - 5,
+        }),
+      );
+    const h = build({
+      jobs: mkJobs(40, 120),
+      prevJobs: mkJobs(40, 100),
+      reworkSummary: { reworkRate: 5, reworkedOrders: 2 },
+    });
+    // prev rework rate 2.5 via a second call is not modelled; the movement
+    // insight needs prev — provided through the mocked prev rework call:
+    const r = await h.service.getReport('site-1', '2026-08-08', '2026-08-14', {}, true);
+
+    const first = r.insights.attention[0];
+    expect(first.id).toBe('SERVICE_TIME_MOVE');
+    expect(first.detail).toContain('increased from 1h 40m to 2h 00m');
+    expect(first.detail).toContain('20%');
+    // Every insight is traceable.
+    expect(first.evidence).toMatchObject({ metric: 'avgElapsedMs', jobs: 40 });
+  });
+
+  it('an improvement lands under highlights with value + comparison', async () => {
+    const mk = (n: number, elapsedMin: number) =>
+      Array.from({ length: n }, (_, i) => job({ serviceVisitId: `s${i}`, elapsedMs: elapsedMin * 60000 }));
+    const h = build({ jobs: mk(10, 90), prevJobs: mk(10, 111) });
+    const r = await h.service.getReport('site-1', '2026-08-08', '2026-08-14', {}, true);
+    const hl = r.insights.highlights.find((i) => i.id === 'SERVICE_TIME_MOVE')!;
+    expect(hl).toBeDefined();
+    expect(hl.tone).toBe('positive');
+    expect(hl.detail).toContain('decreased from 1h 51m to 1h 30m');
+  });
+
+  it('small samples are suppressed by the explicit minimums', async () => {
+    // 2 jobs per period — far under the 5-job minimum: no time-movement insight,
+    // however dramatic the swing looks.
+    const h = build({
+      jobs: [job({ elapsedMs: 240 * 60000 }), job({ serviceVisitId: 'sv-2', elapsedMs: 240 * 60000 })],
+      prevJobs: [job({ serviceVisitId: 'p1', elapsedMs: 60 * 60000 }), job({ serviceVisitId: 'p2', elapsedMs: 60 * 60000 })],
+    });
+    const r = await h.service.getReport('site-1', '2026-08-08', '2026-08-14', {}, true);
+    expect(r.insights.attention.find((i) => i.id === 'SERVICE_TIME_MOVE')).toBeUndefined();
+    expect(r.insightMinimums.timeSampleJobs).toBe(5);
+  });
+
+  it('parts-delay movement carries frequency AND total duration (the example format)', async () => {
+    const mk = (n: number, partsMin: number) =>
+      Array.from({ length: n }, (_, i) => job({ serviceVisitId: `s${i}`, waitingPartsMs: partsMin * 60000 }));
+    const h = build({ jobs: mk(14, 49), prevJobs: mk(7, 30) });
+    const r = await h.service.getReport('site-1', '2026-08-08', '2026-08-14', {}, true);
+    const parts = r.insights.attention.find((i) => i.id === 'PARTS_DELAY_MOVE')!;
+    expect(parts.detail).toContain('14 jobs experienced Waiting for Parts compared with 7');
+    expect(parts.detail).toContain('11h 26m'); // 14 × 49m
+  });
+
+  it('without comparison, only within-period insights appear — no fabricated movement', async () => {
+    const h = build({
+      jobs: Array.from({ length: 6 }, (_, i) => job({ serviceVisitId: `s${i}`, waitingPartsMs: 60 * 60000 })),
+    });
+    const r = await h.service.getReport('site-1', '2026-08-01', '2026-08-31');
+    expect(r.insights.attention.some((i) => i.id === 'SERVICE_TIME_MOVE')).toBe(false);
+    expect(r.insights.attention.some((i) => i.id === 'WAITING_PARTS_LOAD')).toBe(true);
+  });
+
+  it('caps each list at four, ranked by significance', async () => {
+    const mk = (n: number, elapsedMin: number, partsMin: number) =>
+      Array.from({ length: n }, (_, i) =>
+        job({ serviceVisitId: `s${i}`, elapsedMs: elapsedMin * 60000, waitingPartsMs: partsMin * 60000, waitingCustomerMs: 20 * 60000 }),
+      );
+    const h = build({
+      jobs: mk(40, 150, 50),
+      prevJobs: mk(10, 100, 10),
+      reworkItems: [
+        { reworkCount: 2, vehiclePlate: 'RW1', serviceOrderId: 'so-rw', reasonCode: 'QC_FAIL', primaryTechnician: null },
+      ],
+    });
+    const r = await h.service.getReport('site-1', '2026-08-08', '2026-08-14', {}, true);
+    expect(r.insights.attention.length).toBeLessThanOrEqual(4);
+    const sig = r.insights.attention.map((i) => i.significance);
+    expect([...sig].sort((a, b) => b - a)).toEqual(sig);
+  });
+});
+
 describe('trend bucketing (§17)', () => {
   it('buckets jobs by their start day across the period', async () => {
     const h = build({

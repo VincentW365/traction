@@ -77,6 +77,15 @@ describe('the report document (§2–§18, §24, §26)', () => {
     expect(src).toContain('Performance Summary');
     expect(src).toContain('largest recorded source of operational delay');
   });
+  it('executive insights lead the summary: highlights + management attention (CR-2026-104b)', () => {
+    expect(src).toContain('Performance Highlights');
+    expect(src).toContain('Management Attention');
+    // Prominent placement: insights render before the KPI card grid.
+    expect(src.indexOf('Performance Highlights')).toBeLessThan(src.indexOf('Vehicles Serviced'));
+    // Honest empty states — never fabricated findings.
+    expect(src).toContain('No significant improvements met the reporting thresholds');
+    expect(src).toContain('No risks or exceptions met the reporting thresholds');
+  });
   it('attention items show their explicit thresholds (§18)', () => {
     expect(src).toContain('Items Requiring Attention');
     expect(src).toContain('Threshold:');

@@ -111,3 +111,30 @@ ranges, 400 on garbage dates, and technician 403 on the report.
 ## H. Git
 
 Branch `master`, pushed to `origin/master` (commit in the completion report).
+
+## Addendum — CR-2026-104b: Executive Insights & Exceptions
+
+Core functionality, not an enhancement: the report now opens its Executive
+Summary with **Performance Highlights** (up to 4) and **Management Attention**
+(up to 4) — deterministic findings computed server-side from the SAME
+aggregates as the KPI cards, each carrying the value, the comparison and a
+traceable evidence object. The engine states WHAT changed and BY HOW MUCH,
+never why.
+
+- **Ranking is business significance, never percentage**: score ≈ minutes of
+  impact × jobs/vehicles affected, so a 100% jump from 1 to 2 events cannot
+  outrank a 20-minute shift across 40 vehicles (unit-pinned exactly so).
+- **Candidates**: service-time movement (avg, with median quoted), queue-wait
+  movement, parts-delay frequency+duration movement, waiting-customer load,
+  rework movement, throughput movement, appointment-vs-walk-in gap
+  (within-period), services materially over booked target (within-period),
+  and an operational-exceptions rollup of the attention list.
+- **Explicit minimums** (published in the payload as `insightMinimums`):
+  e.g. time movement needs ≥5 completed jobs per period AND ≥10% AND ≥5min;
+  rework needs ≥2pts on ≥10 orders; delay insights need ≥3 affected jobs or
+  ≥2h total. Small samples are suppressed, not dramatized.
+- **No comparison → no fabricated movement**: only within-period insights
+  (delay load, source gap, over-target, exceptions) appear, and the screen
+  hints that Compare unlocks movement insights.
+- Live-verified on real data: highlights/attention populated, ranked
+  descending by significance, all sentences human-formatted durations.

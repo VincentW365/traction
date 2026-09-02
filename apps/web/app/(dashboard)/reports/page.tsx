@@ -77,6 +77,11 @@ interface Report {
   serviceTypes: { note: string; multiServiceJobs: number; rows: Array<{ code: string; name: string; volume: number; targetMinutes: number; avgElapsedMs: number; avgTechWorkMs: number; varianceElapsedMs: number; varianceTechWorkMs: number }> };
   trend: Array<{ date: string; arrivals: number; jobsStarted: number; jobsCompleted: number; avgElapsedMs: number; avgTechWorkMs: number; partsDelayMs: number }>;
   attention: Array<{ kind: string; threshold: string; label: string; detail: string; orderId?: string }>;
+  // CR-2026-104b — deterministic, significance-ranked executive insights.
+  insights: {
+    highlights: Array<{ id: string; tone: string; title: string; detail: string; significance: number }>;
+    attention: Array<{ id: string; tone: string; title: string; detail: string; significance: number }>;
+  };
   hasData: boolean;
 }
 
@@ -474,6 +479,57 @@ export default function ReportsPage() {
             <>
               {/* ---- Page 1: Executive Summary (§3/§4) ---- */}
               <ReportSection title="Executive Summary">
+                {/* CR-2026-104b — what mattered this period, BEFORE the charts:
+                    deterministic findings ranked by business significance, each
+                    traceable to the same dataset as the KPI cards below. */}
+                {(r.insights.highlights.length > 0 || r.insights.attention.length > 0) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4" style={{ breakInside: 'avoid' }}>
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                      <div className="text-[10px] uppercase tracking-wide font-bold text-emerald-800 mb-1.5">
+                        Performance Highlights
+                      </div>
+                      {r.insights.highlights.length === 0 ? (
+                        <p className="text-xs text-slate-500">
+                          No significant improvements met the reporting thresholds this period.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {r.insights.highlights.map((i) => (
+                            <div key={i.id}>
+                              <p className="text-sm font-semibold text-emerald-900">{i.title}</p>
+                              <p className="text-xs text-emerald-900/80 leading-relaxed">{i.detail}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-lg border border-red-200 bg-red-50/50 p-3">
+                      <div className="text-[10px] uppercase tracking-wide font-bold text-red-800 mb-1.5">
+                        Management Attention
+                      </div>
+                      {r.insights.attention.length === 0 ? (
+                        <p className="text-xs text-slate-500">
+                          No risks or exceptions met the reporting thresholds this period.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {r.insights.attention.map((i) => (
+                            <div key={i.id}>
+                              <p className="text-sm font-semibold text-red-900">{i.title}</p>
+                              <p className="text-xs text-red-900/80 leading-relaxed">{i.detail}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {!compare && (
+                  <p className="text-[11px] text-slate-400 mb-3 print:hidden">
+                    Enable “Compare previous period” to include movement insights (service time, wait,
+                    parts, rework, throughput).
+                  </p>
+                )}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
                   <KpiCard label="Vehicles Serviced" value={r.summary.vehiclesServiced.value} delta={<Delta c={r.summary.vehiclesServiced} />} />
                   <KpiCard label="Jobs Completed" value={r.summary.jobsCompleted.value} delta={<Delta c={r.summary.jobsCompleted} />} />
