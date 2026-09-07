@@ -20,7 +20,7 @@ operational data, URLs, and infrastructure providers.
 Monorepo (pnpm workspaces + Turborepo):
 - **apps/api** — NestJS REST API (default port **3001**, base path `/api/v1`) + Socket.IO realtime.
 - **apps/web** — Next.js 15 web app (default port **3000**).
-- **PostgreSQL 16** — primary database (Prisma ORM; migrations included).
+- **PostgreSQL 16+** — primary database (Prisma ORM; migrations included; verified on 16 and 17).
 - **Redis 7** — *local development convenience only.* BullMQ workers are not wired in
   the current deployment; the Render blueprint deliberately runs without Redis. If
   background workers are introduced later, this section and `deploy:check` must gain
@@ -28,7 +28,7 @@ Monorepo (pnpm workspaces + Turborepo):
 
 ## 2. Prerequisites (on the target server)
 - **Node.js 20+** and **pnpm 10+** (`npm install -g pnpm`, or `corepack enable`)
-- **PostgreSQL 16** (managed service or self-hosted)
+- **PostgreSQL 16+** (managed service or self-hosted)
 - *(Optional)* **Docker + Docker Compose** — the included `docker-compose.yml` starts Postgres + Redis for local use.
 - **Windows hosts: clone to a short path** (e.g. `C:\bsop`). The clean-checkout
   simulation demonstrated Prisma's generated client failing to load once the
@@ -118,6 +118,24 @@ The application is **fully functional with an empty customer database** — the
 Customers page shows administrators a diagnostic state pointing at the deployment
 status page until the import runs.
 
+### Optional: historical service-mix analytics (catalog + job mapping)
+
+The **Reports → Service Mix** analytics read two additional imported datasets that
+are *not* part of the reference seed: the price-list catalog
+(`service_catalog_items`) and the historical job-to-catalog mappings
+(`service_job_mappings`). Without them the Service Mix report is simply empty —
+every other report is unaffected. To reproduce them (after the jobs import):
+
+```bash
+# Price-list catalog (source workbook is OUTSIDE the repo — PII-guarded; Sheet2 never read):
+pnpm exec tsx apps/api/scripts/import-catalog.ts --file /secure/path/PRICE_LIST.xlsx           # dry-run
+pnpm exec tsx apps/api/scripts/import-catalog.ts --file /secure/path/PRICE_LIST.xlsx --commit
+
+# Map historical job text to catalog entries (conservative: fuzzy is never auto-confirmed):
+pnpm exec tsx apps/api/scripts/map-jobs.ts            # dry-run, review the summary
+pnpm exec tsx apps/api/scripts/map-jobs.ts --commit   # idempotent, batch-tagged
+```
+
 ## 7. Verify the deployment
 ```bash
 pnpm deploy:check        # read-only preflight: PASS/FAIL with reasons
@@ -138,6 +156,30 @@ pnpm customers:verify    # after an import: totals, orphans, batches
   database backup taken before the deploy — that is what the backup is for.
 - **Customer import**: `pnpm customers:import -- --rollback <batchId>` removes one
   batch exactly.
+
+## 8b. Backups — protecting operational data
+
+Application **source** comes from GitHub and needs no backup. Everything the shop
+creates — customers, vehicles, visits, inspections, job sheets, pause/timing
+records, audit logs, in-app configuration — lives in **PostgreSQL** and must be
+protected separately:
+
+```bash
+# Nightly logical backup (compressed custom format; contains PII — store securely):
+pg_dump --format=custom --file=bsop-$(date +%F).dump "$DATABASE_URL"
+
+# Restore into an EMPTY database (never over a live one you mean to keep):
+pg_restore --no-owner --dbname="$NEW_DATABASE_URL" bsop-YYYY-MM-DD.dump
+```
+
+- **Render free tier has no automatic backups** — schedule the `pg_dump` off-platform
+  (any machine that can reach the database) or upgrade the plan for point-in-time
+  recovery. This is the deployment's biggest operational risk until it is in place.
+- **Inspection photographs** are files, not database rows (`.data/inspection-photos`
+  under the local driver) — back the directory up separately, or use a persistent
+  disk / object storage (§10).
+- Test a restore once before relying on the routine: restore into a scratch
+  database and run `pnpm deploy:check` + `pnpm customers:verify` against it.
 
 ## 9. Standalone architecture and operational configuration
 The platform runs **standalone**: the application database is the authoritative

@@ -6,7 +6,7 @@
  *   --commit             [GATED] Upsert ServiceCatalogItem rows (idempotent by
  *                        rowHash, batch-tagged). Requires the migration applied.
  *   --rollback <batchId> [GATED] Delete a committed batch.
- *   --file <path>        default: the price-list .xlsx in Downloads (kept OUTSIDE the repo)
+ *   --file <path>        REQUIRED: the price-list .xlsx (kept OUTSIDE the repo — PII)
  *
  * Guardrails: import ONLY the 13 category tabs; the PII tab `Sheet2` is never
  * read/logged; MASTER PRICE LIST is cross-check only; blank/zero -> null; float
@@ -23,7 +23,6 @@ import {
   type ParsedCatalogItem, type SheetParseStats,
 } from '../src/modules/data-import/catalog.mapper';
 
-const DEFAULT_FILE = 'C:\\Users\\vwilson\\Downloads\\SERVICE CENTER PRICE LIST UPDATE 2026.xlsx';
 const SOURCE = 'PRICE_LIST_2026';
 const OUT_DIR = 'demo-output';
 
@@ -31,7 +30,14 @@ const argv = process.argv.slice(2);
 const has = (f: string) => argv.includes(f);
 const val = (f: string) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : undefined; };
 const MODE = has('--rollback') ? 'rollback' : has('--commit') ? 'commit' : 'dry-run';
-const FILE = val('--file') ?? DEFAULT_FILE;
+// Deployment-parity audit (2026-09): no personal-machine default path. The source
+// workbook lives outside the repo and must be named explicitly on every run.
+const FILE = val('--file') ?? '';
+if (!FILE && MODE !== 'rollback') {
+  console.error('Usage: tsx apps/api/scripts/import-catalog.ts --file <path-to-price-list.xlsx> [--commit]');
+  console.error('The price-list workbook is not in the repository; pass its location explicitly.');
+  process.exit(1);
+}
 
 function runDryRun() {
   const wbk = openXlsx(FILE);

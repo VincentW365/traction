@@ -14,6 +14,7 @@
 // and named-export detection has real-world failure modes (the clean-checkout
 // simulation hit one at Windows' path-length limit). This form works everywhere.
 import prismaPkg from '@prisma/client';
+import { execSync } from 'node:child_process';
 
 const { PrismaClient } = prismaPkg;
 
@@ -82,6 +83,26 @@ if (dbOk) {
     check('migrations pending/failed', pending === 0, pending === 0 ? 'none' : `${pending} unfinished — run pnpm db:migrate`);
   } catch {
     check('migration history', false, '_prisma_migrations missing — run pnpm db:migrate');
+  }
+
+  // Deployment-parity audit (2026-09) — schema drift: does the live database
+  // structurally match prisma/schema.prisma, or has manual SQL crept in? Read-only
+  // (migrate diff computes, never applies). Warn-only: drift needs a human
+  // decision, and a diff-engine hiccup must never block a deploy.
+  try {
+    // --from-schema-datasource reads DATABASE_URL through the schema's env()
+    // reference — the URL never appears on a command line.
+    execSync(
+      'pnpm exec prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code',
+      { stdio: 'pipe', windowsHide: true },
+    );
+    check('schema drift', true, 'database matches prisma/schema.prisma');
+  } catch (e) {
+    if (e.status === 2) {
+      check('schema drift', false, 'database differs from prisma/schema.prisma — investigate before relying on this environment', { warnOnly: true });
+    } else {
+      check('schema drift', true, 'not checked (diff engine unavailable here)');
+    }
   }
 
   const count = async (table) => {

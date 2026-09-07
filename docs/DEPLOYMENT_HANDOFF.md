@@ -1,97 +1,96 @@
-# Release Handoff — Deployment Parity Release (CR-2026-094)
+# Deployment Manifest — handing BSOP to the Manager
 
 For the person deploying. Everything here is copy-paste; no source files need
-editing. The full reference is `DEPLOYMENT.md` at the repo root — this page is just
-the steps for **this** release.
+editing. The full reference is `DEPLOYMENT.md` at the repo root. Last verified by
+the fresh-clone parity test of 2026-09-07 (docs/119): a clean clone of
+`origin/master`, an empty database and the steps below reproduced the working
+application with zero manual intervention.
 
-**Commit:** the tip of `master` you were given. Verify after deploy: the *Build*
-line on **Admin → Deployment** (or `GET /api/v1/health`) must show the same short
-hash as `git log -1 --format=%h` on that commit.
+## Repository
 
----
+| Item | Value |
+|---|---|
+| Repo | `github.com/claudesdisciple/bsopplatform` |
+| Branch | `master` (Render auto-deploys every push) |
+| Expected commit | the tip of `master` you were given — verify after deploy: the *Build* line on **Admin → Deployment** (or `GET /api/v1/health`) must show the same short hash as `git log -1 --format=%h` |
+| Node | 20+ (parity test ran on 24) |
+| Package manager | pnpm 10+ (`corepack enable`) |
 
-## What this release changes for deployment
+## Services
 
-- The deploy now **verifies itself**: a read-only preflight runs at the end of the
-  Render build and fails the deploy if migrations or reference data did not land.
-- New **Admin → Deployment** page and `/api/v1/health` endpoint show the running
-  commit, database state, and customer/vehicle counts.
-- The **customer database is loaded by a controlled import** — this is the step
-  that has never been run against the deployed database, and it is why the deployed
-  site has no customers today.
+| Service | Requirement |
+|---|---|
+| PostgreSQL | 16+ (verified on 16 and 17) |
+| Redis | **not required** in the deployed topology (local dev convenience only) |
+| bsop-api | NestJS, port 3001 (or platform `PORT`), base path `/api/v1` |
+| bsop-web | Next.js, port 3000; `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_WS_URL` are baked at **build** time |
 
-## Steps
-
-### 1. Deploy the commit
-Render auto-deploys on push to master. Wait for **both** services (bsop-api,
-bsop-web) to go live. The API build now ends with a preflight — if the deploy
-fails there, read its log: it names exactly what is missing.
-
-### 2. Confirm environment (one-time check)
-In the Render dashboard, confirm these are set (values are already there from the
-blueprint; nothing new is required this release):
-
-| Service | Variable | Expectation |
-|---|---|---|
-| bsop-api | `DATABASE_URL` | from the managed database (automatic) |
-| bsop-api | `JWT_SECRET` | generated (automatic) |
-| bsop-api | `API_CORS_ORIGIN` | the bsop-web URL |
-| bsop-api | `ALLOW_DEV_LOGIN` | `false` |
-| bsop-web | `NEXT_PUBLIC_API_URL` | `https://<bsop-api>/api/v1` |
-| bsop-web | `NEXT_PUBLIC_WS_URL` | `https://<bsop-api>` |
-
-### 3. Migrations and reference data
-**Nothing to do** — the build runs them (`prisma migrate deploy` + seed, both
-non-destructive and idempotent, then the preflight).
-
-### 4. Back up the database
-Before the first customer import: Render dashboard → bsop-db → create a backup
-(or `pg_dump`). Takes a minute; skip nothing.
-
-### 5. Load the customer database (the missing step)
-The import needs the two approved source files — **`customers.csv`** and
-**`jobs.csv`** (the SharePoint exports used locally). They are NOT in GitHub
-(customer data never is); get them from Vincent by a secure channel.
-
-From a machine that has the repo checked out, with `DATABASE_URL` pointed at the
-**production** database for these commands only:
+## Required setup (in order)
 
 ```bash
-# Dry run first — writes NOTHING, prints what would happen:
-pnpm customers:import -- --file <path>/customers.csv
+pnpm install --frozen-lockfile
+pnpm exec prisma generate
+pnpm db:migrate            # additive, idempotent — safe on any database state
+pnpm db:seed               # reference data; create-if-missing, never overwrites operator edits
+pnpm build                 # API + web (set NEXT_PUBLIC_* first)
+pnpm deploy:check          # read-only preflight — must end PASS
 ```
 
-Review the printed counts (expect roughly: **6,858 customers, 8,247 vehicles**
-created or matched; a small flagged list is normal). Then:
+Or `pnpm deploy:bootstrap` for validate → migrate → seed → preflight in one
+non-destructive command. On **Render**, `render.yaml` runs all of it on every push.
 
-```bash
-pnpm customers:import:commit -- --file <path>/customers.csv
+Environment: `.env.example` is the complete contract. Non-negotiables:
+`DATABASE_URL`, `JWT_SECRET` (32+ chars), `API_CORS_ORIGIN`, `NEXT_PUBLIC_API_URL`,
+`NEXT_PUBLIC_WS_URL`, `NODE_ENV=production`, `ALLOW_DEV_LOGIN=false`.
 
-pnpm jobs:import -- --file <path>/jobs.csv          # dry-run, review (~9,000 visits)
-pnpm jobs:import:commit -- --file <path>/jobs.csv
+**First login:** the seed creates `admin@bert.local` / `admin123` (and the staff
+logins). **Admin → Deployment lists every account still on a seed password —
+change them all immediately** (self-service under Account, or Staff → Reset
+Password). The page shows the list until it is empty; that is the confirmation.
 
-pnpm customers:verify                                # must end: RESULT: OK
-```
+## Data (never through Git)
 
-Safe to re-run: the import updates matched records instead of duplicating them,
-and it never deletes anything. Existing records in the deployed database are
-preserved.
+1. **Back up first** (Render: dashboard → bsop-db → backup, or `pg_dump`).
+2. **Customer database** — the controlled import, dry-run first
+   (`pnpm customers:import -- --file …`, then `:commit`; expect ≈6,858 customers /
+   8,247 vehicles). Then job history (`pnpm jobs:import` → `:commit`, ≈9,000
+   visits) and `pnpm customers:verify` → must end `RESULT: OK`.
+   Source files `customers.csv` / `jobs.csv` come from Vincent by a secure
+   channel — they are never in GitHub.
+3. **Optional — Service Mix analytics**: price-list catalog + job mapping
+   (`import-catalog.ts --file … --commit`, then `map-jobs.ts --commit`). Only the
+   Service Mix report reads these; skip freely. See DEPLOYMENT.md §6.
+4. **Backups from day one**: Render free tier has none — schedule
+   `pg_dump --format=custom "$DATABASE_URL"` daily off-platform. See
+   DEPLOYMENT.md §8b for restore.
 
-### 6. Verify
-- Open **Admin → Deployment** (log in as the manager account):
-  - *Build* = the release commit's short hash
-  - *Database* = connected; *Seeded* = yes
-  - *Customers* ≈ 6,858+ and *Vehicles* ≈ 8,247+ after the import
-- Open **Customers** — the directory should list customers (before the import it
-  shows an amber "Customer database is currently empty" notice; that notice
-  disappearing is the confirmation).
-- Spot-check: Queue Board, Dispatch, Inspections, Reports → Technician KPI all load.
+## Optional setup
 
-## Known limitations (this release)
-- Inspection **photographs** are stored on local disk; on Render's free tier they
-  do not survive a redeploy. Fine for evaluation; needs a persistent disk or object
-  storage before photo evidence matters in production.
-- Render free-tier services **sleep when idle** — first request after a quiet spell
-  takes ~30–60 s.
-- The import commands run from a checkout with production `DATABASE_URL`; there is
-  no in-app upload for the source files (deliberate — the files are sensitive).
+- SMS: `NOTIFICATION_PROVIDER=twilio` + `TWILIO_*`
+- Email: `EMAIL_PROVIDER=smtp` + `SMTP_*`
+- Going live to real customers additionally requires an explicit
+  `NOTIFICATION_MODE=LIVE`; until then every send is recorded, not delivered,
+  and the UI says so.
+- VIN decode: `VIN_DECODE_PROVIDER=LIVE` (NHTSA vPIC).
+
+## Verification
+
+- `pnpm deploy:check` → PASS (env, migrations, schema drift, reference data,
+  templates; empty customers is a warning until the import).
+- `GET <api>/api/v1/health` → build commit matches the push.
+- **Admin → Deployment** → Build hash, Database connected, Seeded yes,
+  default-credential list empty, customer/vehicle counts after import.
+- Spot-check as in the parity test: log in as Manager / Advisor / Technician;
+  Queue Board, Dispatch, Technician My Jobs, Inspections, Reports (KPIs + the
+  Service Center Performance Report + Print), Customers, the public display
+  board (`/display/<token>`).
+
+## Known limitations
+
+- Inspection **photographs** live on local disk (`.data/inspection-photos`); on
+  hosts without a persistent disk they do not survive a redeploy — attach a disk
+  or object storage before photo evidence matters (DEPLOYMENT.md §10).
+- Render free-tier services **sleep when idle** — first request after a quiet
+  spell takes ~30–60 s.
+- Import commands run from a checkout with production `DATABASE_URL`; there is
+  deliberately no in-app upload for the source files.

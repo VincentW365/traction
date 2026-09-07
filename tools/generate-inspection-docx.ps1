@@ -3,9 +3,11 @@
 # shaded section bars, brake/tire grid, signatures. Standalone document (not the webapp).
 # Output: repo-root Visual_Inspection_Form.docx. Re-run any time to regenerate.
 $ErrorActionPreference = 'Stop'
-$OUT = 'C:\Users\vwilson\Desktop\Projects\Traction\Visual_Inspection_Form.docx'
-$TIRE = 'C:\Users\vwilson\Desktop\Projects\Traction\tire.webp'
-$CAR = 'C:\Users\vwilson\Desktop\Projects\Traction\car.webp'
+# Paths derive from the script location so the tool runs from any checkout.
+$REPO = Split-Path -Parent $PSScriptRoot
+$OUT = Join-Path $REPO 'Visual_Inspection_Form.docx'
+$TIRE = Join-Path $REPO 'tire.webp'
+$CAR = Join-Path $REPO 'car.webp'
 
 function Bgr([int]$r, [int]$g, [int]$b) { return $r + ($g * 256) + ($b * 65536) }
 $GREEN = Bgr 22 163 74;  $LGREEN = Bgr 220 252 231
