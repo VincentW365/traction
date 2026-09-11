@@ -391,6 +391,48 @@ async function main() {
   }
   console.warn(`v4.1 business rules: ${v41Rules.length} seeded`);
 
+  // --- CR-2026-105b: authoritative ETA read model + shared workshop capacity ---
+  // Create-if-missing like every other rule: a manager's edit survives redeploys.
+  // The capacity keys are shared with self-service booking (CR-2026-105c): one
+  // number of concurrent service positions drives both the slots offered and the
+  // completion projected.
+  const cr105Rules: Array<{ ruleKey: string; valueJson: unknown; notes: string }> = [
+    { ruleKey: 'default_appointment_duration_minutes', valueJson: 80, notes: 'CR-2026-105: planning duration for a job when nothing better is known (management standard: 80 minutes). Drives ETA fallback and self-service booking length.' },
+    { ruleKey: 'booking_capacity_mode', valueJson: 'FIXED', notes: 'CR-2026-105: FIXED = booking_max_concurrent_appointments; RESOURCES = sum of WorkResource.capacity for booking_capacity_resource_categories (schedulingEnabled, active).' },
+    { ruleKey: 'booking_max_concurrent_appointments', valueJson: 2, notes: 'CR-2026-105: concurrent service positions ("tracks") at the site. MANAGEMENT MUST SET. Used by the ETA model and by self-service availability.' },
+    { ruleKey: 'booking_capacity_resource_categories', valueJson: ['BAY', 'OVERFLOW'], notes: 'CR-2026-105: resource categories counted in RESOURCES capacity mode.' },
+    { ruleKey: 'eta_transition_overhead_minutes', valueJson: 5, notes: 'CR-2026-105: minutes between one job finishing on a service position and the next starting.' },
+    { ruleKey: 'eta_min_remaining_minutes', valueJson: 5, notes: 'CR-2026-105: floor for the remaining minutes of an in-progress job.' },
+    { ruleKey: 'eta_qc_minutes', valueJson: 10, notes: 'CR-2026-105: allowance for a job sitting in quality control.' },
+    { ruleKey: 'eta_rework_factor', valueJson: 0.5, notes: 'CR-2026-105: share of planned minutes assumed to remain after a rework is opened (0-1).' },
+    { ruleKey: 'eta_at_risk_margin_minutes', valueJson: 15, notes: 'CR-2026-105: estimate within this many minutes of the promised/scheduled time reads At Risk; beyond it, Delayed (NOT-003 threshold).' },
+    { ruleKey: 'eta_delayed_grace_minutes', valueJson: 0, notes: 'CR-2026-105: minutes past the estimated completion before an in-progress job reads Delayed.' },
+    { ruleKey: 'eta_range_base_minutes', valueJson: 10, notes: 'CR-2026-105: half-width of the displayed time range for the next car.' },
+    { ruleKey: 'eta_range_per_position_minutes', valueJson: 5, notes: 'CR-2026-105: extra half-width per car ahead in the line.' },
+    { ruleKey: 'eta_range_max_minutes', valueJson: 45, notes: 'CR-2026-105: cap on the displayed half-width.' },
+    { ruleKey: 'eta_range_point_threshold_minutes', valueJson: 10, notes: 'CR-2026-105: show a range (not a single time) once the half-width reaches this.' },
+    { ruleKey: 'overdue_job_minutes', valueJson: 120, notes: 'CR-2026-105: in-progress minutes before a job is flagged overdue on Dispatch and the manager dashboard (was hard-coded 120).' },
+    { ruleKey: 'overdue_job_critical_minutes', valueJson: 240, notes: 'CR-2026-105: in-progress minutes before an overdue alert is critical (was hard-coded 240).' },
+  ];
+
+  for (const r of cr105Rules) {
+    const existing = await prisma.businessRuleConfig.findFirst({
+      where: { ruleKey: r.ruleKey, siteId: site.id },
+    });
+    if (!existing) {
+      await prisma.businessRuleConfig.create({
+        data: {
+          ruleKey: r.ruleKey,
+          valueJson: r.valueJson as any,
+          notes: r.notes,
+          siteId: site.id,
+          createdByUserId: createdUsers['admin@bert.local'],
+        },
+      });
+    }
+  }
+  console.warn(`CR-2026-105 ETA/capacity rules: ${cr105Rules.length} seeded`);
+
   // --- v4.1 / CR-2026-008: Vehicle weight + serviceClass suggestions (common makes) ---
   // Advisory only — drives the classification review queue; never auto-applied
   // to Vehicle.serviceClass (staff confirm required, DMAIC Rule 3 fail-safe).

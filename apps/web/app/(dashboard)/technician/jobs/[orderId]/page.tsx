@@ -13,6 +13,9 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSiteId } from '../../../../../hooks/use-site';
+import { useQueueSocket } from '../../../../../hooks/use-queue-socket';
+import { CONFIDENCE_CLASS, CONFIDENCE_LABEL, fmtEtaWindow, type EtaView } from '../../../../../lib/eta-format';
 import { api, ApiError } from '../../../../../lib/api-client';
 import { LoadingState } from '../../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../../components/status-badge';
@@ -65,6 +68,9 @@ interface JobContext {
     advisorNotes: string | null;
     services: Array<{ code: string; name: string; durationMinutes: number | null }>;
     expectedMinutes: number;
+    // CR-2026-105b — planned time + the authoritative target completion.
+    plannedMinutes: number;
+    eta: EtaView;
     assignments: Array<{ technicianName: string; isPrimary: boolean; startedAt: string | null; bay: string | null; bayType: string | null }>;
     openPause: { reasonCode: string; notes: string | null; startedAt: string; approvalStatus: string; enteredOnBehalf: boolean } | null;
     openRework: { reasonCode: string; description: string | null; openedAt: string } | null;
@@ -180,6 +186,9 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export default function TechnicianJobWorkspace() {
+  // CR-2026-105b — refresh the moment the queue/ETA republishes (polling stays as fallback).
+  const socketSiteId = useSiteId();
+  useQueueSocket(socketSiteId);
   const { orderId } = useParams<{ orderId: string }>();
   const queryClient = useQueryClient();
 
@@ -335,6 +344,12 @@ export default function TechnicianJobWorkspace() {
               )}
               {order.expectedMinutes > 0 && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/15">Expected {fmtMins(expectedMs)}</span>
+              )}
+              {order.eta?.estimatedCompletion && !order.eta.terminal && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${order.eta.confidence ? CONFIDENCE_CLASS[order.eta.confidence] : 'bg-white/15'}`}>
+                  Target {fmtEtaWindow(order.eta.estimatedCompletion, order.eta.showRange)}
+                  {order.eta.confidence ? ` · ${CONFIDENCE_LABEL[order.eta.confidence]}` : ''}
+                </span>
               )}
               {visit.mileageIn != null && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/15">{visit.mileageIn.toLocaleString()} mi in</span>

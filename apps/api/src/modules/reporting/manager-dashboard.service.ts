@@ -256,8 +256,25 @@ export class ManagerDashboardService {
       });
     }
 
-    // Overdue jobs (in progress > 2 hours since started)
-    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+    // Overdue jobs — CR-2026-105b: thresholds are rules (overdue_job_minutes /
+    // overdue_job_critical_minutes), not the former hard-coded 2 h / 4 h.
+    let overdueMinutes = 120;
+    let criticalMinutes = 240;
+    try {
+      const rows = await this.prisma.businessRuleConfig.findMany({
+        where: { ruleKey: { in: ['overdue_job_minutes', 'overdue_job_critical_minutes'] }, effectiveTo: null, OR: [{ siteId }, { siteId: null }] },
+        select: { ruleKey: true, valueJson: true, siteId: true },
+      });
+      for (const r of [...rows].sort((a, b) => (a.siteId ? 1 : 0) - (b.siteId ? 1 : 0))) {
+        if (typeof r.valueJson === 'number' && r.valueJson > 0) {
+          if (r.ruleKey === 'overdue_job_minutes') overdueMinutes = r.valueJson;
+          if (r.ruleKey === 'overdue_job_critical_minutes') criticalMinutes = r.valueJson;
+        }
+      }
+    } catch {
+      /* defaults apply */
+    }
+    const twoHoursAgo = new Date(now.getTime() - overdueMinutes * 60 * 1000);
     const overdueOrders = await this.prisma.serviceOrder.findMany({
       where: {
         serviceVisit: { siteId, ...operationalVisitWhere() }, // CR-2026-006: always live
@@ -281,7 +298,7 @@ export class ManagerDashboardService {
       const sv = order.serviceVisit;
       alerts.push({
         type: 'OVERDUE_JOB',
-        severity: elapsed > 240 ? 'critical' : 'warning',
+        severity: elapsed > criticalMinutes ? 'critical' : 'warning',
         title: `Job overdue (${elapsed} min)`,
         detail: `${sv.customer.firstName} ${sv.customer.lastName} — ${sv.vehicle.plateNumber}`,
         entityId: order.id,

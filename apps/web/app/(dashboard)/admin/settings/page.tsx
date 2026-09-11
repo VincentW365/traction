@@ -45,6 +45,29 @@ const RULE_CATEGORIES: Record<string, { label: string; keys: string[] }> = {
     label: 'Operations',
     keys: ['display_board_enabled', 'display_board_token'],
   },
+  // CR-2026-105 — read by the ETA model on every recompute and (capacity keys)
+  // by self-service booking. Management's 80-minute standard lives here.
+  bookingEta: {
+    label: 'Booking & ETA',
+    keys: [
+      'default_appointment_duration_minutes',
+      'booking_capacity_mode',
+      'booking_max_concurrent_appointments',
+      'booking_capacity_resource_categories',
+      'eta_transition_overhead_minutes',
+      'eta_min_remaining_minutes',
+      'eta_qc_minutes',
+      'eta_rework_factor',
+      'eta_at_risk_margin_minutes',
+      'eta_delayed_grace_minutes',
+      'eta_range_base_minutes',
+      'eta_range_per_position_minutes',
+      'eta_range_max_minutes',
+      'eta_range_point_threshold_minutes',
+      'overdue_job_minutes',
+      'overdue_job_critical_minutes',
+    ],
+  },
 };
 
 // Settings that exist in the database but control nothing at runtime. Hidden

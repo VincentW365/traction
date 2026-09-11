@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { differenceInMinutes } from 'date-fns';
 import { Prisma } from '@prisma/client';
@@ -10,6 +11,9 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { StatusHistoryService } from '../audit/status-history.service';
 import { SchedulingService } from '../scheduling/scheduling.service';
+import { EtaService } from '../scheduling/eta/eta.service';
+import { ETA_PRESENTATION_DEFAULTS, type EtaPresentationConfig } from '../scheduling/eta/eta.config';
+import { presentEta, toPublicEta } from '../../common/helpers/eta-presentation';
 import { liveVisitSql } from '../../common/helpers/operational-scope';
 import {
   describeVisitServices,
@@ -56,7 +60,20 @@ export class QueueService {
     private auditService: AuditService,
     private schedulingService: SchedulingService,
     private statusHistory: StatusHistoryService,
+    // CR-2026-105b — presentation rules for the persisted estimate. Optional so
+    // existing unit specs that build the service positionally keep working.
+    @Optional() private eta?: EtaService,
   ) {}
+
+  /** CR-2026-105b — ETA presentation rules (site-aware), or the documented defaults. */
+  private async etaPresentationConfig(siteId: string): Promise<EtaPresentationConfig> {
+    if (!this.eta) return ETA_PRESENTATION_DEFAULTS;
+    try {
+      return await this.eta.loadRules(siteId);
+    } catch {
+      return ETA_PRESENTATION_DEFAULTS;
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // BOARD — FIFO ordered
@@ -91,10 +108,25 @@ export class QueueService {
 
     const eta = await this.getAvgServiceMinutes(siteId);
     const avgServiceMinutes = eta.minutes;
+    const etaCfg = await this.etaPresentationConfig(siteId);
 
     const items = tickets.map((t) => {
       const sv = t.serviceVisit;
       const serviceDescription = describeVisitServices(sv);
+      // CR-2026-105b — the ONE estimate, presented through the shared helper.
+      const orders = sv.serviceOrders ?? [];
+      const etaView = presentEta({
+        now,
+        visitStatus: sv.status,
+        queueRank: t.queueRank,
+        orderStatuses: orders.map((o) => o.status),
+        promisedCompletionAt: orders.find((o) => o.promisedCompletionAt)?.promisedCompletionAt ?? null,
+        scheduledStartAt: sv.appointment?.scheduledStartAt ?? null,
+        currentEtaStartAt: sv.currentEtaStartAt ?? null,
+        currentEtaCompleteAt: sv.currentEtaCompleteAt ?? null,
+        lastUpdatedAt: t.lastRankedAt ?? null,
+        config: etaCfg,
+      });
 
       return {
         queueTicketId: t.id,
@@ -118,6 +150,7 @@ export class QueueService {
         timeWaitingMinutes: sv.checkedInAt
           ? differenceInMinutes(now, sv.checkedInAt)
           : 0,
+        eta: etaView,
         overrideActive: t.overrideActive,
         overrideReasonCode: t.overrideReasonCode,
       };
@@ -157,12 +190,30 @@ export class QueueService {
 
     if (!ticket) throw new NotFoundException(`Queue ticket ${ticketId} not found`);
 
+    // CR-2026-105b — the customer-facing estimate the advisor can quote, with its
+    // confidence and last update, from the same persisted values every screen uses.
+    const sv = ticket.serviceVisit;
+    const detailOrders = sv.serviceOrders ?? [];
+    const etaView = presentEta({
+      now: new Date(),
+      visitStatus: sv.status,
+      queueRank: ticket.queueRank,
+      orderStatuses: detailOrders.map((o) => o.status),
+      promisedCompletionAt: detailOrders.find((o) => o.promisedCompletionAt)?.promisedCompletionAt ?? null,
+      scheduledStartAt: sv.appointment?.scheduledStartAt ?? null,
+      currentEtaStartAt: sv.currentEtaStartAt,
+      currentEtaCompleteAt: sv.currentEtaCompleteAt,
+      lastUpdatedAt: ticket.lastRankedAt,
+      config: await this.etaPresentationConfig(sv.siteId),
+    });
+
     // Resolved server-side so every client shows the same answer. (QueueDecision
     // snapshots stay in the database for audit; CR-2026-099b removed the
     // "why this position" panel — staff do not need it on screen.)
     return {
       ...ticket,
       serviceDescription: describeVisitServices(ticket.serviceVisit, ', '),
+      eta: etaView,
     };
   }
 
@@ -703,6 +754,21 @@ export class QueueService {
             queueRank: true,
             displayStatus: true,
             serviceVisitId: true,
+            lastRankedAt: true,
+            // CR-2026-105b — ONLY the fields the estimate needs. Still no names,
+            // phones, emails or plates: the projection below keeps that promise.
+            serviceVisit: {
+              select: {
+                status: true,
+                currentEtaStartAt: true,
+                currentEtaCompleteAt: true,
+                appointment: { select: { scheduledStartAt: true } },
+                serviceOrders: {
+                  where: { status: { notIn: ['CANCELLED', 'CLOSED'] } },
+                  select: { status: true, promisedCompletionAt: true },
+                },
+              },
+            },
           },
           orderBy: [{ queueRank: { sort: 'asc', nulls: 'last' } }],
         }),
@@ -731,6 +797,25 @@ export class QueueService {
       }
     }
 
+    // CR-2026-105b — public-safe estimate per ticket: times + ON_TIME/DELAYED only,
+    // never the internal confidence reasons (parts, holds, reassignment).
+    const etaCfg = await this.etaPresentationConfig(siteId);
+    const publicEtaFor = (t: (typeof tickets)[number]) =>
+      toPublicEta(
+        presentEta({
+          now,
+          visitStatus: t.serviceVisit.status,
+          queueRank: t.queueRank,
+          orderStatuses: t.serviceVisit.serviceOrders.map((o) => o.status),
+          promisedCompletionAt: t.serviceVisit.serviceOrders.find((o) => o.promisedCompletionAt)?.promisedCompletionAt ?? null,
+          scheduledStartAt: t.serviceVisit.appointment?.scheduledStartAt ?? null,
+          currentEtaStartAt: t.serviceVisit.currentEtaStartAt,
+          currentEtaCompleteAt: t.serviceVisit.currentEtaCompleteAt,
+          lastUpdatedAt: t.lastRankedAt,
+          config: etaCfg,
+        }),
+      );
+
     const inService = tickets
       .filter((t) => t.displayStatus === 'CALLED' || t.displayStatus === 'IN_SERVICE')
       .map((t) => ({
@@ -738,6 +823,9 @@ export class QueueService {
         // falls back to the only number it has.
         ticketNumber: t.displayTicketNumber ?? t.ticketNumber,
         bay: bayByVisit.get(t.serviceVisitId) ?? null,
+        // CR-2026-086 — a car in QC reads as "finishing up" on the lobby screen.
+        stage: t.serviceVisit.status === 'QC' ? ('QC' as const) : ('IN_SERVICE' as const),
+        ...publicEtaFor(t),
       }));
 
     const inQueue = tickets
@@ -747,6 +835,7 @@ export class QueueService {
       .map((t) => ({
         ticketNumber: t.displayTicketNumber ?? t.ticketNumber,
         position: t.queueRank,
+        ...publicEtaFor(t),
       }));
 
     const ready = readyVisits

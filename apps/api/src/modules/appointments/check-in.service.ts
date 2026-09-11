@@ -4,7 +4,9 @@ import {
   ConflictException,
   NotFoundException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { SchedulingService } from '../scheduling/scheduling.service';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
@@ -35,7 +37,30 @@ export class CheckInService {
     private prisma: PrismaService,
     private statusHistory: StatusHistoryService,
     private auditService: AuditService,
+    // CR-2026-105b — QUE-002: rank on check-in. Optional so the existing specs'
+    // three-argument construction keeps working.
+    @Optional() private scheduling?: SchedulingService,
   ) {}
+
+  /**
+   * CR-2026-105b — rank the new ticket and publish its estimate immediately,
+   * instead of leaving it PENDING_RANK until some unrelated action recomputes.
+   * Failure never fails the check-in: the next recompute picks the ticket up.
+   */
+  private async rankAndEstimate(siteId: string, serviceVisitId: string): Promise<Date | null> {
+    if (!this.scheduling) return null;
+    try {
+      await this.scheduling.recomputeQueue(siteId);
+      const sv = await this.prisma.serviceVisit.findUnique({
+        where: { id: serviceVisitId },
+        select: { currentEtaStartAt: true },
+      });
+      return sv?.currentEtaStartAt ?? null;
+    } catch (err) {
+      this.logger.error(`Queue recompute after check-in failed for site ${siteId}: ${(err as Error).message}`);
+      return null;
+    }
+  }
 
   /**
    * Check in a customer for an existing appointment.
@@ -413,13 +438,15 @@ export class CheckInService {
     );
 
     // -----------------------------------------------------------------------
-    // 9. Return response
+    // 9. Rank + estimate (CR-2026-105b), then return response
     // -----------------------------------------------------------------------
+    const etaStartAt = await this.rankAndEstimate(result.serviceVisit.siteId, result.serviceVisit.id);
+
     return {
       serviceVisit: result.serviceVisit,
       queueTicket: result.queueTicket,
       priorityClass: 'PENDING' as const,
-      etaStartAt: null,
+      etaStartAt,
       customerStatusUrl: `/status/${result.statusToken}`,
     };
   }

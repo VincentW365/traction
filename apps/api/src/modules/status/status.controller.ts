@@ -1,6 +1,10 @@
-import { Controller, Get, Post, Patch, Put, Param, Body, NotFoundException, BadRequestException, UseGuards, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Put, Param, Body, NotFoundException, BadRequestException, UseGuards, ParseUUIDPipe, Optional, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { EtaService } from '../scheduling/eta/eta.service';
+import { SchedulingService } from '../scheduling/scheduling.service';
+import { ETA_PRESENTATION_DEFAULTS } from '../scheduling/eta/eta.config';
+import { presentEta, toPublicEta } from '../../common/helpers/eta-presentation';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -16,7 +20,12 @@ import { TERMINAL_VISIT_STATUSES } from '../../common/helpers/operational-scope'
 @ApiTags('Customer Status')
 @Controller('status')
 export class StatusController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    // CR-2026-105b — optional so the existing controller specs keep constructing
+    // it with a bare prisma; falls back to the documented presentation defaults.
+    @Optional() private eta?: EtaService,
+  ) {}
 
   @Get(':token')
   @ApiOperation({ summary: 'Get customer visit status (public, no auth)' })
@@ -37,6 +46,7 @@ export class StatusController {
             displayTicketNumber: true,
             queueRank: true,
             displayStatus: true,
+            lastRankedAt: true,
           },
         },
         appointment: {
@@ -98,7 +108,33 @@ export class StatusController {
     const statusProgression = ['CHECKED_IN', 'IN_QUEUE', 'IN_SERVICE', 'READY_FOR_PICKUP'];
     const currentStep = this.getCurrentStep(displayStatus, visit.status);
 
+    // CR-2026-105b — the same persisted estimate the lobby screen shows, in the
+    // public-safe shape (times + ON_TIME/DELAYED; no internal reasons).
+    let etaCfg = ETA_PRESENTATION_DEFAULTS;
+    if (this.eta) {
+      try {
+        etaCfg = await this.eta.loadRules(visit.siteId);
+      } catch {
+        etaCfg = ETA_PRESENTATION_DEFAULTS;
+      }
+    }
+    const eta = toPublicEta(
+      presentEta({
+        now,
+        visitStatus: visit.status,
+        queueRank: ticket?.queueRank ?? null,
+        orderStatuses: (visit.serviceOrders ?? []).map((o) => o.status),
+        promisedCompletionAt: (visit.serviceOrders ?? []).find((o) => o.promisedCompletionAt)?.promisedCompletionAt ?? null,
+        scheduledStartAt: visit.appointment?.scheduledStartAt ?? null,
+        currentEtaStartAt: visit.currentEtaStartAt,
+        currentEtaCompleteAt: visit.currentEtaCompleteAt,
+        lastUpdatedAt: ticket?.lastRankedAt ?? null,
+        config: etaCfg,
+      }),
+    );
+
     return {
+      eta,
       // CR-2026-089 — short number for the customer; legacy tickets keep theirs.
       ticketNumber: ticket?.displayTicketNumber ?? ticket?.ticketNumber ?? null,
       position,
@@ -199,10 +235,23 @@ export class StatusController {
 @UseGuards(JwtAuthGuard, RbacGuard)
 @ApiBearerAuth()
 export class ServiceVisitCompletionController {
+  private readonly logger = new Logger(ServiceVisitCompletionController.name);
+
   constructor(
     private prisma: PrismaService,
     private audit: AuditService,
+    // CR-2026-105b — closing a visit frees a service position; republish estimates.
+    @Optional() private scheduling?: SchedulingService,
   ) {}
+
+  private async republishEstimates(siteId: string): Promise<void> {
+    if (!this.scheduling) return;
+    try {
+      await this.scheduling.recomputeQueue(siteId);
+    } catch (err) {
+      this.logger.error(`Queue recompute after close-out failed for site ${siteId}: ${(err as Error).message}`);
+    }
+  }
 
   /**
    * CR-2026-093 — everything the job sheet needs, in one read.
@@ -435,6 +484,8 @@ export class ServiceVisitCompletionController {
 
       return sv;
     });
+
+    await this.republishEstimates(updated.siteId);
 
     return { message: 'Visit completion recorded', serviceVisitId: updated.id };
   }

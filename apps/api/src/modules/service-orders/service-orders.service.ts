@@ -5,7 +5,12 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { EtaService } from '../scheduling/eta/eta.service';
+import { ETA_DEFAULTS, type EtaRuleValues } from '../scheduling/eta/eta.config';
+import { resolvePlannedMinutes } from '../scheduling/eta/eta.model';
+import { presentEta } from '../../common/helpers/eta-presentation';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
@@ -109,6 +114,8 @@ const RECOMPUTE_TRIGGERS = new Set<ServiceOrderStatus>([
   // CR-2026-075 — the "vehicle is ready for pickup" moment; refresh the boards promptly.
   'READY_TO_INVOICE' as ServiceOrderStatus,
   'CANCELLED' as ServiceOrderStatus,
+  // CR-2026-105b — closing an order frees a service position; republish estimates.
+  'CLOSED' as ServiceOrderStatus,
 ]);
 
 @Injectable()
@@ -126,7 +133,20 @@ export class ServiceOrdersService {
     // CR-2026-090 — per-technician labour segments. Hooked at every point work
     // starts or stops for a person: start, pause, resume, reassign, assist, QC.
     private segments: WorkSegmentService,
+    // CR-2026-105b — ETA presentation rules for the technician reads. Optional so
+    // the existing specs that construct the service positionally keep working.
+    @Optional() private eta?: EtaService,
   ) {}
+
+  /** CR-2026-105b — ETA rules (site-aware) or the documented defaults. */
+  private async etaRules(siteId: string | null | undefined): Promise<EtaRuleValues> {
+    if (!this.eta || !siteId) return ETA_DEFAULTS;
+    try {
+      return await this.eta.loadRules(siteId);
+    } catch {
+      return ETA_DEFAULTS;
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // CREATE
@@ -829,7 +849,7 @@ export class ServiceOrdersService {
                 vehicle: {
                   select: { plateNumber: true, make: true, model: true, serviceClass: true },
                 },
-                queueTicket: { select: { id: true, ticketNumber: true } },
+                queueTicket: { select: { id: true, ticketNumber: true, queueRank: true, lastRankedAt: true } },
                 // CR-2026-101 — appointment time so the technician can anticipate.
                 appointment: { select: { scheduledStartAt: true } },
                 // CR-2026-101 — the customer's stated concern, prominent on the card.
@@ -848,6 +868,7 @@ export class ServiceOrdersService {
     });
 
     const now = Date.now();
+    const etaCfg = await this.etaRules(tech.homeSiteId);
     return assignments.map((a) => {
       const order = a.serviceOrder;
       const visit = order.serviceVisit;
@@ -894,6 +915,29 @@ export class ServiceOrdersService {
           (sum, i) => sum + (i.serviceType.baseDurationMinutes ?? 0),
           0,
         ),
+        // CR-2026-105b — planned time (KPI/estimate/catalogue/default order) and the
+        // authoritative target completion, presented exactly as every other screen.
+        plannedMinutes: resolvePlannedMinutes(
+          {
+            orderItems: order.items.map((i) => ({
+              estimateMinutes: i.estimateMinutes,
+              baseDurationMinutes: i.serviceType.baseDurationMinutes,
+            })),
+          },
+          etaCfg.defaultDurationMinutes,
+        ),
+        eta: presentEta({
+          now: new Date(now),
+          visitStatus: visit.status,
+          queueRank: visit.queueTicket?.queueRank ?? null,
+          orderStatuses: [order.status],
+          promisedCompletionAt: order.promisedCompletionAt,
+          scheduledStartAt: visit.appointment?.scheduledStartAt ?? null,
+          currentEtaStartAt: visit.currentEtaStartAt,
+          currentEtaCompleteAt: visit.currentEtaCompleteAt,
+          lastUpdatedAt: visit.queueTicket?.lastRankedAt ?? null,
+          config: etaCfg,
+        }),
         sourceType: (visit as { sourceType?: string }).sourceType ?? null,
         appointmentAt: visit.appointment?.scheduledStartAt ?? null,
         hasOpenRework: order.reworks.length > 0,
@@ -1287,8 +1331,11 @@ export class ServiceOrdersService {
       });
     }
 
-    // Recording-only scope: do NOT sync ServiceVisit status and do NOT recompute
-    // the queue — a pause must not affect rank/ETA (deferred to a follow-up CR).
+    // CR-2026-105b — the sub-decision deferred in docs/25 §109-117 is now taken:
+    // a pause still never touches RANK (an in-service ticket has no rank), but it
+    // DOES republish the estimate — the ETA clock is held while the job is stopped
+    // and every board reads DELAYED. ServiceVisit status is still not synced here.
+    await this.triggerQueueRecompute(order.serviceVisit.siteId);
     this.logger.log(`ServiceOrder ${id} paused (${dto.reasonCode}) by ${userId}`);
     return updated;
   }
@@ -1341,7 +1388,9 @@ export class ServiceOrdersService {
       notes: dto.notes,
     });
 
-    // The visit was never changed on pause, so there is nothing to re-sync and no recompute.
+    // The visit was never changed on pause, so there is nothing to re-sync;
+    // CR-2026-105b — but the estimate must be republished now the clock runs again.
+    await this.triggerQueueRecompute(order.serviceVisit.siteId);
     this.logger.log(`ServiceOrder ${id} resumed by ${userId}`);
     return updated;
   }
@@ -1796,13 +1845,16 @@ export class ServiceOrdersService {
     });
 
     await this.auditService.log({
-      actorUserId: userId ?? 'SYSTEM',
+      // CR-2026-105b — `null` is the documented system-actor value; the string
+      // 'SYSTEM' is not a uuid and Postgres rejects it on the FK column.
+      actorUserId: userId ?? null,
       action: 'ASSIGNMENT_ADD_HELPER',
       entityType: 'TechnicianAssignment',
       entityId: assignment.id,
       afterJson: { serviceOrderId: orderId, technicianId, isPrimary: false },
     });
 
+    await this.triggerQueueRecompute(order.serviceVisit.siteId);
     return assignment;
   }
 
@@ -1836,6 +1888,7 @@ export class ServiceOrdersService {
       beforeJson: { technicianId: assignment.technicianId, isPrimary: assignment.isPrimary },
     });
 
+    await this.recomputeForOrder(orderId);
     return { removed: true };
   }
 
@@ -2080,6 +2133,7 @@ export class ServiceOrdersService {
       data: { endedAt: new Date(), status: 'COMPLETED' },
     });
 
+    await this.recomputeForOrder(orderId);
     return updated;
   }
 
@@ -2168,6 +2222,7 @@ export class ServiceOrdersService {
         items: {
           select: {
             id: true,
+            estimateMinutes: true,
             serviceType: {
               select: { id: true, code: true, name: true, baseDurationMinutes: true },
             },
@@ -2213,8 +2268,11 @@ export class ServiceOrdersService {
             oilGradeRequested: true,
             queuePriorityClass: true,
             partsReadiness: true,
+            siteId: true,
+            currentEtaStartAt: true,
+            currentEtaCompleteAt: true,
             appointment: { select: { scheduledStartAt: true, notes: true } },
-            queueTicket: { select: { id: true, ticketNumber: true } },
+            queueTicket: { select: { id: true, ticketNumber: true, queueRank: true, lastRankedAt: true } },
             jobSheetDraft: { select: { id: true, updatedAt: true } },
             customer: {
               select: {
@@ -2289,6 +2347,30 @@ export class ServiceOrdersService {
       0,
     );
 
+    // CR-2026-105b — planned time + target completion from the one persisted estimate.
+    const etaCfg = await this.etaRules(visit.siteId);
+    const plannedMinutes = resolvePlannedMinutes(
+      {
+        orderItems: order.items.map((i) => ({
+          estimateMinutes: i.estimateMinutes,
+          baseDurationMinutes: i.serviceType.baseDurationMinutes,
+        })),
+      },
+      etaCfg.defaultDurationMinutes,
+    );
+    const eta = presentEta({
+      now: new Date(),
+      visitStatus: visit.status,
+      queueRank: visit.queueTicket?.queueRank ?? null,
+      orderStatuses: [order.status],
+      promisedCompletionAt: order.promisedCompletionAt,
+      scheduledStartAt: visit.appointment?.scheduledStartAt ?? null,
+      currentEtaStartAt: visit.currentEtaStartAt,
+      currentEtaCompleteAt: visit.currentEtaCompleteAt,
+      lastUpdatedAt: visit.queueTicket?.lastRankedAt ?? null,
+      config: etaCfg,
+    });
+
     return {
       order: {
         id: order.id,
@@ -2304,6 +2386,8 @@ export class ServiceOrdersService {
           durationMinutes: i.serviceType.baseDurationMinutes,
         })),
         expectedMinutes,
+        plannedMinutes,
+        eta,
         assignments: order.assignments.map((a) => ({
           technicianName: a.technician.userAccount?.fullName ?? a.technician.employeeCode,
           isPrimary: a.isPrimary,
@@ -2688,6 +2772,15 @@ export class ServiceOrdersService {
     this.logger.log(
       `QueueTicket ${ticket.id} display status ${ticket.displayStatus} -> ${target} (order ${toStatus})`,
     );
+  }
+
+  /** CR-2026-105b — recompute for the site an order belongs to (assignment paths). */
+  private async recomputeForOrder(orderId: string): Promise<void> {
+    const so = await this.prisma.serviceOrder.findUnique({
+      where: { id: orderId },
+      select: { serviceVisit: { select: { siteId: true } } },
+    });
+    if (so?.serviceVisit?.siteId) await this.triggerQueueRecompute(so.serviceVisit.siteId);
   }
 
   private async triggerQueueRecompute(siteId: string): Promise<void> {

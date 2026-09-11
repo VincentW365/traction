@@ -13,6 +13,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
+import { useQueueSocket } from '../../../../hooks/use-queue-socket';
+import { CONFIDENCE_CLASS, CONFIDENCE_LABEL, fmtEtaUpdated, fmtEtaWindow, type EtaView } from '../../../../lib/eta-format';
 import Link from 'next/link';
 import { api, getToken } from '../../../../lib/api-client';
 import { useAuth } from '../../../../hooks/use-auth';
@@ -57,6 +59,9 @@ interface VisitRecord {
   derived: {
     arrivalAt: string | null; checkedInAt: string | null; workStartedAt: string | null; completedAt: string | null;
     durationMinutes: number | null;
+    // CR-2026-105b — Scheduled start + the authoritative estimated completion.
+    scheduledStartAt: string | null;
+    eta: EtaView;
     requestedServices: Array<{ code: string; name: string }>;
     orderServices: Array<{ code: string; name: string; itemStatus: string }>;
   };
@@ -156,6 +161,8 @@ export default function VisitRecordPage() {
     enabled: !!visitId,
   });
 
+  // CR-2026-105b — live estimate: refresh when the queue republishes.
+  useQueueSocket((q.data as { site?: { id: string } } | undefined)?.site?.id);
   const timelineQ = useQuery<TimelineEvent[]>({
     queryKey: ['visit-timeline', visitId],
     queryFn: () => api.get(`/visits/${visitId}/timeline`),
@@ -315,10 +322,28 @@ export default function VisitRecordPage() {
             <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Timing</h2></div>
             <div className="card-body">
               <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                <dt className="text-slate-500">Scheduled start</dt><dd className="text-right text-slate-700">{fmtDT(v.derived.scheduledStartAt)}</dd>
                 <dt className="text-slate-500">Arrival</dt><dd className="text-right text-slate-700">{fmtDT(v.derived.arrivalAt)}</dd>
                 <dt className="text-slate-500">Checked in</dt><dd className="text-right text-slate-700">{fmtDT(v.derived.checkedInAt)}</dd>
-                <dt className="text-slate-500">Work started</dt><dd className="text-right text-slate-700">{fmtDT(v.derived.workStartedAt)}</dd>
-                <dt className="text-slate-500">Completed</dt><dd className="text-right text-slate-700">{fmtDT(v.derived.completedAt)}</dd>
+                <dt className="text-slate-500">Actual start</dt><dd className="text-right text-slate-700">{fmtDT(v.derived.workStartedAt)}</dd>
+                {/* CR-2026-105b — the one persisted estimate, with its confidence and last update */}
+                {v.derived.eta && !v.derived.eta.terminal && v.derived.eta.estimatedCompletion && (
+                  <>
+                    <dt className="text-slate-500">Estimated completion</dt>
+                    <dd className="text-right text-slate-700">
+                      {fmtEtaWindow(v.derived.eta.estimatedCompletion, v.derived.eta.showRange)}
+                      {v.derived.eta.confidence && (
+                        <span className={`ml-2 px-1.5 py-0.5 rounded text-[11px] font-medium ${CONFIDENCE_CLASS[v.derived.eta.confidence]}`}>
+                          {CONFIDENCE_LABEL[v.derived.eta.confidence]}
+                        </span>
+                      )}
+                      {v.derived.eta.lastUpdatedAt && (
+                        <span className="block text-[11px] text-slate-400">{fmtEtaUpdated(v.derived.eta.lastUpdatedAt)}</span>
+                      )}
+                    </dd>
+                  </>
+                )}
+                <dt className="text-slate-500">Actual completion</dt><dd className="text-right text-slate-700">{fmtDT(v.derived.completedAt)}</dd>
                 {v.derived.durationMinutes != null && (
                   <>
                     <dt className="text-slate-500">Work duration</dt>

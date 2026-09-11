@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueueSocket } from '../../../../hooks/use-queue-socket';
+import { CONFIDENCE_CLASS, CONFIDENCE_LABEL, fmtEtaUpdated, fmtEtaWindow, type EtaView } from '../../../../lib/eta-format';
 import Link from 'next/link';
 import { api, ApiError } from '../../../../lib/api-client';
 import { PageHeader } from '../../../../components/ui/page-header';
@@ -35,6 +37,8 @@ interface TicketDetail {
   overrideReasonCode: string | null;
   generatedAt: string;
   lastRankedAt: string | null;
+  // CR-2026-105b — the customer-facing estimate the advisor can quote.
+  eta: EtaView;
   serviceVisit: {
     id: string;
     sourceType: string;
@@ -154,6 +158,9 @@ const ORDER_ACTIONS: Record<string, Array<{ label: string; toStatus: string; sty
 /* ---------- Component ---------- */
 
 export default function QueueTicketDetailPage() {
+  // CR-2026-105b — refresh the moment the queue/ETA republishes (polling stays as fallback).
+  const socketSiteId = useSiteId();
+  useQueueSocket(socketSiteId);
   const params = useParams();
   const ticketId = params.id as string;
   const siteId = useSiteId();
@@ -820,6 +827,33 @@ export default function QueueTicketDetailPage() {
               <p className="text-[11px] text-slate-500">
                 Appointment · {new Date(sv.appointment.scheduledStartAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
               </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* CR-2026-105b — customer-facing ETA: the one estimate every screen shows */}
+      {ticket.eta && !ticket.eta.terminal && (ticket.eta.estimatedCompletion || ticket.eta.publicState === 'DELAYED') && (
+        <div className={`card mb-6 border-l-4 ${ticket.eta.confidence === 'DELAYED' ? 'border-l-rose-500' : ticket.eta.confidence === 'AT_RISK' ? 'border-l-amber-500' : 'border-l-emerald-500'}`}>
+          <div className="card-body flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="input-label">Customer-facing ETA</div>
+              {ticket.eta.estimatedCompletion ? (
+                <p className="text-sm text-slate-800">
+                  {ticket.eta.estimatedStart && (
+                    <span>Est. start <span className="font-semibold">{fmtEtaWindow(ticket.eta.estimatedStart, ticket.eta.showRange)}</span> · </span>
+                  )}
+                  <span>Est. completion <span className="font-semibold">{fmtEtaWindow(ticket.eta.estimatedCompletion, ticket.eta.showRange)}</span></span>
+                </p>
+              ) : (
+                <p className="text-sm text-slate-800">Delayed — no estimate while the car is blocked.</p>
+              )}
+              {ticket.eta.lastUpdatedAt && <p className="text-[11px] text-slate-400">{fmtEtaUpdated(ticket.eta.lastUpdatedAt)}</p>}
+            </div>
+            {ticket.eta.confidence && (
+              <span className={`px-2 py-1 rounded text-xs font-semibold ${CONFIDENCE_CLASS[ticket.eta.confidence]}`}>
+                {CONFIDENCE_LABEL[ticket.eta.confidence]}
+              </span>
             )}
           </div>
         </div>

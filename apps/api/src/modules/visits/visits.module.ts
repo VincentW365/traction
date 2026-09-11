@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { SchedulingModule } from '../scheduling/scheduling.module';
 import { VisitsController } from './visits.controller';
 import { VisitsService } from './visits.service';
 import { SearchService } from './search.service';
@@ -14,8 +15,10 @@ import { ReconciliationService } from '../data-import/reconciliation.service';
  * unit of review IS the visit).
  * CR-2026-101 — typed operational visit notes (concern/advisor/manager/
  * technician/safety/data-report) with the advisor attention queue.
+ * CR-2026-105b — SchedulingModule for the EtaService (Visit Record estimate).
  */
 @Module({
+  imports: [SchedulingModule],
   controllers: [VisitsController, VisitNotesController, ReconciliationController],
   providers: [VisitsService, SearchService, VisitNotesService, ReconciliationService],
   exports: [VisitsService],

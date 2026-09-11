@@ -25,6 +25,8 @@ import {
   derivePartsReadiness,
   isPartsReadyForDispatch,
 } from './engine/parts-readiness.checker';
+import { EtaService } from './eta/eta.service';
+import { resolvePlannedMinutes, type EtaWaitingVisit } from './eta/eta.model';
 
 @Injectable()
 export class SchedulingService {
@@ -33,6 +35,10 @@ export class SchedulingService {
   constructor(
     private prisma: PrismaService,
     private eventEmitter: EventEmitter2,
+    // CR-2026-105b — the authoritative ETA projection runs here, AFTER ranking and
+    // inside the same advisory lock + transaction, so every recompute republishes
+    // one consistent set of estimates and the socket poke that follows is true.
+    private eta: EtaService,
   ) {}
 
   async recomputeQueue(siteId: string): Promise<void> {
@@ -66,6 +72,9 @@ export class SchedulingService {
                     include: { items: true },
                   },
                   items: { include: { serviceType: true } },
+                  // CR-2026-105b — an open rework means only part of the planned
+                  // time remains; the ETA model assumes the configured share.
+                  reworks: { where: { closedAt: null }, select: { id: true } },
                 },
               },
             },
@@ -149,11 +158,55 @@ export class SchedulingService {
       const cfg = configFromRules(rules);
       const results = calculatePriorityPositions(engineTickets, now, cfg);
 
+      // 6b. CR-2026-105b — project estimated start/completion for every visit at
+      //     the site. Strictly downstream of ranking: the model receives the
+      //     positions the engine just produced and returns times; nothing it
+      //     returns is fed back into `calculatePriorityPositions` or written to
+      //     any field the ranker reads (queueRank, displayStatus, overrides,
+      //     checkinSequence, blockedReason). FIFO-first (CR-2026-099b) is untouched.
+      const ticketById = new Map(tickets.map((t) => [t.id, t]));
+      let etaByVisit = new Map<string, { estimatedStartAt: Date | null; estimatedCompleteAt: Date | null }>();
+      try {
+        const etaRules = await this.eta.loadRules(siteId);
+        const waiting: EtaWaitingVisit[] = results.map((r) => {
+          const t = ticketById.get(r.queueTicketId);
+          const sv = t?.serviceVisit;
+          const plannedMinutes = resolvePlannedMinutes(
+            {
+              orderItems: sv?.serviceOrders?.flatMap((so) =>
+                so.items.map((i) => ({
+                  estimateMinutes: i.estimateMinutes,
+                  baseDurationMinutes: i.serviceType.baseDurationMinutes,
+                })),
+              ),
+              appointmentServices: sv?.appointment?.services?.map((s) => ({
+                baseDurationMinutes: s.serviceType.baseDurationMinutes,
+                qty: s.qty,
+              })),
+            },
+            etaRules.defaultDurationMinutes,
+          );
+          return {
+            serviceVisitId: r.serviceVisitId,
+            position: r.position,
+            plannedMinutes,
+            isRework: sv?.serviceOrders?.some((so) => so.reworks.length > 0) ?? false,
+          };
+        });
+        const projected = await this.eta.project(siteId, now, waiting);
+        etaByVisit = projected.results;
+      } catch (err) {
+        // An ETA failure must never stop the queue from being ranked; the boards
+        // simply keep the last published estimate until the next recompute.
+        this.logger.error(`ETA projection failed for site ${siteId}: ${(err as Error).message}`);
+      }
+
       // 7. Persist positions + class + readiness in a transaction; write an
       //    explainable QueueDecision snapshot whenever rank or class changed.
       const priorByTicket = new Map(
         tickets.map((t) => [t.id, { rank: t.queueRank, cls: t.serviceVisit.queuePriorityClass }]),
       );
+      const rankedVisitIds = new Set(results.map((r) => r.serviceVisitId));
       await this.prisma.$transaction(async (tx) => {
         for (const result of results) {
           const partsInfo = ticketReadiness.get(result.queueTicketId);
@@ -183,11 +236,14 @@ export class SchedulingService {
 
           const prior = priorByTicket.get(result.queueTicketId);
           const effectiveClass = result.priorityClass ?? (result.blockedReason?.toLowerCase().includes('parts') ? 'BLOCKED_PARTS' : prior?.cls ?? null);
+          const eta = etaByVisit.get(result.serviceVisitId);
           await tx.serviceVisit.update({
             where: { id: result.serviceVisitId },
             data: {
               ...(partsInfo ? { partsReadiness: partsInfo.readiness as any } : {}),
               ...(effectiveClass ? { queuePriorityClass: effectiveClass as any } : {}),
+              // CR-2026-105b — the authoritative estimate (null when blocked).
+              ...(eta ? { currentEtaStartAt: eta.estimatedStartAt, currentEtaCompleteAt: eta.estimatedCompleteAt } : {}),
             },
           });
 
@@ -202,9 +258,27 @@ export class SchedulingService {
                 score: result.score,
                 blockedReason: result.blockedReason,
                 reasonCodes: result.reasons as any,
+                // CR-2026-105b — the estimate that accompanied this decision.
+                etaStartAt: eta?.estimatedStartAt ?? null,
+                etaCompleteAt: eta?.estimatedCompleteAt ?? null,
               },
             });
           }
+        }
+
+        // CR-2026-105b — visits already in service (not part of the ranked set)
+        // get their republished completion too, and the bay they occupy learns
+        // when it is expected to free up.
+        for (const [visitId, eta] of etaByVisit) {
+          if (rankedVisitIds.has(visitId)) continue;
+          await tx.serviceVisit.update({
+            where: { id: visitId },
+            data: { currentEtaStartAt: eta.estimatedStartAt, currentEtaCompleteAt: eta.estimatedCompleteAt },
+          });
+          await tx.resourceOccupancy.updateMany({
+            where: { serviceVisitId: visitId, status: 'OCCUPIED' },
+            data: { expectedEndAt: eta.estimatedCompleteAt },
+          });
         }
       });
 

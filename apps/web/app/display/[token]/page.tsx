@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { io, type Socket } from 'socket.io-client';
+import { fmtEtaWindow, type PublicEta } from '../../../lib/eta-format';
 
 // Resolve the API base URL at call time (browser-safe): explicit env override,
 // else derive from the current host so a LAN device calls the same host:3001
@@ -26,8 +27,9 @@ interface DisplayBoard {
   timezone: string; // site-anchored; drives the header clock/date (CR-2026-079)
   generatedAt: string;
   totalInQueue: number;
-  inQueue: { ticketNumber: string; position: number | null }[];
-  inService: { ticketNumber: string; bay: string | null }[];
+  // CR-2026-105b — each card carries the public-safe estimate (times + ON_TIME/DELAYED only).
+  inQueue: ({ ticketNumber: string; position: number | null } & PublicEta)[];
+  inService: ({ ticketNumber: string; bay: string | null; stage: 'IN_SERVICE' | 'QC' } & PublicEta)[];
   ready: { ticketNumber: string }[];
 }
 
@@ -77,6 +79,52 @@ function useRotatingIndex(length: number, intervalMs: number): number {
     return () => clearInterval(id);
   }, [length, intervalMs]);
   return i;
+}
+
+// CR-2026-105b — the customer-facing estimate on a card. Times only, in the site's
+// zone, as a range when the estimate is uncertain; "Delayed" without a reason.
+function EtaLines({ item, tz, mode }: { item: PublicEta; tz: string; mode: 'queue' | 'service' | 'qc' }) {
+  const delayed = item.publicState === 'DELAYED';
+  const value = 'text-slate-200 font-semibold tabular-nums';
+  const label = 'text-[clamp(0.7rem,0.95vw,1.05rem)] leading-tight text-slate-400';
+  const delayedTag = (
+    <div className="text-[clamp(0.75rem,1vw,1.1rem)] font-semibold uppercase tracking-wider text-amber-300">Delayed</div>
+  );
+
+  if (!item.estimatedCompletion) return delayed ? <div className="mt-2">{delayedTag}</div> : null;
+
+  if (mode === 'queue') {
+    return (
+      <div className={`mt-2 ${label}`}>
+        {item.estimatedStart && (
+          <div>
+            Est. start <span className={value}>{fmtEtaWindow(item.estimatedStart, item.showRange, tz)}</span>
+          </div>
+        )}
+        <div>
+          Est. done <span className={value}>{fmtEtaWindow(item.estimatedCompletion, item.showRange, tz)}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`mt-2 ${label}`}>
+      {delayed ? (
+        <>
+          {delayedTag}
+          <div>
+            Updated est. <span className={value}>{fmtEtaWindow(item.estimatedCompletion, item.showRange, tz)}</span>
+          </div>
+        </>
+      ) : (
+        <div>
+          {mode === 'qc' ? 'Finishing up · est. ' : 'Est. completion '}
+          <span className={value}>{fmtEtaWindow(item.estimatedCompletion, item.showRange, tz)}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function DisplayBoardPage() {
@@ -230,9 +278,14 @@ export default function DisplayBoardPage() {
                   <div className="mt-1 text-[clamp(0.75rem,1vw,1.1rem)] font-medium text-slate-400">
                     of {data.totalInQueue}
                   </div>
+                  <EtaLines item={item} tz={data.timezone} mode="queue" />
                 </div>
               ) : (
-                <div className="text-[clamp(1rem,1.4vw,1.5rem)] font-medium text-slate-500">Holding</div>
+                <div className="text-right leading-none">
+                  <div className="text-[clamp(1rem,1.4vw,1.5rem)] font-medium text-slate-500">
+                    {item.publicState === 'DELAYED' ? 'Delayed' : 'Holding'}
+                  </div>
+                </div>
               )}
             </TicketCard>
           ))}
@@ -258,6 +311,7 @@ export default function DisplayBoardPage() {
                 <div className="mt-1 text-[clamp(0.7rem,0.95vw,1.05rem)] font-medium uppercase tracking-wider text-amber-400/70">
                   {item.bay ? 'Service Bay' : 'Vehicle being worked on'}
                 </div>
+                <EtaLines item={item} tz={data.timezone} mode={item.stage === 'QC' ? 'qc' : 'service'} />
               </div>
             </TicketCard>
           ))}

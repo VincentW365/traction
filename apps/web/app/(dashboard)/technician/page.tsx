@@ -16,6 +16,9 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSiteId } from '../../../hooks/use-site';
+import { useQueueSocket } from '../../../hooks/use-queue-socket';
+import { CONFIDENCE_CLASS, CONFIDENCE_LABEL, fmtEtaWindow, type EtaView } from '../../../lib/eta-format';
 import { api, ApiError } from '../../../lib/api-client';
 import { useAuth } from '../../../hooks/use-auth';
 import { EmptyState } from '../../../components/ui/empty-state';
@@ -82,6 +85,9 @@ interface MyAssignment {
   services: string[];
   // CR-2026-101 — anticipate + prioritise.
   expectedMinutes: number;
+  // CR-2026-105b — planned time + the authoritative target completion.
+  plannedMinutes: number;
+  eta: EtaView;
   sourceType: string | null;
   appointmentAt: string | null;
   hasOpenRework: boolean;
@@ -191,6 +197,11 @@ function JobChips({ a }: { a: MyAssignment }) {
       {a.expectedMinutes > 0 && (
         <span className="badge bg-slate-100 text-slate-600 text-[10px]">~{fmtMins(a.expectedMinutes * 60000)}</span>
       )}
+      {a.eta?.estimatedCompletion && !a.eta.terminal && (
+        <span className={`badge text-[10px] ${a.eta.confidence ? CONFIDENCE_CLASS[a.eta.confidence] : 'bg-slate-100 text-slate-600'}`}>
+          Target {fmtEtaWindow(a.eta.estimatedCompletion, a.eta.showRange)}
+        </span>
+      )}
       {a.priorityClass && PRIORITY_LABEL[a.priorityClass] && (
         <span className="badge bg-indigo-50 text-indigo-700 text-[10px]">{PRIORITY_LABEL[a.priorityClass]}</span>
       )}
@@ -258,6 +269,9 @@ function PauseAckLine({ p }: { p: NonNullable<MyAssignment['openPause']> }) {
 /* ---------------- the page ---------------- */
 
 export default function TechnicianWorkView() {
+  // CR-2026-105b — refresh the moment the queue/ETA republishes (polling stays as fallback).
+  const socketSiteId = useSiteId();
+  useQueueSocket(socketSiteId);
   const queryClient = useQueryClient();
   const { user } = useAuth();
 
@@ -548,6 +562,18 @@ export default function TechnicianWorkView() {
                             <p className="text-[11px] text-slate-400 text-center">
                               Started {fmtTime(timing.startedAt)}
                               {currentJob.expectedMinutes > 0 ? ` · expected ${fmtMins(expectedMs)}` : ''}
+                            </p>
+                          )}
+                          {currentJob.eta?.estimatedCompletion && !currentJob.eta.terminal && (
+                            <p className="text-[11px] text-center">
+                              <span className="text-slate-500">
+                                Target <span className="font-medium text-slate-700">{fmtEtaWindow(currentJob.eta.estimatedCompletion, currentJob.eta.showRange)}</span>
+                              </span>
+                              {currentJob.eta.confidence && (
+                                <span className={`ml-2 px-1.5 py-0.5 rounded font-medium ${CONFIDENCE_CLASS[currentJob.eta.confidence]}`}>
+                                  {CONFIDENCE_LABEL[currentJob.eta.confidence]}
+                                </span>
+                              )}
                             </p>
                           )}
                           <KpiStrip kpi={kpiQuery.data} />

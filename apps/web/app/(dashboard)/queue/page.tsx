@@ -1,6 +1,8 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { useQueueSocket } from '../../../hooks/use-queue-socket';
+import { fmtEtaWindow, type EtaView } from '../../../lib/eta-format';
 import Link from 'next/link';
 import { api } from '../../../lib/api-client';
 import { StatusBadge } from '../../../components/status-badge';
@@ -29,6 +31,8 @@ interface QueueItem {
   estimatedWaitMinutes: number | null;
   serviceDescription: string;
   timeWaitingMinutes: number;
+  // CR-2026-105b — the one persisted estimate (replaces the rank × average guess).
+  eta: EtaView;
   overrideActive: boolean;
   overrideReasonCode: string | null;
 }
@@ -64,6 +68,8 @@ function readinessDot(item: QueueItem): { color: string; title: string } {
 
 export default function QueueBoardPage() {
   const siteId = useSiteId();
+  // CR-2026-105b — refresh the moment the queue/ETA republishes (polling stays as fallback).
+  useQueueSocket(siteId);
 
   const boardQuery = useQuery({
     queryKey: ['queue-board', siteId],
@@ -172,7 +178,7 @@ export default function QueueBoardPage() {
                 <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3 text-left">Services</th>
                 <th className="px-4 py-3 text-right">Waiting</th>
-                <th className="px-4 py-3 text-right">Est. Wait</th>
+                <th className="px-4 py-3 text-right">Est. start → done</th>
                 <th className="px-4 py-3 w-10"></th>
               </tr>
             </thead>
@@ -258,11 +264,22 @@ export default function QueueBoardPage() {
                       </span>
                     </td>
 
-                    {/* Estimated wait */}
+                    {/* Estimated start → done — CR-2026-105b: the one persisted estimate */}
                     <td className="px-4 py-3 text-right">
-                      <span className="font-mono text-xs text-slate-400">
-                        {item.estimatedWaitMinutes != null ? `~${Math.round(item.estimatedWaitMinutes)} min` : '--'}
-                      </span>
+                      {item.eta?.estimatedCompletion ? (
+                        <span
+                          className={`font-mono text-xs ${item.eta.confidence === 'DELAYED' ? 'text-rose-600' : item.eta.confidence === 'AT_RISK' ? 'text-amber-600' : 'text-slate-600'}`}
+                          title={item.eta.estimatedStart ? `Est. start ${fmtEtaWindow(item.eta.estimatedStart, item.eta.showRange)} · est. done ${fmtEtaWindow(item.eta.estimatedCompletion, item.eta.showRange)}` : `Est. done ${fmtEtaWindow(item.eta.estimatedCompletion, item.eta.showRange)}`}
+                        >
+                          {item.eta.estimatedStart ? `${fmtEtaWindow(item.eta.estimatedStart, item.eta.showRange)} → ` : ''}
+                          {fmtEtaWindow(item.eta.estimatedCompletion, item.eta.showRange)}
+                          {item.eta.confidence === 'DELAYED' ? ' ⚠' : ''}
+                        </span>
+                      ) : (
+                        <span className="font-mono text-xs text-slate-400">
+                          {item.eta?.publicState === 'DELAYED' ? 'Delayed' : '--'}
+                        </span>
+                      )}
                     </td>
 
                     {/* Override indicator */}

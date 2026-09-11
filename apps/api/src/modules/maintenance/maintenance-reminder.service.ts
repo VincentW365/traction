@@ -247,7 +247,7 @@ export class MaintenanceReminderService {
       });
 
       await this.audit.log({
-        actorUserId: 'SYSTEM',
+        actorUserId: null, // system-initiated (audit.service.ts convention; 'SYSTEM' is not a uuid)
         action: 'MAINTENANCE_REMINDER_PROCESSED',
         entityType: 'MaintenanceReminder',
         entityId: reminder.id,

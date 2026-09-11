@@ -1,6 +1,8 @@
 'use client';
 
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueueSocket } from '../../../hooks/use-queue-socket';
+import { CONFIDENCE_CLASS, CONFIDENCE_LABEL, fmtEtaWindow, type EtaConfidence, type EtaView } from '../../../lib/eta-format';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../../lib/api-client';
@@ -32,6 +34,9 @@ interface CurrentJob {
   promisedCompletionAt: string | null;
   elapsedMinutes: number | null;
   aging: boolean;
+  // CR-2026-105b — expected completion + On Track / At Risk / Delayed.
+  eta: EtaView | null;
+  confidence: EtaConfidence | null;
 }
 
 interface ResourceItem {
@@ -247,6 +252,8 @@ function categoryLabel(cat: string): string {
 
 export default function DispatchBoardPage() {
   const siteId = useSiteId();
+  // CR-2026-105b — refresh the moment the queue/ETA republishes (polling stays as fallback).
+  useQueueSocket(siteId);
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const canToggleOperational = ['ADMIN', 'SERVICE_ADVISOR'].includes(user?.roleCode ?? '');
@@ -946,6 +953,18 @@ function ResourceCard({
                 {r.currentJob.aging && ' ⚠'}
               </span>
             </div>
+            {r.currentJob.eta?.estimatedCompletion && (
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-500">
+                  Est. done <span className="font-medium text-slate-700">{fmtEtaWindow(r.currentJob.eta.estimatedCompletion, r.currentJob.eta.showRange)}</span>
+                </span>
+                {r.currentJob.confidence && (
+                  <span className={`px-1.5 py-0.5 rounded font-medium ${CONFIDENCE_CLASS[r.currentJob.confidence]}`}>
+                    {CONFIDENCE_LABEL[r.currentJob.confidence]}
+                  </span>
+                )}
+              </div>
+            )}
             <p className="text-xs text-slate-600 truncate">{r.currentJob.customerName}</p>
             {r.currentJob.serviceDescription && (
               <p className="text-xs text-slate-500 truncate">{r.currentJob.serviceDescription}</p>

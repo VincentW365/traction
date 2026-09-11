@@ -1,5 +1,6 @@
 'use client';
 
+import { fmtEtaWindow, type PublicEta } from '../../../lib/eta-format';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 
@@ -23,6 +24,8 @@ interface CustomerStatus {
   status: string;
   partsReadiness: string;
   estimatedWait: string;
+  // CR-2026-105b — the same estimate the lobby screen shows (times + ON_TIME/DELAYED).
+  eta: PublicEta;
   services: string[];
   vehiclePlate: string;
   statusProgression: string[];
@@ -185,6 +188,23 @@ export default function CustomerStatusPage() {
           <div className={`text-xl font-bold ${isReady ? 'text-emerald-700' : 'text-slate-800'}`}>
             {data.estimatedWait}
           </div>
+          {/* CR-2026-105b — estimated start / completion, as a range when uncertain */}
+          {data.eta?.estimatedCompletion && !isReady && (
+            <div className="mt-2 text-sm text-slate-600">
+              {data.eta.estimatedStart && (
+                <span>
+                  Est. start <span className="font-semibold text-slate-800">{fmtEtaWindow(data.eta.estimatedStart, data.eta.showRange)}</span> ·{' '}
+                </span>
+              )}
+              <span>
+                {data.eta.publicState === 'DELAYED' ? 'Updated est. completion ' : 'Est. completion '}
+                <span className="font-semibold text-slate-800">{fmtEtaWindow(data.eta.estimatedCompletion, data.eta.showRange)}</span>
+              </span>
+              {data.eta.publicState === 'DELAYED' && (
+                <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Delayed</span>
+              )}
+            </div>
+          )}
           {data.position !== null && !isReady && (
             <div className="mt-3">
               <div className="text-sm text-slate-600">

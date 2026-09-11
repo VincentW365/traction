@@ -1,5 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { EtaService } from '../scheduling/eta/eta.service';
+import { ETA_PRESENTATION_DEFAULTS } from '../scheduling/eta/eta.config';
+import { presentEta } from '../../common/helpers/eta-presentation';
 
 /**
  * CR-2026-097 — the Visit is the authoritative operational record.
@@ -22,7 +25,11 @@ export interface TimelineEvent {
 
 @Injectable()
 export class VisitsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // CR-2026-105b — optional so the existing spec's `new VisitsService(prisma)` still works.
+    @Optional() private readonly eta?: EtaService,
+  ) {}
 
   // -------------------------------------------------------------------------
   // Visit Record aggregate
@@ -42,12 +49,12 @@ export class VisitsService {
         queueTicket: {
           select: {
             id: true, ticketNumber: true, ticketReference: true, displayTicketNumber: true,
-            displayStatus: true, queueRank: true, generatedAt: true,
+            displayStatus: true, queueRank: true, generatedAt: true, lastRankedAt: true,
           },
         },
         appointment: {
           select: {
-            id: true, scheduledStartAt: true, status: true,
+            id: true, scheduledStartAt: true, scheduledEndAt: true, status: true,
             services: { select: { serviceType: { select: { code: true, name: true } } } },
           },
         },
@@ -55,6 +62,7 @@ export class VisitsService {
           orderBy: { createdAt: 'asc' },
           select: {
             id: true, status: true, createdAt: true, startedAt: true, completedAt: true,
+            promisedCompletionAt: true,
             advisorUserId: true,
             items: {
               select: {
@@ -119,6 +127,29 @@ export class VisitsService {
     const requestedServices = (v.appointment?.services ?? []).map((s) => s.serviceType);
     const orderServices = v.serviceOrders.flatMap((o) => o.items.map((i) => ({ ...i.serviceType, itemStatus: i.status })));
 
+    // CR-2026-105b — Scheduled start · Actual start · Estimated completion · Actual
+    // completion, from the one persisted estimate.
+    let etaCfg = ETA_PRESENTATION_DEFAULTS;
+    if (this.eta) {
+      try {
+        etaCfg = await this.eta.loadRules(v.siteId);
+      } catch {
+        etaCfg = ETA_PRESENTATION_DEFAULTS;
+      }
+    }
+    const eta = presentEta({
+      now: new Date(),
+      visitStatus: v.status,
+      queueRank: v.queueTicket?.queueRank ?? null,
+      orderStatuses: v.serviceOrders.map((o) => o.status),
+      promisedCompletionAt: v.serviceOrders.find((o) => o.promisedCompletionAt)?.promisedCompletionAt ?? null,
+      scheduledStartAt: v.appointment?.scheduledStartAt ?? null,
+      currentEtaStartAt: v.currentEtaStartAt,
+      currentEtaCompleteAt: v.currentEtaCompleteAt,
+      lastUpdatedAt: v.queueTicket?.lastRankedAt ?? null,
+      config: etaCfg,
+    });
+
     const { jobSheetDraft, inspections, ...visit } = v;
 
     return {
@@ -132,12 +163,14 @@ export class VisitsService {
       derived: {
         arrivalAt: v.arrivalAt,
         checkedInAt: v.checkedInAt,
+        scheduledStartAt: v.appointment?.scheduledStartAt ?? null,
         workStartedAt,
         completedAt,
         durationMinutes:
           workStartedAt && completedAt
             ? Math.round((completedAt.getTime() - workStartedAt.getTime()) / 60000)
             : null,
+        eta,
         requestedServices,
         orderServices,
       },

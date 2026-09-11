@@ -3,8 +3,10 @@ import { ServiceOrdersService } from '../service-orders.service';
 
 /**
  * Recording-only pause/resume/rework (CR-2026-001).
- * Verifies the new transitions, ledger writes, and — critically — that pause/resume
- * do NOT touch the ServiceVisit status or trigger a queue recompute (no scheduling impact).
+ * Verifies the new transitions, ledger writes, and that pause/resume never touch the
+ * ServiceVisit status. CR-2026-105b took the decision deferred in docs/25: a pause or
+ * resume DOES trigger a recompute — never to change rank (an in-service ticket has
+ * none) but to republish the authoritative estimate with the clock held.
  */
 function buildService() {
   const prisma: any = {
@@ -101,12 +103,14 @@ describe('ServiceOrder pause/resume/rework (CR-2026-001, recording-only)', () =>
     );
   });
 
-  it('pause does NOT change the visit status or recompute the queue (no scheduling impact)', async () => {
+  it('pause does NOT change the visit status, but DOES republish the estimate (CR-2026-105b)', async () => {
     vi.spyOn(h.service, 'findById').mockResolvedValue(order('IN_PROGRESS') as any);
     await h.service.pause('so-1', { reasonCode: 'OTHER' } as any, 'user-1');
 
     expect(h.prisma.serviceVisit.update).not.toHaveBeenCalled();
-    expect(h.recompute).not.toHaveBeenCalled();
+    // The recompute republishes the ETA (clock held → DELAYED on every board); the
+    // ranker itself sees no change because an in-service ticket carries no rank.
+    expect(h.recompute).toHaveBeenCalledWith('site-1');
   });
 
   it('rejects pausing an order that is not IN_PROGRESS', async () => {
@@ -129,7 +133,8 @@ describe('ServiceOrder pause/resume/rework (CR-2026-001, recording-only)', () =>
       }),
     );
     expect(h.prisma.serviceVisit.update).not.toHaveBeenCalled();
-    expect(h.recompute).not.toHaveBeenCalled();
+    // CR-2026-105b — the clock runs again, so the estimate is republished.
+    expect(h.recompute).toHaveBeenCalledWith('site-1');
   });
 
   it('rejects resuming an order that is not PAUSED', async () => {

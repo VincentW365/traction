@@ -4,7 +4,9 @@ import {
   ConflictException,
   NotFoundException,
   Logger,
+  Optional,
 } from '@nestjs/common';
+import { SchedulingService } from '../scheduling/scheduling.service';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
@@ -34,7 +36,26 @@ export class WalkInsService {
     private prisma: PrismaService,
     private statusHistory: StatusHistoryService,
     private audit: AuditService,
+    // CR-2026-105b — QUE-002: rank on registration. Optional so the existing specs'
+    // three-argument construction keeps working.
+    @Optional() private scheduling?: SchedulingService,
   ) {}
+
+  /** CR-2026-105b — see CheckInService.rankAndEstimate; same contract. */
+  private async rankAndEstimate(siteId: string, serviceVisitId: string): Promise<Date | null> {
+    if (!this.scheduling) return null;
+    try {
+      await this.scheduling.recomputeQueue(siteId);
+      const sv = await this.prisma.serviceVisit.findUnique({
+        where: { id: serviceVisitId },
+        select: { currentEtaStartAt: true },
+      });
+      return sv?.currentEtaStartAt ?? null;
+    } catch (err) {
+      this.logger.error(`Queue recompute after walk-in failed for site ${siteId}: ${(err as Error).message}`);
+      return null;
+    }
+  }
 
   /**
    * Register a walk-in customer visit.
@@ -392,13 +413,15 @@ export class WalkInsService {
     );
 
     // -----------------------------------------------------------------------
-    // 7. Return response
+    // 7. Rank + estimate (CR-2026-105b), then return response
     // -----------------------------------------------------------------------
+    const etaStartAt = await this.rankAndEstimate(result.serviceVisit.siteId, result.serviceVisit.id);
+
     return {
       serviceVisit: result.serviceVisit,
       queueTicket: result.queueTicket,
       priorityClass: 'PENDING' as const,
-      etaStartAt: null,
+      etaStartAt,
       customerStatusUrl: `/status/${result.statusToken}`,
     };
   }

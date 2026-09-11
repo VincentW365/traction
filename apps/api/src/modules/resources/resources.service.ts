@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, Optional } from '@nestjs/common';
+import { EtaService } from '../scheduling/eta/eta.service';
+import { SchedulingService } from '../scheduling/scheduling.service';
+import { ETA_DEFAULTS, type EtaRuleValues } from '../scheduling/eta/eta.config';
+import { presentEta } from '../../common/helpers/eta-presentation';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
@@ -24,7 +28,31 @@ export class ResourcesService {
   constructor(
     private prisma: PrismaService,
     private audit: AuditService,
+    // CR-2026-105b — optional so the existing specs' `new ResourcesService(prisma, audit)`
+    // keeps working; at runtime both are injected by SchedulingModule.
+    @Optional() private eta?: EtaService,
+    @Optional() private scheduling?: SchedulingService,
   ) {}
+
+  /** CR-2026-105b — ETA/overdue rules (site-aware) or the documented defaults. */
+  private async loadEtaRules(siteId: string): Promise<EtaRuleValues> {
+    if (!this.eta) return { ...ETA_DEFAULTS, overdueJobMinutes: AGING_MINUTES };
+    try {
+      return await this.eta.loadRules(siteId);
+    } catch {
+      return { ...ETA_DEFAULTS, overdueJobMinutes: AGING_MINUTES };
+    }
+  }
+
+  /** CR-2026-105b — a bay changing hands changes every projection at the site. */
+  private async republishEstimates(siteId: string): Promise<void> {
+    if (!this.scheduling) return;
+    try {
+      await this.scheduling.recomputeQueue(siteId);
+    } catch (err) {
+      this.logger.error(`Queue recompute after resource change failed for site ${siteId}: ${(err as Error).message}`);
+    }
+  }
 
   async getDispatchBoard(siteId: string) {
     const resources = await this.prisma.workResource.findMany({
@@ -225,6 +253,7 @@ export class ResourcesService {
     });
 
     this.logger.log(`Ticket ${ticket.ticketNumber} assigned to ${resource.code}`);
+    await this.republishEstimates(resource.siteId);
     return { message: `Assigned to ${resource.name}`, resourceCode: resource.code, ticketNumber: ticket.ticketNumber };
   }
 
@@ -257,6 +286,7 @@ export class ResourcesService {
     }
 
     this.logger.log(`Resource ${resource.code} released`);
+    await this.republishEstimates(resource.siteId);
     return { message: `${resource.name} is now available`, resourceCode: resource.code };
   }
 
@@ -300,7 +330,11 @@ export class ResourcesService {
    */
   async getDispatchOverview(siteId: string) {
     const now = new Date();
-    const twoHoursAgo = new Date(now.getTime() - AGING_MINUTES * 60 * 1000);
+    // CR-2026-105b — the overdue threshold is a rule (overdue_job_minutes), and the
+    // aging flag also honours the persisted estimate's confidence (DELAYED).
+    const etaRules = await this.loadEtaRules(siteId);
+    const agingMinutes = etaRules.overdueJobMinutes;
+    const twoHoursAgo = new Date(now.getTime() - agingMinutes * 60 * 1000);
     const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const live = serviceVisitIsLive();
 
@@ -332,7 +366,8 @@ export class ResourcesService {
                 include: {
                   customer: { select: { id: true, firstName: true, lastName: true } },
                   vehicle: { select: { id: true, plateNumber: true, make: true, model: true } },
-                  queueTicket: { select: { id: true, ticketNumber: true } },
+                  queueTicket: { select: { id: true, ticketNumber: true, queueRank: true, lastRankedAt: true } },
+                  appointment: { select: { scheduledStartAt: true } },
                   serviceOrders: {
                     where: { status: { notIn: ['CLOSED', 'CANCELLED'] } },
                     include: {
@@ -564,7 +599,25 @@ export class ResourcesService {
       const promisedAt = activeOrder?.promisedCompletionAt ?? null;
       const elapsedMinutes = isOccupied ? minutesSince(occ.occupiedAt) : null;
       const overPromised = promisedAt ? now > new Date(promisedAt) : false;
-      const aging = isOccupied && ((elapsedMinutes != null && elapsedMinutes > AGING_MINUTES) || overPromised);
+      // CR-2026-105b — the authoritative estimate for the car on this resource.
+      const etaView =
+        isOccupied && sv
+          ? presentEta({
+              now,
+              visitStatus: sv.status,
+              queueRank: sv.queueTicket?.queueRank ?? null,
+              orderStatuses: orders.map((o) => o.status),
+              promisedCompletionAt: promisedAt,
+              scheduledStartAt: sv.appointment?.scheduledStartAt ?? null,
+              currentEtaStartAt: sv.currentEtaStartAt,
+              currentEtaCompleteAt: sv.currentEtaCompleteAt,
+              lastUpdatedAt: sv.queueTicket?.lastRankedAt ?? null,
+              config: etaRules,
+            })
+          : null;
+      const aging =
+        isOccupied &&
+        ((elapsedMinutes != null && elapsedMinutes > agingMinutes) || overPromised || etaView?.confidence === 'DELAYED');
 
       return {
         resourceId: r.id,
@@ -599,6 +652,9 @@ export class ResourcesService {
                 promisedCompletionAt: promisedAt,
                 elapsedMinutes,
                 aging,
+                // CR-2026-105b — expected completion + On Track / At Risk / Delayed.
+                eta: etaView,
+                confidence: etaView?.confidence ?? null,
               }
             : null,
         nextReservation: nextReservation
