@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { api } from '../../../../lib/api-client';
+import { api, ApiError } from '../../../../lib/api-client';
 import { useSiteId } from '../../../../hooks/use-site';
 import { PageHeader } from '../../../../components/ui/page-header';
 
@@ -211,7 +211,18 @@ export default function NewAppointmentPage() {
       scheduledStartAt: string;
       serviceTypes: Array<{ serviceTypeCode: string }>;
       notes?: string;
+      acknowledgeCapacity?: boolean;
     }) => api.post<{ id: string }>('/appointments', payload),
+    // CR-2026-105c — warn-not-block: every service position is booked for this
+    // time. The advisor may continue knowingly; the override is audited server-side.
+    onError: (err, payload) => {
+      if (err instanceof ApiError && err.status === 409 && (err.body as { code?: string } | undefined)?.code === 'CAPACITY_FULL' && !payload.acknowledgeCapacity) {
+        const msg = (err.body as { message?: string }).message ?? 'All service positions are booked for this time.';
+        if (window.confirm(`${msg}\n\nBook anyway (this will be recorded)?`)) {
+          createMutation.mutate({ ...payload, acknowledgeCapacity: true });
+        }
+      }
+    },
     onSuccess: async (data) => {
       // If this booking came from a hold, convert it (non-fatal on failure — the
       // appointment is booked regardless; the hold can be released manually).

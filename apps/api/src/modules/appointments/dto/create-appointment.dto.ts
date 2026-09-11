@@ -5,6 +5,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsInt,
   Min,
@@ -67,4 +68,12 @@ export class CreateAppointmentDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'CR-2026-105c — set true to book past workshop capacity after the 409 CAPACITY_FULL warning (audited).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  acknowledgeCapacity?: boolean;
 }

@@ -342,6 +342,8 @@ model Site {
 
   // CR-2026-089 — per-day ticket sequence allocation.
   ticketCounters DailyTicketCounter[]
+  // CR-2026-105c — per-day booking-reference allocation.
+  bookingCounters DailyBookingCounter[]
 
   @@map("sites")
 }
@@ -926,6 +928,13 @@ model Appointment {
   sourceChannel      String?           @default("STAFF") @map("source_channel")
   notes              String?
   createdByUserId    String?           @map("created_by_user_id") @db.Uuid
+  // CR-2026-105c — customer self-service booking. A human-readable reference
+  // (BK-B01-260911-003, allocated like queue tickets), and the customer's manage
+  // link credential stored ONLY as a sha256 hash with an expiry. Nullable: staff
+  // bookings and historical rows carry none. Additive, no backfill.
+  appointmentNumber    String?   @unique @map("appointment_number")
+  manageTokenHash      String?   @unique @map("manage_token_hash")
+  manageTokenExpiresAt DateTime? @map("manage_token_expires_at") @db.Timestamptz
   createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -941,6 +950,24 @@ model Appointment {
   @@index([siteId, scheduledStartAt])
   @@index([status])
   @@map("appointments")
+}
+
+/// CR-2026-105c — per-day booking-reference sequence, allocated with the same
+/// atomic upsert as DailyTicketCounter (one statement, no lost updates, never
+/// rewound). Kept separate from ticket counters so a booking never consumes a
+/// queue ticket number and the two series cannot collide.
+model DailyBookingCounter {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId       String   @map("site_id") @db.Uuid
+  businessDate DateTime @map("business_date") @db.Date
+  lastSequence Int      @default(0) @map("last_sequence")
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, businessDate])
+  @@map("daily_booking_counters")
 }
 
 model AppointmentService {

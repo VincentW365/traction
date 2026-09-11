@@ -6,6 +6,7 @@ import { ManagerDashboardService } from './manager-dashboard.service';
 import { PerformanceController } from './performance.controller';
 import { PerformanceService } from './performance.service';
 import { JobTimesService } from './job-times.service';
+import { AppointmentsReportService } from './appointments-report.service';
 import { PerformanceReportService } from './performance-report.service';
 
 @Module({
@@ -15,6 +16,7 @@ import { PerformanceReportService } from './performance-report.service';
     ManagerDashboardService,
     PerformanceService,
     JobTimesService,
+    AppointmentsReportService,
     PerformanceReportService,
   ],
 })

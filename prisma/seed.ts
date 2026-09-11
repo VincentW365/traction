@@ -433,6 +433,44 @@ async function main() {
   }
   console.warn(`CR-2026-105 ETA/capacity rules: ${cr105Rules.length} seeded`);
 
+  // --- CR-2026-105c: customer self-service booking rules ---
+  const cr105cRules: Array<{ ruleKey: string; valueJson: unknown; notes: string }> = [
+    { ruleKey: 'booking_enabled', valueJson: true, notes: 'CR-2026-105c: master switch for the public booking page (/book). Off = "online booking unavailable".' },
+    { ruleKey: 'booking_slot_interval_minutes', valueJson: 20, notes: 'CR-2026-105c: minutes between offered start times, from opening.' },
+    { ruleKey: 'booking_min_notice_minutes', valueJson: 120, notes: 'CR-2026-105c: earliest online slot is this many minutes from now.' },
+    { ruleKey: 'booking_advance_window_days', valueJson: 30, notes: 'CR-2026-105c: how far ahead customers may book online.' },
+    { ruleKey: 'booking_same_day_allowed', valueJson: true, notes: 'CR-2026-105c: allow same-day online bookings (subject to minimum notice).' },
+    { ruleKey: 'booking_closed_dates', valueJson: [], notes: 'CR-2026-105c: YYYY-MM-DD dates with no online slots (public holidays, closures).' },
+    { ruleKey: 'booking_excluded_service_codes', valueJson: [], notes: 'CR-2026-105c: service codes hidden from the public booking list.' },
+    { ruleKey: 'booking_cancel_cutoff_hours', valueJson: 2, notes: 'CR-2026-105c: customers may cancel online up to this many hours before the slot.' },
+    { ruleKey: 'booking_reschedule_cutoff_hours', valueJson: 2, notes: 'CR-2026-105c: customers may move a booking online up to this many hours before the slot.' },
+    { ruleKey: 'booking_max_reschedules', valueJson: 3, notes: 'CR-2026-105c: maximum online reschedules per appointment.' },
+    { ruleKey: 'booking_manage_token_days_after', valueJson: 7, notes: 'CR-2026-105c: the manage link stays valid this many days after the appointment.' },
+    { ruleKey: 'booking_arrival_instructions', valueJson: 'Please arrive about 10 minutes before your appointment with your keys. Check in at the front desk and we will take it from there.', notes: 'CR-2026-105c: text shown on the booking confirmation and in the confirmation message.' },
+    { ruleKey: 'booking_rate_limit_per_10_min', valueJson: 10, notes: 'CR-2026-105c: public booking requests allowed per client per 10 minutes (per route).' },
+    { ruleKey: 'staff_capacity_warning_enabled', valueJson: true, notes: 'CR-2026-105c: staff creating an appointment past workshop capacity get a warning they must acknowledge (audited).' },
+    { ruleKey: 'appointment_auto_missed_enabled', valueJson: false, notes: 'CR-2026-105c: hourly sweep marks un-checked-in appointments MISSED after missed_threshold_min. OFF by default — enabling classifies the whole backlog on the first run.' },
+    { ruleKey: 'appointment_duration_source', valueJson: 'DEFAULT', notes: 'CR-2026-105c: DEFAULT = every online booking is planned at default_appointment_duration_minutes (management standard 80); CATALOGUE = use ServiceType.baseDurationMinutes when set.' },
+  ];
+
+  for (const r of cr105cRules) {
+    const existing = await prisma.businessRuleConfig.findFirst({
+      where: { ruleKey: r.ruleKey, siteId: site.id },
+    });
+    if (!existing) {
+      await prisma.businessRuleConfig.create({
+        data: {
+          ruleKey: r.ruleKey,
+          valueJson: r.valueJson as any,
+          notes: r.notes,
+          siteId: site.id,
+          createdByUserId: createdUsers['admin@bert.local'],
+        },
+      });
+    }
+  }
+  console.warn(`CR-2026-105c booking rules: ${cr105cRules.length} seeded`);
+
   // --- v4.1 / CR-2026-008: Vehicle weight + serviceClass suggestions (common makes) ---
   // Advisory only — drives the classification review queue; never auto-applied
   // to Vehicle.serviceClass (staff confirm required, DMAIC Rule 3 fail-safe).

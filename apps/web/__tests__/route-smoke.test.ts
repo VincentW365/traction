@@ -53,6 +53,9 @@ const ROUTE_INVENTORY = [
   { route: '/account', file: '(dashboard)/account/page.tsx', access: 'auth', description: 'Self-service password change (CR-2026-099)' },
   { route: '/visits/[id]', file: '(dashboard)/visits/[id]/page.tsx', access: 'auth', description: 'Visit Record (CR-2026-097)' },
   { route: '/status/[token]', file: 'status/[token]/page.tsx', access: 'public', description: 'Customer status (public)' },
+  { route: '/book', file: 'book/page.tsx', access: 'public', description: 'Customer self-service booking (CR-2026-105c)' },
+  { route: '/book/manage/[token]', file: 'book/manage/[token]/page.tsx', access: 'public', description: 'Customer booking management link (CR-2026-105c)' },
+  { route: '/reports/appointments', file: '(dashboard)/reports/appointments/page.tsx', access: 'auth', description: 'Appointments & Bookings report (CR-2026-105c)' },
 ];
 
 // Sidebar navigation items — must all resolve to existing pages
@@ -65,6 +68,7 @@ const SIDEBAR_NAV = [
   { href: '/customers', file: '(dashboard)/customers/page.tsx' },
   { href: '/technician', file: '(dashboard)/technician/page.tsx' },
   { href: '/reports', file: '(dashboard)/reports/page.tsx' },
+  { href: '/reports/appointments', file: '(dashboard)/reports/appointments/page.tsx' },
   { href: '/admin/settings', file: '(dashboard)/admin/settings/page.tsx' },
   { href: '/admin/dashboard', file: '(dashboard)/admin/dashboard/page.tsx' },
   { href: '/admin/staff', file: '(dashboard)/admin/staff/page.tsx' },

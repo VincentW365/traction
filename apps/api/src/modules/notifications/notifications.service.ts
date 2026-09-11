@@ -8,6 +8,16 @@ import {
 } from './providers/notification-provider.interface';
 import { NotificationChannel, NotificationDeliveryStatus } from '@prisma/client';
 
+/** CR-2026-105c — "Fri, Sep 11, 2:40 PM" in the site's zone (falls back to the server zone). */
+export function formatAppointmentWhen(at: Date, timeZone?: string): string {
+  const opts: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+  try {
+    return at.toLocaleString('en-US', timeZone ? { ...opts, timeZone } : opts);
+  } catch {
+    return at.toLocaleString('en-US', opts);
+  }
+}
+
 export interface QueueNotificationInput {
   entityType: string;
   entityId: string;
@@ -16,6 +26,24 @@ export interface QueueNotificationInput {
   recipient: string;
   templateData: Record<string, unknown>;
   scheduledAt?: Date;
+  /** CR-2026-105c — pre-rendered content (the email provider needs a body; SMS may override the template). */
+  subject?: string;
+  body?: string;
+}
+
+/** CR-2026-105c — what a booking message needs to say. Customer contact is opt-in gated by the caller. */
+export interface AppointmentMessageInput {
+  appointmentId: string;
+  phone: string | null;
+  email: string | null;
+  scheduledStartAt: Date;
+  durationMinutes: number;
+  services: string[];
+  siteName: string;
+  timezone?: string;
+  reference: string;
+  manageUrl?: string;
+  instructions?: string;
 }
 
 @Injectable()
@@ -104,6 +132,10 @@ export class NotificationsService {
         recipient: input.recipient,
         templateKey: input.templateKey,
         templateData: input.templateData,
+        // CR-2026-105c — pre-rendered content travels with the send; without a body
+        // the SMTP provider refuses an email ("Empty email body").
+        ...(input.subject ? { subject: input.subject } : {}),
+        ...(input.body ? { body: input.body } : {}),
       });
 
       await this.prisma.notificationLog.update({
@@ -126,6 +158,66 @@ export class NotificationsService {
           failureReason:
             error instanceof Error ? error.message : 'Unknown error',
         },
+      });
+    }
+  }
+
+  /**
+   * CR-2026-105c — NOT-001: confirmation on create and on reschedule, plus a
+   * cancellation notice. SMS uses the code templates; the email carries a
+   * pre-rendered subject + body (the legacy path had no email renderer). The
+   * caller passes `null` for any channel the customer has not opted into.
+   */
+  async queueAppointmentMessage(kind: 'CONFIRMED' | 'RESCHEDULED' | 'CANCELLED', input: AppointmentMessageInput): Promise<void> {
+    const templateKey =
+      kind === 'CONFIRMED' ? 'appointment_confirmation' : kind === 'RESCHEDULED' ? 'appointment_rescheduled' : 'appointment_cancelled';
+    const when = formatAppointmentWhen(input.scheduledStartAt, input.timezone);
+    const templateData: Record<string, unknown> = {
+      scheduledStartAt: input.scheduledStartAt,
+      siteName: input.siteName,
+      services: input.services,
+      reference: input.reference,
+      manageUrl: input.manageUrl,
+      durationMinutes: input.durationMinutes,
+      when,
+    };
+    const subject =
+      kind === 'CONFIRMED'
+        ? `Appointment confirmed — ${input.reference}`
+        : kind === 'RESCHEDULED'
+          ? `Appointment moved — ${input.reference}`
+          : `Appointment cancelled — ${input.reference}`;
+    const lines = [
+      kind === 'CONFIRMED'
+        ? `Your appointment at ${input.siteName} is confirmed.`
+        : kind === 'RESCHEDULED'
+          ? `Your appointment at ${input.siteName} has been moved.`
+          : `Your appointment at ${input.siteName} has been cancelled.`,
+      '',
+      `Reference: ${input.reference}`,
+      `When: ${when}`,
+      ...(kind !== 'CANCELLED' && input.durationMinutes > 0 ? [`Planned time: about ${input.durationMinutes} minutes`] : []),
+      ...(input.services.length ? [`Service: ${input.services.join(', ')}`] : []),
+      ...(kind !== 'CANCELLED' && input.instructions ? ['', input.instructions] : []),
+      ...(input.manageUrl ? ['', `View, move or cancel: ${input.manageUrl}`] : []),
+      '',
+      `${input.siteName}`,
+    ];
+    const body = lines.join('\n');
+
+    if (input.phone) {
+      await this.queue({ entityType: 'Appointment', entityId: input.appointmentId, channel: 'SMS', templateKey, recipient: input.phone, templateData });
+    }
+    if (input.email) {
+      await this.queue({
+        entityType: 'Appointment',
+        entityId: input.appointmentId,
+        channel: 'EMAIL',
+        templateKey,
+        recipient: input.email,
+        templateData,
+        subject,
+        body,
       });
     }
   }

@@ -1,12 +1,17 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { EtaService } from '../scheduling/eta/eta.service';
+import { BOOKING_RULE_KEYS, bookingRulesFromRows } from '../public-booking/booking.config';
+import { maxConcurrentOverlap } from '../public-booking/availability.engine';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { UpdateAppointmentDto } from './dto/update-appointment.dto';
 import { toZonedTime } from 'date-fns-tz';
@@ -45,7 +50,57 @@ export class AppointmentsService {
     private prisma: PrismaService,
     private statusHistory: StatusHistoryService,
     private auditService: AuditService,
+    // CR-2026-105c — workshop capacity for the warn-not-block check. Optional so the
+    // existing specs' three-argument construction keeps working (check skipped).
+    @Optional() private eta?: EtaService,
   ) {}
+
+  /**
+   * CR-2026-105c (Assumption 11) — staff bookings consume the same constrained
+   * capacity the public engine offers. If every service position is already
+   * booked for the window, refuse with 409 CAPACITY_FULL unless the advisor
+   * acknowledges the overbooking, which is then audited. Warn-not-block, mirroring
+   * the technician-workload precedent (docs/114).
+   */
+  private async checkStaffCapacity(
+    siteId: string,
+    start: Date,
+    end: Date,
+    acknowledged: boolean,
+  ): Promise<{ overbooked: boolean; capacity: number; booked: number }> {
+    if (!this.eta) return { overbooked: false, capacity: 0, booked: 0 };
+    const rows = await this.prisma.businessRuleConfig.findMany({
+      where: { ruleKey: { in: [...BOOKING_RULE_KEYS] }, effectiveTo: null, OR: [{ siteId }, { siteId: null }] },
+      select: { ruleKey: true, valueJson: true, siteId: true },
+    });
+    const booking = bookingRulesFromRows(rows);
+    if (!booking.staffCapacityWarning) return { overbooked: false, capacity: 0, booked: 0 };
+    const etaRules = await this.eta.loadRules(siteId);
+    const existing = await this.prisma.appointment.findMany({
+      where: {
+        siteId,
+        status: { in: ['DRAFT', 'CONFIRMED', 'RESCHEDULED', 'CHECKED_IN', 'IN_PROGRESS'] },
+        scheduledStartAt: { gte: new Date(start.getTime() - 24 * 60 * 60_000), lte: new Date(end.getTime() + 24 * 60 * 60_000) },
+      },
+      select: { scheduledStartAt: true, scheduledEndAt: true },
+    });
+    const booked = maxConcurrentOverlap(
+      existing.map((a) => ({ startAt: a.scheduledStartAt, endAt: a.scheduledEndAt })),
+      start,
+      end,
+      etaRules.defaultDurationMinutes,
+    );
+    const overbooked = booked >= Math.max(1, etaRules.capacity);
+    if (overbooked && !acknowledged) {
+      throw new ConflictException({
+        code: 'CAPACITY_FULL',
+        message: `All ${etaRules.capacity} service position(s) are already booked for this time (${booked} appointment(s) overlap). Choose another time, or continue to book past capacity — this will be recorded.`,
+        capacity: etaRules.capacity,
+        booked,
+      });
+    }
+    return { overbooked, capacity: etaRules.capacity, booked };
+  }
 
   // ---------------------------------------------------------------------------
   // CREATE
@@ -110,6 +165,14 @@ export class AppointmentsService {
       scheduledEndAt,
     );
 
+    // 5c. CR-2026-105c — workshop capacity (warn-not-block, audited when overridden).
+    const capacity = await this.checkStaffCapacity(
+      data.siteId,
+      scheduledStartAt,
+      scheduledEndAt,
+      data.acknowledgeCapacity === true,
+    );
+
     // 6. Create appointment + appointment_services in a transaction
     const appointment = await this.prisma.$transaction(async (tx) => {
       const appt = await tx.appointment.create({
@@ -149,6 +212,18 @@ export class AppointmentsService {
       toStatus: 'DRAFT',
       changedByUserId: userId,
     });
+
+    // 7b. CR-2026-105c — an acknowledged overbooking is an auditable decision.
+    if (capacity.overbooked) {
+      await this.auditService.log({
+        actorUserId: userId,
+        action: AUDIT_ACTIONS.APPOINTMENT_CAPACITY_ACKNOWLEDGED,
+        entityType: 'Appointment',
+        entityId: appointment.id,
+        afterJson: { capacity: capacity.capacity, booked: capacity.booked, scheduledStartAt },
+        reasonCode: 'CAPACITY_FULL',
+      });
+    }
 
     // 8. Placeholder: queue notification job for appointment confirmation
     this.logger.log(

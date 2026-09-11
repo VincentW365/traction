@@ -36,8 +36,25 @@ function vehicleDesc(d: Data): string {
 export function renderSmsBody(templateKey: string, data: Data = {}): string {
   const site = str(data.siteName) || SITE_DEFAULT;
   switch (templateKey) {
+    // CR-2026-105c — self-service bookings add a reference and a manage link; the
+    // staff path (no reference) renders exactly as before.
     case 'appointment_confirmation':
-      return `Your appointment at ${site} is confirmed for ${fmtWhen(data.scheduledStartAt)}.`;
+      return (
+        `Your appointment at ${site} is confirmed for ${str(data.when) || fmtWhen(data.scheduledStartAt)}.` +
+        (str(data.reference) ? ` Ref ${str(data.reference)}.` : '') +
+        (str(data.manageUrl) ? ` Manage: ${str(data.manageUrl)}` : '')
+      );
+    case 'appointment_rescheduled':
+      return (
+        `Your appointment at ${site} has been moved to ${str(data.when) || fmtWhen(data.scheduledStartAt)}.` +
+        (str(data.reference) ? ` Ref ${str(data.reference)}.` : '')
+      );
+    case 'appointment_cancelled':
+      return (
+        `Your appointment at ${site} for ${str(data.when) || fmtWhen(data.scheduledStartAt)}` +
+        (str(data.reference) ? ` (ref ${str(data.reference)})` : '') +
+        ` has been cancelled. You can book again anytime.`
+      );
     case 'appointment_reminder_24h':
       return `Reminder: your appointment at ${site} is tomorrow, ${fmtWhen(data.scheduledStartAt)}.`;
     case 'appointment_reminder_2h':

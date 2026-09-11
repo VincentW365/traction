@@ -41,6 +41,8 @@ import { InspectionsModule } from './modules/inspections/inspections.module';
 import { VisitsModule } from './modules/visits/visits.module';
 import { StaffModule } from './modules/staff/staff.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
+// CR-2026-105c — customer self-service booking (public, token-gated manage links).
+import { PublicBookingModule } from './modules/public-booking/public-booking.module';
 
 @Module({
   imports: [
@@ -76,6 +78,7 @@ import { AvailabilityModule } from './modules/availability/availability.module';
     VisitsModule,
     StaffModule,
     AvailabilityModule,
+    PublicBookingModule,
   ],
 })
 export class AppModule {}

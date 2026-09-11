@@ -1,8 +1,9 @@
-import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Optional, Query, ServiceUnavailableException, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { ReportingService, TrendMetric } from './reporting.service';
 import { JobTimesService } from './job-times.service';
 import { PerformanceReportService } from './performance-report.service';
+import { AppointmentsReportService } from './appointments-report.service';
 import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
@@ -18,6 +19,9 @@ export class ReportingController {
     private reportingService: ReportingService,
     private jobTimesService: JobTimesService,
     private performanceReport: PerformanceReportService,
+    // CR-2026-105c — optional so the existing controller spec's three-argument
+    // construction keeps working; Nest always injects it at runtime.
+    @Optional() private appointmentsReport?: AppointmentsReportService,
   ) {}
 
   // CR-2026-099 — bad input is the CLIENT's problem, stated plainly. These used
@@ -48,6 +52,22 @@ export class ReportingController {
   ) {
     this.assertDateRange(siteId, startDate, endDate);
     return this.reportingService.getKpis(siteId, startDate, endDate, includeHistorical === 'true');
+  }
+
+  // CR-2026-105c — Appointments & Bookings (staff vs self-service, cancellations,
+  // reschedules, no-shows, lead time, on-time starts, utilisation, ETA variance).
+  @Get('appointments')
+  @RequirePermission(PERMISSIONS.REPORT_VIEW)
+  @ApiOperation({ summary: 'Appointments & Bookings report for a site and date range (CR-2026-105c)' })
+  async getAppointmentsReport(
+    @Query('siteId') siteId: string,
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    this.assertDateRange(siteId, startDate, endDate);
+    if (!this.appointmentsReport) throw new ServiceUnavailableException('Appointments report is not available');
+    return this.appointmentsReport.getReport(siteId, startDate, endDate, user?.sub);
   }
 
   // ---------------------------------------------------------------------------

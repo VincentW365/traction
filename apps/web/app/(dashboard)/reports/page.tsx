@@ -877,6 +877,10 @@ export default function ReportsPage() {
             <h3 className="text-sm font-semibold text-slate-900">Due for Contact</h3>
             <p className="text-xs text-slate-500 mt-1">Customers due for a maintenance follow-up.</p>
           </Link>
+          <Link href="/reports/appointments" className="card p-4 hover:border-blue-300 hover:shadow-sm transition-all">
+            <h3 className="text-sm font-semibold text-slate-900">Appointments & Bookings</h3>
+            <p className="text-xs text-slate-500 mt-1">Self-service vs staff bookings, no-shows, utilisation, ETA accuracy.</p>
+          </Link>
         </div>
       </section>
     </div>
