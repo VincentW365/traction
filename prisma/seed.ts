@@ -511,6 +511,11 @@ async function main() {
   // inspection fails with "No active inspection template is configured").
   const tpl = await seedInspectionTemplate(prisma);
   console.warn(`Inspection template v${tpl.version}: ${tpl.itemCount} items across ${tpl.categories} categories (active=${tpl.isActive})`);
+  // CR-2026-106 — printed with the runtime predicate so the deploy log proves the
+  // forms are usable, not merely present.
+  console.warn(
+    `Required forms — Job Sheet: ${tpl.forms.jobSheet ? 'PASS' : 'FAIL'} · Pre-Job Inspection: ${tpl.forms.preJobInspection ? 'PASS' : 'FAIL'} · Service Inspection: ${tpl.forms.serviceInspection ? 'PASS' : 'FAIL'}`,
+  );
 
   // CR-2026-088 — KPI policy v1, the six benchmark combinations, and the default
   // package-component mapping the manager is expected to confirm.

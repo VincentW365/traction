@@ -26,7 +26,14 @@ function build(overrides: Record<string, any> = {}) {
     userAccount: { count: vi.fn(async () => 29) },
     kpiPolicy: { count: vi.fn(async () => 1) },
     kpiServiceComponent: { count: vi.fn(async () => 19) },
-    inspectionTemplate: { count: vi.fn(async () => 1) },
+    inspectionTemplate: {
+      count: vi.fn(async () => 1),
+      // CR-2026-106 — per-kind lookup with the runtime predicate.
+      findFirst: vi.fn(async (args: any) =>
+        args?.where?.kind === 'PRE_INSPECTION' ? { id: 'pre-v1' } : { _count: { items: 30 } },
+      ),
+    },
+    jobSheetDraft: { count: vi.fn(async () => 0) },
     externalSystemRef: { count: vi.fn(async () => 16212) },
     ...overrides,
   };

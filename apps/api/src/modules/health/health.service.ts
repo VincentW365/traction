@@ -99,6 +99,7 @@ export class HealthService {
     const [
       customers, vehicles, serviceVisits, serviceTypes, sites, users,
       activeKpiPolicies, kpiMappings, activeInspectionTemplates, importedRefs,
+      topServiceInspection, topPreJobInspection, jobSheetTable,
     ] = await Promise.all([
       count(() => this.prisma.customer.count()),
       count(() => this.prisma.vehicle.count()),
@@ -110,14 +111,44 @@ export class HealthService {
       count(() => this.prisma.kpiServiceComponent.count({ where: { isActive: true } })),
       count(() => this.prisma.inspectionTemplate.count({ where: { isActive: true } })),
       count(() => this.prisma.externalSystemRef.count()),
+      // CR-2026-106 — per-form readiness with the SAME predicate the API applies
+      // when a form is opened (docs/121 §C2): the highest ACTIVE version per kind,
+      // and the service inspection must carry items on that row. Each is a number
+      // through `count` so a missing table reads as null, never a crash.
+      count(async () => {
+        const t = await this.prisma.inspectionTemplate.findFirst({
+          where: { isActive: true, kind: 'VEHICLE_INSPECTION' },
+          orderBy: { version: 'desc' },
+          select: { _count: { select: { items: true } } },
+        });
+        return t ? t._count.items : 0;
+      }),
+      count(async () => {
+        const t = await this.prisma.inspectionTemplate.findFirst({
+          where: { isActive: true, kind: 'PRE_INSPECTION' },
+          orderBy: { version: 'desc' },
+          select: { id: true },
+        });
+        return t ? 1 : 0;
+      }),
+      count(async () => {
+        await this.prisma.jobSheetDraft.count();
+        return 1;
+      }),
     ]);
+
+    const forms = {
+      jobSheet: (jobSheetTable ?? 0) > 0,
+      preJobInspection: (topPreJobInspection ?? 0) > 0,
+      serviceInspection: (topServiceInspection ?? 0) > 0,
+    };
 
     // Reference data is what the seed must have produced; operational data is what
     // only the controlled import (or real use) produces. The distinction is the whole
     // point: a deploy with reference data and zero customers is CORRECTLY deployed
     // and awaiting its import — not broken.
     const referenceDataSeeded =
-      (serviceTypes ?? 0) > 0 && (activeKpiPolicies ?? 0) > 0 && (activeInspectionTemplates ?? 0) > 0;
+      (serviceTypes ?? 0) > 0 && (activeKpiPolicies ?? 0) > 0 && forms.serviceInspection && forms.preJobInspection;
     const operationalDataPresent = (customers ?? 0) > 0;
 
     // CR-2026-099 — surface (never fix silently) accounts still on the
@@ -135,6 +166,8 @@ export class HealthService {
         kpiServiceMappings: kpiMappings,
         activeInspectionTemplates,
         activeUsers: users,
+        // CR-2026-106 — Required Form Configuration, per form.
+        forms,
       },
       operational: {
         present: operationalDataPresent,

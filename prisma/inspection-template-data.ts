@@ -73,14 +73,56 @@ export const CATEGORIES: Array<{ category: string; items: Array<{ label: string;
  * Upsert the active v1 template and (re)create its items. Idempotent and safe to
  * run repeatedly. Pass any PrismaClient (the caller owns its lifecycle).
  */
+export interface RequiredFormsState {
+  /** An active VEHICLE_INSPECTION template whose HIGHEST active version has ≥ 1 item. */
+  serviceInspection: boolean;
+  /** An active PRE_INSPECTION template (itemless by design). */
+  preJobInspection: boolean;
+  /** Code-defined (JobSheetDraft) — always true once the table exists. */
+  jobSheet: boolean;
+}
+
+/**
+ * CR-2026-106 — the exact predicate the API applies when a form is opened
+ * (`inspections.service.ts` create): per kind, the highest-version ACTIVE template,
+ * and for the vehicle inspection that row must carry items. Seed, deploy-check and
+ * /health all call this so "seeded" can never disagree with "works".
+ */
+export async function requiredFormsState(prisma: PrismaClient): Promise<RequiredFormsState> {
+  const [vi, pre] = await Promise.all([
+    prisma.inspectionTemplate.findFirst({
+      where: { isActive: true, kind: 'VEHICLE_INSPECTION' },
+      orderBy: { version: 'desc' },
+      select: { id: true, _count: { select: { items: true } } },
+    }),
+    prisma.inspectionTemplate.findFirst({
+      where: { isActive: true, kind: 'PRE_INSPECTION' },
+      orderBy: { version: 'desc' },
+      select: { id: true },
+    }),
+  ]);
+  let jobSheet = true;
+  try {
+    await prisma.jobSheetDraft.count();
+  } catch {
+    jobSheet = false;
+  }
+  return {
+    serviceInspection: !!vi && vi._count.items > 0,
+    preJobInspection: !!pre,
+    jobSheet,
+  };
+}
+
 export async function seedInspectionTemplate(prisma: PrismaClient): Promise<{
   templateId: string;
   version: number;
   isActive: boolean;
   itemCount: number;
   categories: number;
+  forms: RequiredFormsState;
 }> {
-  return prisma.$transaction(async (tx) => {
+  const seeded = await prisma.$transaction(async (tx) => {
     const template = await tx.inspectionTemplate.upsert({
       // Versions are unique per KIND (CR-2026-093): the vehicle checklist and the
       // pre-inspection number their revisions independently.
@@ -105,6 +147,28 @@ export async function seedInspectionTemplate(prisma: PrismaClient): Promise<{
       }
     }
     await tx.inspectionTemplateItem.createMany({ data });
+
+    // CR-2026-106 — an ACTIVE vehicle-inspection template with a higher version
+    // and no items would shadow this one at runtime (the API reads the top version
+    // only). Never let a seed leave the form unusable: deactivate such rows, loudly.
+    const shadowing = await tx.inspectionTemplate.findMany({
+      where: { kind: 'VEHICLE_INSPECTION', isActive: true, version: { gt: TEMPLATE_VERSION }, items: { none: {} } },
+      select: { id: true, version: true, name: true },
+    });
+    for (const s of shadowing) {
+      await tx.inspectionTemplate.update({ where: { id: s.id }, data: { isActive: false } });
+      console.warn(`Inspection template "${s.name}" v${s.version} was ACTIVE with no items and would have shadowed v${TEMPLATE_VERSION} — deactivated.`);
+    }
+
     return { templateId: template.id, version: template.version, isActive: template.isActive, itemCount: data.length, categories: CATEGORIES.length };
   });
+
+  // Verify with the runtime predicate, not the rows we just wrote.
+  const forms = await requiredFormsState(prisma);
+  if (!forms.serviceInspection || !forms.preJobInspection) {
+    throw new Error(
+      `Required inspection forms are NOT usable after seeding — service inspection: ${forms.serviceInspection}, pre-job inspection: ${forms.preJobInspection}. Refusing to report a successful seed.`,
+    );
+  }
+  return { ...seeded, forms };
 }

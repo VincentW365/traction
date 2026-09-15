@@ -31,7 +31,10 @@ services:
     # that check, never a failure: operational data arrives by the controlled import.
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm exec turbo build --filter=@bsop/api && pnpm exec prisma migrate deploy && pnpm run db:seed && node scripts/deploy-check.mjs
     # migrate stays here too as a safety net (idempotent, no-op when already applied).
-    startCommand: pnpm exec prisma migrate deploy && pnpm --filter @bsop/api start
+    # CR-2026-106 — the forms check runs at every start too (a few ms): a database
+    # replaced or restored after the last build can no longer serve traffic with
+    # the inspection forms missing while the build-time check stays green.
+    startCommand: pnpm exec prisma migrate deploy && node scripts/deploy-check.mjs --forms && pnpm --filter @bsop/api start
     envVars:
       - key: DATABASE_URL
         fromDatabase:

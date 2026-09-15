@@ -114,13 +114,19 @@ export class InspectionsService {
     // photo-first condition record and legitimately has NO checklist items; only a
     // full vehicle inspection insists on them.
     const kind = dto.kind ?? 'VEHICLE_INSPECTION';
+    // CR-2026-106 — the vehicle inspection must have items ON the row we use, so an
+    // itemless newer version can never shadow a good one (docs/121 §C2). The same
+    // predicate is applied by the seed, deploy-check and /health.
     const template = await this.prisma.inspectionTemplate.findFirst({
-      where: { isActive: true, kind },
+      where: { isActive: true, kind, ...(kind === 'VEHICLE_INSPECTION' ? { items: { some: {} } } : {}) },
       orderBy: { version: 'desc' },
       include: { items: { orderBy: { orderIndex: 'asc' } } },
     });
     if (!template || (kind === 'VEHICLE_INSPECTION' && template.items.length === 0)) {
-      throw new BadRequestException('No active inspection template is configured');
+      throw new BadRequestException(
+        `No active ${kind === 'PRE_INSPECTION' ? 'pre-job inspection' : 'service inspection'} template is configured on this deployment. ` +
+          'Run the production-safe seed (pnpm db:seed) and re-check Admin → Deployment → Required forms.',
+      );
     }
 
     const inspection = await this.prisma.$transaction(async (tx) => {

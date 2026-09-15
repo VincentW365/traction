@@ -74,7 +74,7 @@ describe('InspectionsService.create (CR-2026-034 C-2)', () => {
 
   it('rejects when no active template exists', async () => {
     const h = build({ template: null });
-    await expect(h.service.create({ serviceVisitId: 'v1' } as any, MGR)).rejects.toThrow(/active inspection template/);
+    await expect(h.service.create({ serviceVisitId: 'v1' } as any, MGR)).rejects.toThrow(/inspection template is configured/);
   });
 
   it('rejects when the visit is missing', async () => {
@@ -128,5 +128,29 @@ describe('InspectionsService edits + transitions (CR-2026-034 C-2)', () => {
   it('cross-site findById → NotFound', async () => {
     const h = build({ inspection: { id: 'insp1', siteId: 'siteB', status: 'DRAFT', items: [], wheelMeasurements: [], recommendations: [], signatures: [] } });
     await expect(h.service.findById('insp1', MGR)).rejects.toThrow(/not found/i);
+  });
+});
+
+// CR-2026-106 — the template lookup applies the same predicate as the seed,
+// deploy-check and /health (docs/121 §C2).
+describe('InspectionsService.create — template lookup predicate (CR-2026-106)', () => {
+  it('requires items on the top active VEHICLE_INSPECTION row, but not for PRE_INSPECTION', async () => {
+    const h = build();
+    await h.service.create({ serviceVisitId: 'v1' } as any, MGR);
+    const w1 = h.prisma.inspectionTemplate.findFirst.mock.calls[0][0].where;
+    expect(w1).toMatchObject({ isActive: true, kind: 'VEHICLE_INSPECTION', items: { some: {} } });
+
+    await h.service.create({ serviceVisitId: 'v1', kind: 'PRE_INSPECTION' } as any, MGR);
+    const w2 = h.prisma.inspectionTemplate.findFirst.mock.calls[1][0].where;
+    expect(w2).toMatchObject({ isActive: true, kind: 'PRE_INSPECTION' });
+    expect(w2).not.toHaveProperty('items');
+  });
+
+  it('names the missing form and the remedy when no usable template exists', async () => {
+    const h = build();
+    h.prisma.inspectionTemplate.findFirst.mockResolvedValue(null);
+    await expect(h.service.create({ serviceVisitId: 'v1', kind: 'PRE_INSPECTION' } as any, MGR)).rejects.toThrow(
+      /pre-job inspection template.*pnpm db:seed/,
+    );
   });
 });

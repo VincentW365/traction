@@ -94,3 +94,29 @@ Password). The page shows the list until it is empty; that is the confirmation.
   spell takes ~30–60 s.
 - Import commands run from a checkout with production `DATABASE_URL`; there is
   deliberately no in-app upload for the source files.
+
+## Required forms — why a deploy can look seeded and still fail (CR-2026-106)
+
+The Pre-Job Inspection and Service Inspection forms are **seeded reference data**
+(`inspection_templates`); the Job Sheet is code-defined and needs no seed. The
+current repository reproduces both templates on a fresh database (proven in
+docs/121 §C2), so if the deployed site reports *"No … template is configured"*
+one of these happened outside the repository:
+
+1. The `bsop-api` service's **dashboard Build Command is detached from
+   `render.yaml`** (a service created from an older Blueprint keeps its old value;
+   see AGENTS.md). Compare Render → bsop-api → Settings → Build Command with
+   `render.yaml`; the deploy log must show `Required forms — … PASS`.
+2. The **database was replaced or restored after the last build** (free-tier
+   Postgres expiry, or a `pg_dump` restore). Migrate runs at start; seed and check
+   run only at build. After ANY database replacement run, from a HEAD checkout:
+
+   ```
+   DATABASE_URL=<External Database URL> pnpm db:seed
+   DATABASE_URL=<External Database URL> pnpm deploy:check
+   ```
+
+Since CR-2026-106 the API start command runs `deploy-check --forms` before
+serving, `pnpm deploy:check` has a **Required form configuration** section that
+FAILS when a form is unusable, and Admin → Deployment shows Job Sheet /
+Pre-Job Inspection / Service Inspection as PASS/FAIL from the live database.

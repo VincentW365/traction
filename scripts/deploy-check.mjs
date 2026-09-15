@@ -25,11 +25,18 @@ const check = (name, ok, detail, { warnOnly = false } = {}) => {
   console.log(`  [${flag}] ${name}${detail ? ` — ${detail}` : ''}`);
 };
 
-console.log('\nBSOP deployment preflight (read-only)\n');
+// CR-2026-106 — `--forms`: only the database connection + the Required Form
+// Configuration section. Runs at every API start (render.yaml startCommand) so a
+// database replaced or restored after the last build cannot serve traffic with the
+// inspection forms missing while the build-time check stayed green (docs/121 §C2).
+const FORMS_ONLY = process.argv.includes('--forms');
+
+console.log(`\nBSOP deployment preflight (read-only${FORMS_ONLY ? ', required forms only' : ''})\n`);
 
 // ---------------------------------------------------------------------------
 // 1. Environment variables — presence, never values.
 // ---------------------------------------------------------------------------
+if (!FORMS_ONLY) {
 console.log('Environment:');
 const required = ['DATABASE_URL', 'JWT_SECRET'];
 for (const name of required) {
@@ -55,6 +62,7 @@ if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_LOGIN === 'tr
 } else {
   check('ALLOW_DEV_LOGIN', true, process.env.ALLOW_DEV_LOGIN === 'true' ? 'enabled (non-production)' : 'off');
 }
+} // !FORMS_ONLY
 
 // ---------------------------------------------------------------------------
 // 2. Database — connection, migrations, required tables, data presence.
@@ -71,6 +79,22 @@ try {
 }
 
 if (dbOk) {
+  const count = async (table) => {
+    const [{ n }] = await prisma.$queryRawUnsafe(`SELECT count(*)::int AS n FROM ${table}`);
+    return n;
+  };
+  const tableCheck = async (label, table, min, hint, opts) => {
+    try {
+      const n = await count(table);
+      check(label, n >= min, `${n} row(s)${n >= min ? '' : ` — ${hint}`}`, opts);
+      return n;
+    } catch {
+      check(label, false, `table ${table} missing — run pnpm db:migrate`);
+      return null;
+    }
+  };
+
+  if (!FORMS_ONLY) {
   try {
     const [last] = await prisma.$queryRawUnsafe(
       `SELECT migration_name, finished_at FROM _prisma_migrations
@@ -104,21 +128,6 @@ if (dbOk) {
       check('schema drift', true, 'not checked (diff engine unavailable here)');
     }
   }
-
-  const count = async (table) => {
-    const [{ n }] = await prisma.$queryRawUnsafe(`SELECT count(*)::int AS n FROM ${table}`);
-    return n;
-  };
-  const tableCheck = async (label, table, min, hint, opts) => {
-    try {
-      const n = await count(table);
-      check(label, n >= min, `${n} row(s)${n >= min ? '' : ` — ${hint}`}`, opts);
-      return n;
-    } catch {
-      check(label, false, `table ${table} missing — run pnpm db:migrate`);
-      return null;
-    }
-  };
 
   console.log('\nReference data (produced by pnpm db:seed):');
   await tableCheck('sites', 'sites', 1, 'seed has not run');
@@ -175,6 +184,52 @@ if (dbOk) {
     check('visit identity', false, 'visit_number column missing — run pnpm db:migrate');
   }
 
+  } // !FORMS_ONLY (migrations, drift, reference data)
+
+  // -------------------------------------------------------------------------
+  // CR-2026-106 — Required form configuration. FAIL, never warn: a deployment
+  // is not production-ready while an operational form cannot be opened. Each
+  // check applies the EXACT predicate the API uses (inspections.service create):
+  // the highest ACTIVE version per kind; the service inspection must carry
+  // checklist items ON that row (an itemless newer version would shadow a good
+  // one). The Job Sheet is code-defined (JobSheetDraft) and needs only its table.
+  // -------------------------------------------------------------------------
+  console.log('\nRequired form configuration (same predicate the API applies when a form is opened):');
+  try {
+    const [vi] = await prisma.$queryRawUnsafe(
+      `SELECT t.version,
+              (SELECT count(*)::int FROM inspection_template_items i WHERE i.template_id = t.id) AS items
+       FROM inspection_templates t
+       WHERE t.is_active AND t.kind = 'VEHICLE_INSPECTION'
+       ORDER BY version DESC LIMIT 1`,
+    );
+    const [pre] = await prisma.$queryRawUnsafe(
+      `SELECT t.version FROM inspection_templates t
+       WHERE t.is_active AND t.kind = 'PRE_INSPECTION'
+       ORDER BY version DESC LIMIT 1`,
+    );
+    let jobSheet = true;
+    try {
+      await prisma.$queryRawUnsafe('SELECT 1 FROM job_sheet_drafts LIMIT 1');
+    } catch {
+      jobSheet = false;
+    }
+    check('Job Sheet', jobSheet, jobSheet ? 'code-defined form; job_sheet_drafts present' : 'job_sheet_drafts missing — run pnpm db:migrate');
+    check('Pre-Job Inspection', !!pre, pre ? `active v${pre.version}` : 'no active PRE_INSPECTION template — run pnpm db:seed');
+    check(
+      'Service Inspection',
+      !!vi && vi.items > 0,
+      vi
+        ? vi.items > 0
+          ? `active v${vi.version}, ${vi.items} checklist items`
+          : `active v${vi.version} has NO checklist items — run pnpm db:seed`
+        : 'no active VEHICLE_INSPECTION template — run pnpm db:seed',
+    );
+  } catch {
+    check('Required forms', false, 'inspection_templates missing — run pnpm db:migrate');
+  }
+
+  if (!FORMS_ONLY) {
   console.log('\nOperational data (produced by the controlled customer import, never by seed):');
   const customers = await tableCheck(
     'customers', 'customers', 1,
@@ -186,6 +241,7 @@ if (dbOk) {
     console.log('         The application works with an empty customer database; the import is a');
     console.log('         separate controlled step. See docs/DEPLOYMENT_HANDOFF.md.');
   }
+  } // !FORMS_ONLY (operational data)
 }
 
 await prisma.$disconnect().catch(() => {});

@@ -30,6 +30,8 @@ interface DeploymentStatus {
     kpiServiceMappings: number | null;
     activeInspectionTemplates: number | null;
     activeUsers: number | null;
+    // CR-2026-106 — Required Form Configuration, per form.
+    forms?: { jobSheet: boolean; preJobInspection: boolean; serviceInspection: boolean };
   };
   operational: {
     present: boolean;
@@ -43,6 +45,8 @@ interface DeploymentStatus {
     environment: string;
     devLoginEnabled: boolean;
     notificationProvider: string;
+    emailProvider?: string;
+    notificationMode?: string;
     vinDecodeProvider: string;
     inspectionPhotoDriver: string;
     corsConfigured: boolean;
@@ -126,6 +130,14 @@ export default function DeploymentStatusPage() {
             <Row label="KPI service mappings" value={num(d.reference.kpiServiceMappings)} />
             <Row label="Inspection templates" value={num(d.reference.activeInspectionTemplates)} />
             <Row label="Active user accounts" value={num(d.reference.activeUsers)} />
+            {d.reference.forms && (
+              <>
+                <p className="mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Required form configuration</p>
+                <Row label="Job Sheet" value={d.reference.forms.jobSheet ? 'PASS' : 'FAIL'} tone={d.reference.forms.jobSheet ? 'ok' : 'bad'} />
+                <Row label="Pre-Job Inspection" value={d.reference.forms.preJobInspection ? 'PASS' : 'FAIL — run pnpm db:seed'} tone={d.reference.forms.preJobInspection ? 'ok' : 'bad'} />
+                <Row label="Service Inspection" value={d.reference.forms.serviceInspection ? 'PASS' : 'FAIL — run pnpm db:seed'} tone={d.reference.forms.serviceInspection ? 'ok' : 'bad'} />
+              </>
+            )}
           </div>
 
           <div className="card p-4">
@@ -155,7 +167,13 @@ export default function DeploymentStatusPage() {
               value={d.configuration.devLoginEnabled ? 'ENABLED (non-production only)' : 'off'}
               tone={d.configuration.devLoginEnabled ? 'warn' : 'ok'}
             />
-            <Row label="Notifications" value={d.configuration.notificationProvider} />
+            <Row label="SMS provider" value={d.configuration.notificationProvider} />
+            <Row label="Email provider" value={d.configuration.emailProvider ?? 'stub'} tone={(d.configuration.emailProvider ?? 'stub') === 'stub' ? 'warn' : 'ok'} />
+            <Row
+              label="Notification mode"
+              value={(d.configuration.notificationMode ?? 'TEST') === 'LIVE' ? 'LIVE — real customers' : 'TEST — redirected to the test recipient'}
+              tone={(d.configuration.notificationMode ?? 'TEST') === 'LIVE' ? 'ok' : 'warn'}
+            />
             <Row label="VIN decode" value={d.configuration.vinDecodeProvider} />
             <Row label="Inspection photo storage" value={d.configuration.inspectionPhotoDriver} />
           </div>
