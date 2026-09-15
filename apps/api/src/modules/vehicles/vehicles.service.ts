@@ -8,7 +8,8 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { CreateVehicleDto } from './dto/create-vehicle.dto';
 import { UpdateVehicleDto } from './dto/update-vehicle.dto';
 import { liveVehicleWhere } from '../../common/helpers/operational-scope';
-import { normalizeCodeQuery } from '../../common/helpers/normalize-code-query';
+import { vehicleSearchWhere } from '../../common/helpers/search-where';
+import { plateForStorage } from '../../common/helpers/search-terms';
 import { ClassificationService } from './classification.service';
 
 @Injectable()
@@ -27,37 +28,18 @@ export class VehiclesService {
    * (gated by the route's existing RBAC).
    */
   async search(query: string, includeHistorical = false) {
-    const term = query.trim();
-    // CR-2026-027: separator-insensitive code match ('SC-1211KC'/'1211KC' → 'SC1211KC').
-    const codeTerm = normalizeCodeQuery(term);
+    // CR-2026-106 — one shared where-builder (docs/121 §C1): plate/VIN/code
+    // separator-insensitive, owner names tokenised in either order, phone digits.
+    const match = vehicleSearchWhere(query);
+    if (!match) return [];
 
     return this.prisma.vehicle.findMany({
       where: {
-        AND: [
-          {
-            OR: [
-              { plateNumber: { contains: term, mode: 'insensitive' } },
-              { vehicleCode: { contains: term, mode: 'insensitive' } },
-              { vin: { contains: term, mode: 'insensitive' } },
-              {
-                customer: {
-                  OR: [
-                    { firstName: { contains: term, mode: 'insensitive' } },
-                    { lastName: { contains: term, mode: 'insensitive' } },
-                  ],
-                },
-              },
-              ...(codeTerm.length >= 2
-                ? [{ vehicleCode: { contains: codeTerm, mode: 'insensitive' as const } }]
-                : []),
-            ],
-          },
-          liveVehicleWhere(includeHistorical),
-        ],
+        AND: [match, liveVehicleWhere(includeHistorical)],
       },
       include: { customer: true },
-      take: 20,
-      orderBy: { updatedAt: 'desc' },
+      take: 50,
+      orderBy: [{ plateNumber: 'asc' }, { vehicleCode: 'asc' }],
     });
   }
 
@@ -84,7 +66,9 @@ export class VehiclesService {
       data: {
         customerId: data.customerId,
         vehicleCode,
-        plateNumber: data.plateNumber,
+        // CR-2026-106 — stored stripped/upper-cased like imported plates, so
+        // "1234 AB", "1234-AB" and "1234ab" are one registration for search.
+        plateNumber: plateForStorage(data.plateNumber),
         vin: data.vin ?? null,
         make: data.make ?? null,
         model: data.model ?? null,
@@ -348,7 +332,7 @@ export class VehiclesService {
     return this.prisma.vehicle.update({
       where: { id },
       data: {
-        ...(data.plateNumber !== undefined && { plateNumber: data.plateNumber }),
+        ...(data.plateNumber !== undefined && { plateNumber: plateForStorage(data.plateNumber) }),
         ...(data.vin !== undefined && { vin: data.vin }),
         ...(data.make !== undefined && { make: data.make }),
         ...(data.model !== undefined && { model: data.model }),

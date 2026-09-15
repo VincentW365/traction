@@ -24,22 +24,51 @@ describe('CustomersService.search — privacy-safe list', () => {
     expect(res[0].lastVisitAt).toEqual(new Date('2026-06-01'));
   });
 
-  // CR-2026-027 — separator-insensitive vehicle-code match.
-  const orCodes = (where: any) =>
-    where.AND[0].OR.map((c: any) => c?.vehicles?.some?.vehicleCode?.contains).filter(Boolean);
+  // CR-2026-027 / CR-2026-106 — separator-insensitive vehicle-code match now comes
+  // from the shared where-builder (common/helpers/search-where).
+  const whereJson = (prisma: any) => JSON.stringify(prisma.customer.findMany.mock.calls[0][0].where);
 
   it('adds a normalized vehicleCode clause so SC-1211KC / SC1211KC / 1211KC all match', async () => {
     const prisma: any = { customer: { findMany: vi.fn(async () => []) } };
     await new CustomersService(prisma).search('SC-1211KC');
-    const codes = orCodes(prisma.customer.findMany.mock.calls[0][0].where);
-    expect(codes).toContain('SC-1211KC'); // raw query
-    expect(codes).toContain('SC1211KC'); // normalized (separators stripped)
+    expect(whereJson(prisma)).toContain('"vehicleCode":{"contains":"SC1211KC","mode":"insensitive"}');
+    expect(whereJson(prisma)).toContain('"plateNumber":{"contains":"SC1211KC","mode":"insensitive"}');
   });
 
-  it('omits the normalized clause for a 1-char query', async () => {
+  it('omits the vehicle clause for a 1-char query and keeps the deterministic order + cap', async () => {
     const prisma: any = { customer: { findMany: vi.fn(async () => []) } };
     await new CustomersService(prisma).search('a');
-    expect(orCodes(prisma.customer.findMany.mock.calls[0][0].where)).toEqual(['a']);
+    const args = prisma.customer.findMany.mock.calls[0][0];
+    expect(JSON.stringify(args.where)).not.toContain('vehicles');
+    expect(args.take).toBe(50);
+    expect(args.orderBy).toEqual([{ lastName: 'asc' }, { firstName: 'asc' }, { customerNumber: 'asc' }]);
+  });
+
+  it('CR-2026-106: "Vincent Wilson" requires every token to match first OR last name', async () => {
+    const prisma: any = { customer: { findMany: vi.fn(async () => []) } };
+    await new CustomersService(prisma).search('Vincent Wilson');
+    const j = whereJson(prisma);
+    expect(j).toContain('"contains":"Vincent"');
+    expect(j).toContain('"contains":"Wilson"');
+    expect(j).not.toContain('"contains":"Vincent Wilson"');
+  });
+
+  it('CR-2026-106: a formatted phone searches the stored digits by last-7', async () => {
+    const prisma: any = { customer: { findMany: vi.fn(async () => []) } };
+    await new CustomersService(prisma).search('(876) 555-1234');
+    expect(whereJson(prisma)).toContain('"phone":{"contains":"5551234"}');
+  });
+
+  it('CR-2026-106: create stores the phone digits-only', async () => {
+    const prisma: any = {
+      $transaction: vi.fn(async (cb: any) => cb(prisma)),
+      $queryRaw: vi.fn(async () => [{ next_val: 44 }]),
+      customer: { create: vi.fn(async ({ data }: any) => ({ ...customerRow, ...data, vehicles: [] })), findMany: vi.fn(async () => []) },
+    };
+    const svc = new CustomersService(prisma);
+    await svc.create({ firstName: 'Vincent', lastName: 'Wilson', phone: '876-555-1234' } as any);
+    const data = prisma.customer.create.mock.calls[0][0].data;
+    expect(data.phone).toBe('8765551234');
   });
 });
 

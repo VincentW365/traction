@@ -5,7 +5,13 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerDirectoryDto } from './dto/customer-directory.dto';
 import { liveCustomerWhere, liveVisitWhere, PLACEHOLDER_CUSTOMER_NUMBER } from '../../common/helpers/operational-scope';
-import { normalizeCodeQuery } from '../../common/helpers/normalize-code-query';
+import {
+  customerSearchWhere,
+  customerSearchSql,
+  CUSTOMER_SEARCH_ORDER,
+  CUSTOMER_SEARCH_TAKE,
+} from '../../common/helpers/search-where';
+import { phoneForStorage } from '../../common/helpers/search-terms';
 import {
   toCustomerListItem,
   toCustomerDetail,
@@ -29,32 +35,16 @@ export class CustomersService {
    * Excludes the BERT-HIST-UNKNOWN placeholder + test data by default (CR-2026-006/020).
    */
   async search(query: string, includeHistorical = false): Promise<CustomerListItem[]> {
-    // CR-2026-027: separator-insensitive code match so 'SC1211KC', 'SC-1211KC',
-    // and '1211KC' all find the vehicle whose stored code is 'SC1211KC'.
-    const codeQuery = normalizeCodeQuery(query);
+    // CR-2026-106 — one shared where-builder (docs/121 §C1): tokenised names in
+    // either order, digits-only phone, separator-insensitive plate/VIN/code.
+    const match = customerSearchWhere(query);
+    if (!match) return [];
     const rows = await this.prisma.customer.findMany({
       where: {
-        AND: [
-          {
-            OR: [
-              { phone: { contains: query, mode: 'insensitive' } },
-              { firstName: { contains: query, mode: 'insensitive' } },
-              { lastName: { contains: query, mode: 'insensitive' } },
-              { customerNumber: { contains: query, mode: 'insensitive' } },
-              { email: { contains: query, mode: 'insensitive' } },
-              { vehicles: { some: { plateNumber: { contains: query, mode: 'insensitive' } } } },
-              { vehicles: { some: { vehicleCode: { contains: query, mode: 'insensitive' } } } },
-              { vehicles: { some: { vin: { contains: query, mode: 'insensitive' } } } },
-              ...(codeQuery.length >= 2
-                ? [{ vehicles: { some: { vehicleCode: { contains: codeQuery, mode: 'insensitive' as const } } } }]
-                : []),
-            ],
-          },
-          liveCustomerWhere(includeHistorical),
-        ],
+        AND: [match, liveCustomerWhere(includeHistorical)],
       },
-      take: 20,
-      orderBy: { lastName: 'asc' },
+      take: CUSTOMER_SEARCH_TAKE,
+      orderBy: CUSTOMER_SEARCH_ORDER,
       include: {
         _count: { select: { vehicles: true } },
         serviceVisits: {
@@ -88,20 +78,9 @@ export class CustomersService {
       Prisma.sql`c.test_data_run_id IS NULL`,
     ];
     if (dto.q && dto.q.trim()) {
-      const like = `%${dto.q.trim()}%`;
-      // CR-2026-027: separator-insensitive code match (strip '-' from the stored code).
-      const codeQuery = normalizeCodeQuery(dto.q);
-      const codeLike = `%${codeQuery}%`;
-      const codeBranch =
-        codeQuery.length >= 2
-          ? Prisma.sql` OR replace(upper(v.vehicle_code), '-', '') ILIKE ${codeLike}`
-          : Prisma.empty;
-      conds.push(Prisma.sql`(
-        c.first_name ILIKE ${like} OR c.last_name ILIKE ${like} OR c.customer_number ILIKE ${like}
-        OR c.email ILIKE ${like} OR c.phone ILIKE ${like}
-        OR EXISTS (SELECT 1 FROM vehicles v WHERE v.customer_id = c.id
-          AND (v.plate_number ILIKE ${like} OR v.vehicle_code ILIKE ${like} OR v.vin ILIKE ${like}${codeBranch}))
-      )`);
+      // CR-2026-106 — same semantics as the picker search, in SQL (docs/121 §C1).
+      const sql = customerSearchSql(dto.q);
+      if (sql !== Prisma.empty) conds.push(sql);
     }
     if (dto.letter) conds.push(Prisma.sql`c.last_name ILIKE ${dto.letter + '%'}`);
     if (dto.hasLoyalty === 'true') conds.push(Prisma.sql`c.loyalty_member = true`);
@@ -155,7 +134,9 @@ export class CustomersService {
           customerNumber,
           firstName: data.firstName,
           lastName: data.lastName,
-          phone: data.phone,
+          // CR-2026-106 — stored digits-only so "876-555-1234" and "8765551234" are
+          // one number for search; display formatting is applied on read.
+          phone: phoneForStorage(data.phone),
           email: data.email,
           // CR-2026-050 — loyalty is a yes/no flag (no number).
           loyaltyMember: data.loyaltyMember ?? false,
@@ -367,7 +348,7 @@ export class CustomersService {
       data: {
         ...(data.firstName !== undefined && { firstName: data.firstName }),
         ...(data.lastName !== undefined && { lastName: data.lastName }),
-        ...(data.phone !== undefined && { phone: data.phone }),
+        ...(data.phone !== undefined && { phone: phoneForStorage(data.phone) }),
         ...(data.email !== undefined && { email: data.email }),
         // CR-2026-050 — loyalty is a yes/no flag.
         ...(data.loyaltyMember !== undefined && { loyaltyMember: data.loyaltyMember }),

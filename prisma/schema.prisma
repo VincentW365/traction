@@ -807,6 +807,11 @@ model Customer {
   testDataRun   TestDataRun? @relation(fields: [testDataRunId], references: [id], onDelete: Restrict)
 
   @@index([testDataRunId])
+  // CR-2026-106 — search ordering/filters (docs/121 §C1)
+  @@index([lastName])
+  @@index([firstName])
+  @@index([phone])
+  @@index([email])
   @@map("customers")
 }
 

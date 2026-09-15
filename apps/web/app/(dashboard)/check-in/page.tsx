@@ -96,7 +96,7 @@ export default function CheckInPage() {
   // Debounced search
   useEffect(() => {
     if (searchTerm.length < 2) { setDebouncedTerm(''); return; }
-    const timer = setTimeout(() => setDebouncedTerm(searchTerm), 300);
+    const timer = setTimeout(() => setDebouncedTerm(searchTerm.trim()), 300);
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
@@ -372,7 +372,7 @@ export default function CheckInPage() {
           {customersQuery.isLoading && <div className="p-6 text-center text-sm text-slate-500">Searching...</div>}
           {customersQuery.data?.length === 0 && (
             <div className="p-6 text-center">
-              <p className="text-sm text-slate-500">No customers found</p>
+              <p className="text-sm text-slate-500">No customers found — try a phone number, a licence plate, or first and last name</p>
               <a href="/customers" className="text-xs text-blue-600 hover:underline mt-2 inline-block">Create New Customer</a>
             </div>
           )}

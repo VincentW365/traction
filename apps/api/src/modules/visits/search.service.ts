@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { customerIdentityWhere, vehicleIdentityWhere } from '../../common/helpers/search-where';
+import { parseSearchQuery } from '../../common/helpers/search-terms';
 
 /**
  * CR-2026-097 — global record search.
@@ -42,47 +44,46 @@ export class SearchService {
     const empty: SearchResults = { query: q, customers: [], vehicles: [], visits: [], inspections: [] };
     if (q.length < 2) return empty;
 
-    const digits = q.replace(/\D/g, '');
     // "JS-B01-260820-003" is the job sheet OF visit B01-260820-003.
     const jobSheetMatch = /^js-?(.+)$/i.exec(q);
     const visitNumberQuery = jobSheetMatch ? jobSheetMatch[1] : q;
 
-    const nameParts = q.split(/\s+/).filter(Boolean);
+    // CR-2026-106 — the shared parser/builders (docs/121 §C1): names in either
+    // order, phone by digits only when the input IS a phone (a plate no longer
+    // returns phone noise), plates/VINs separator-insensitive.
+    const parsed = parseSearchQuery(q);
+    const identity = customerIdentityWhere(parsed);
+    const vehicleIdentity = vehicleIdentityWhere(parsed);
     const customerWhere: Prisma.CustomerWhereInput = {
       testDataRunId: null,
+      // One flat OR: the customer's own fields, plus — for a plate/VIN query — the
+      // customer reached through the vehicle.
       OR: [
-        { customerNumber: { contains: q, mode: 'insensitive' } },
-        { email: { contains: q, mode: 'insensitive' } },
-        ...(digits.length >= 4 ? [{ phone: { contains: digits.slice(-7) } }] : []),
-        ...(nameParts.length >= 2
-          ? [{
-              AND: [
-                { firstName: { contains: nameParts[0], mode: 'insensitive' as const } },
-                { lastName: { contains: nameParts.slice(1).join(' '), mode: 'insensitive' as const } },
-              ],
-            }]
-          : [
-              { firstName: { contains: q, mode: 'insensitive' as const } },
-              { lastName: { contains: q, mode: 'insensitive' as const } },
-            ]),
+        ...(identity ? (identity.OR as Prisma.CustomerWhereInput[]) : []),
+        ...(vehicleIdentity ? [{ vehicles: { some: vehicleIdentity } }] : []),
       ],
     };
 
     const [customers, vehicles, visits, inspections] = await Promise.all([
-      this.prisma.customer.findMany({
-        where: customerWhere,
-        take: TAKE,
-        select: { id: true, customerNumber: true, firstName: true, lastName: true, phone: true, email: true },
-      }),
+      customerWhere.OR && (customerWhere.OR as unknown[]).length > 0
+        ? this.prisma.customer.findMany({
+            where: customerWhere,
+            take: TAKE,
+            orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+            select: { id: true, customerNumber: true, firstName: true, lastName: true, phone: true, email: true },
+          })
+        : Promise.resolve([]),
       this.prisma.vehicle.findMany({
         where: {
           customer: { testDataRunId: null },
           OR: [
-            { plateNumber: { contains: q, mode: 'insensitive' } },
-            { vin: { contains: q, mode: 'insensitive' } },
-            { vehicleCode: { contains: q, mode: 'insensitive' } },
+            ...(vehicleIdentity ? (vehicleIdentity.OR as Prisma.VehicleWhereInput[]) : []),
+            // A name/phone query also lists the matching owners' vehicles so the
+            // grouped result offers "2020 Honda Grace — 1234 AB · Owner: …".
+            ...(identity ? [{ customer: identity }] : []),
           ],
         },
+        orderBy: [{ plateNumber: 'asc' }],
         take: TAKE,
         select: {
           id: true, plateNumber: true, vehicleCode: true, make: true, model: true, modelYear: true,
@@ -116,11 +117,18 @@ export class SearchService {
       }),
     ]);
 
+    // CR-2026-106 — a customer matched by name AND by phone (or via a vehicle) is
+    // one row, not two; Prisma returns each row once, and a vehicle whose owner is
+    // already listed is kept (it is the selectable "which car" result), but the
+    // owner is never repeated.
+    const seenCustomer = new Set<string>();
+    const uniqueCustomers = customers.filter((c) => (seenCustomer.has(c.id) ? false : (seenCustomer.add(c.id), true)));
+
     return {
       query: q,
-      customers: customers.map((c) => ({
+      customers: uniqueCustomers.map((c) => ({
         id: c.id,
-        name: `${c.firstName} ${c.lastName}`,
+        name: `${c.firstName} ${c.lastName}`.trim(),
         customerNumber: c.customerNumber,
         phone: c.phone,
         email: c.email,

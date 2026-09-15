@@ -1,3 +1,4 @@
+import { normalizePhone as canonicalNormalizePhone, normalizePlate as canonicalNormalizePlate } from '../../common/helpers/search-terms';
 /**
  * Customer + Vehicle import mapper (CR-2026-003) — PURE functions, no I/O.
  *
@@ -64,9 +65,9 @@ export function rawRowFromCsv(r: Record<string, string>): RawContactRow {
   };
 }
 
-/** Digits only (preserves country code). */
+/** Digits only (preserves country code). CR-2026-106: the canonical rule lives in common/helpers/search-terms. */
 export function normalizePhone(s: string): string {
-  return (s || '').replace(/\D/g, '');
+  return canonicalNormalizePhone(s);
 }
 
 /** A phone that can't discriminate identity (placeholder / too short). */
@@ -77,9 +78,9 @@ export function isPlaceholderPhone(s: string): boolean {
   return /(000000|0000000)/.test(d) || /8760000000$/.test(d);
 }
 
-/** Upper-case, alphanumeric only. */
+/** Upper-case, alphanumeric only. CR-2026-106: the canonical rule lives in common/helpers/search-terms. */
 export function normalizePlate(s: string): string {
-  return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return canonicalNormalizePlate(s);
 }
 
 export function isJunkPlate(s: string): boolean {
