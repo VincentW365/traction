@@ -12,7 +12,7 @@ Delivered in stages, each with tests:
 | --- | --- | --- |
 | 0 | Capacity evidence + reproducibility (§A) | complete |
 | 1 | Safe notification / UAT handling (§B) | complete |
-| 2 | Internal availability decision + reason model | not started |
+| 2 | Internal availability decision + reason model (§C) | complete |
 | 3 | Admin Booking Simulator (FIXED vs SHADOW) | not started |
 | 4 | Catalogue / self-service service configuration | not started |
 | 5 | Resource-aware capacity engine (SHADOW only) | not started |
@@ -310,3 +310,80 @@ Constraints fixed now so Stage 3 cannot drift:
 
 `testContext` on the notification input (§B7) is the first piece of that
 mechanism, delivered early because it also hardens the resolver-failure case.
+
+---
+
+## §C. Stage 2 — internal availability decision / reason model
+
+### C1. The defect
+
+The engine answered `available: boolean`, and slots it rejected on timing were
+**never returned at all**: a `continue` for anything inside the minimum notice, a
+`break` at the customer cutoff, and the loop simply stopped before close. So when
+a customer said "there was nothing on Tuesday", the reason had not merely been
+discarded — it had never been computed. Nothing in the system could answer it.
+
+### C2. The model
+
+`scheduling/availability/slot-decision.ts` defines the internal vocabulary:
+
+- **`SlotReasonCode`** — the full set, declared once even though later stages emit
+  some of it, so consumers, tests and the simulator are written against a stable
+  vocabulary instead of string literals that grow stage by stage. Each entry
+  records which stage produces it.
+- **`SlotDecision`** — `startAt`, `endAt`, `available`, `reasonCode`,
+  `plannedMinutes`, `capacity { before, after, limit, reserved?, resourceCapacity? }`,
+  `rule` (the setting that decided, e.g. `booking_min_notice_minutes=120`) and
+  optional `diagnostics`.
+- **`DayDecision`** — carries its own `reasonCode`, so `CLOSED_WEEKDAY`,
+  `CLOSED_DATE` and `SAME_DAY_NOT_ALLOWED` are three distinct answers rather than
+  one `closed: true`. They are three different conversations with a customer.
+- **`AvailabilityDecision`** — the window, with the first available slot called out.
+
+`computeDayDecision` is now the primary computation and **walks the whole grid to
+close** — the early `break` is exactly how the reason went missing. `PAST` is kept
+distinct from `MINIMUM_NOTICE`: for staff (no notice requirement) "too soon" really
+is just "in the past", and conflating them would misreport the staff view.
+
+### C3. The boundary
+
+`toCustomerAvailability` is the only route to a customer surface, and it projects
+down to exactly the shape `/book` already consumed — built field by field, never
+spread, so no future diagnostic anyone adds to `SlotDecision` can ride along.
+
+Two deliberate rules:
+
+1. **No reason codes, capacity, rules or diagnostics reach a customer.** A customer
+   is told a time is unavailable, never that the shop is full, how full, which bay
+   is missing or which policy stopped them. Publishing that would let anyone map
+   the workshop's load and staffing from a public page.
+2. **Timing-excluded slots stay omitted** (a past slot was never a candidate, and
+   greying it out is noise on a phone); **capacity-blocked slots stay listed** so
+   the customer can read the shape of the day and pick another time. That is the
+   pre-CR behaviour, preserved exactly.
+
+`BookingAvailabilityService.availability()` returns the projection for both the
+public page and staff; `availabilityDecision()` returns the rich form for admin
+tooling. Stage 3's simulator calls the latter — the *same* computation, not a
+re-implementation of it.
+
+### C4. Evidence
+
+- 14 new tests: every reason code emitted, capacity arithmetic, the three day-level
+  reasons, PAST vs MINIMUM_NOTICE, plus a leak test asserting no reason code,
+  capacity value, rule string or `diagnostics` key appears anywhere in the
+  customer payload.
+- An equivalence test pins `computeAvailability` ≡ `toCustomerAvailability(decision)`,
+  so the public answer cannot drift from the rich one.
+- All 13 pre-existing engine tests pass untouched.
+- Live, against the running API — both surfaces byte-identical to before:
+
+```
+/book   top keys : audience, days, latestStartLabel, nextAvailable, plannedMinutes, range, timezone
+        day keys : availableCount, closed, date, slots
+        slot keys: available, endAt, startAt
+        leaks    : NONE
+staff   (identical)
+```
+
+Full API suite: **1284 passed**.

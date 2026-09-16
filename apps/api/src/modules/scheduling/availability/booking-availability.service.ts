@@ -34,13 +34,14 @@ import {
 } from '../../../common/helpers/operating-hours';
 import { BOOKING_RULE_KEYS, bookingRulesFromRows, type BookingRules } from '../../public-booking/booking.config';
 import {
-  computeAvailability,
+  computeAvailabilityDecision,
   isSlotAvailable,
   type AvailabilityResult,
   type DayInput,
   type ExistingBooking,
   type SlotRules,
 } from '../../public-booking/availability.engine';
+import { toCustomerAvailability, type AvailabilityDecision } from './slot-decision';
 
 export type BookingAudience = 'CUSTOMER' | 'STAFF';
 
@@ -63,7 +64,8 @@ const DAY_MS = 24 * 60 * MS;
 /** Staff may look further ahead than customers, but one request stays bounded. */
 const STAFF_MAX_DAYS_PER_REQUEST = 31;
 
-export interface AvailabilityView extends AvailabilityResult {
+/** Context that accompanies any availability answer, rich or projected. */
+export interface AvailabilityContext {
   plannedMinutes: number;
   timezone: string;
   audience: BookingAudience;
@@ -72,6 +74,9 @@ export interface AvailabilityView extends AvailabilityResult {
   /** The window actually computed (first/last day keys), for pagers. */
   range: { from: string; to: string };
 }
+
+/** The customer-safe answer: context plus times-and-a-boolean. */
+export interface AvailabilityView extends AvailabilityResult, AvailabilityContext {}
 
 /** "15:00" → "3:00 PM" (site-local wall clock; no zone maths needed). */
 export function formatLatestStartLabel(hhmm: string | null | undefined): string | null {
@@ -199,19 +204,42 @@ export class BookingAvailabilityService {
     services: Array<{ baseDurationMinutes: number | null }>,
     opts: { from?: string; days?: number; audience: BookingAudience; excludeAppointmentId?: string | null; now?: Date; rules?: BookingRuleSet },
   ): Promise<AvailabilityView> {
+    const { decision, ...context } = await this.availabilityDecision(site, services, opts);
+    // CR-2026-108 Stage 2 — the public/staff surfaces get the customer-safe
+    // projection: times and a boolean, never a reason code, a capacity number or
+    // a rule value. Diagnostics are for admin tooling (the Stage 3 simulator),
+    // which calls `availabilityDecision` directly.
+    return { ...context, ...toCustomerAvailability(decision) };
+  }
+
+  /**
+   * CR-2026-108 Stage 2 — the SAME computation, undiminished: every candidate
+   * slot with the reason it was or was not offered, the capacity arithmetic
+   * behind it, and the rule that decided. This is what the Booking Simulator
+   * consumes, so an analyst sees exactly what the customer's request produced —
+   * not a re-implementation of it.
+   */
+  async availabilityDecision(
+    site: SiteLike,
+    services: Array<{ baseDurationMinutes: number | null }>,
+    opts: { from?: string; days?: number; audience: BookingAudience; excludeAppointmentId?: string | null; now?: Date; rules?: BookingRuleSet },
+  ): Promise<AvailabilityContext & { decision: AvailabilityDecision }> {
     const rules = opts.rules ?? (await this.loadRules(site.id));
     const now = opts.now ?? new Date();
     const dayInputs = this.dayInputs(site, rules, opts.audience, opts.from, opts.days, now);
     const existing = await this.existingBookings(site.id, dayInputs, this.prisma, opts.excludeAppointmentId ?? null);
     const slotRules = this.slotRules(services, rules, opts.audience);
-    const result = computeAvailability(now, dayInputs, existing, slotRules);
+    const decision = computeAvailabilityDecision(now, dayInputs, existing, slotRules);
     return {
       plannedMinutes: slotRules.durationMinutes,
       timezone: site.timezone,
       audience: opts.audience,
       latestStartLabel: formatLatestStartLabel(this.latestStartRule(rules, opts.audience)),
-      range: { from: dayInputs[0]?.dateKey ?? localDayKey(now, site.timezone), to: dayInputs[dayInputs.length - 1]?.dateKey ?? localDayKey(now, site.timezone) },
-      ...result,
+      range: {
+        from: dayInputs[0]?.dateKey ?? localDayKey(now, site.timezone),
+        to: dayInputs[dayInputs.length - 1]?.dateKey ?? localDayKey(now, site.timezone),
+      },
+      decision,
     };
   }
 

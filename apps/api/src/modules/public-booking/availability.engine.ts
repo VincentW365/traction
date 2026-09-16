@@ -1,3 +1,10 @@
+import {
+  toCustomerAvailability,
+  type AvailabilityDecision,
+  type DayDecision,
+  type SlotDecision,
+} from '../scheduling/availability/slot-decision';
+
 /**
  * CR-2026-105c — the availability engine (pure, no I/O). SCH-001 realised:
  * slots come from operating hours, closed dates, the configured number of
@@ -91,32 +98,85 @@ export function isSlotAvailable(existing: ExistingBooking[], start: Date, rules:
   return maxConcurrentOverlap(existing, start, end, rules.defaultDurationMinutes) < Math.max(1, rules.capacity);
 }
 
-/** Pure: every candidate slot of one day with its availability. */
-export function computeDayAvailability(now: Date, day: DayInput, existing: ExistingBooking[], rules: SlotRules): DayAvailability {
-  const closed = !day.window || day.isClosedDate || (day.isToday && !rules.sameDayAllowed);
-  if (closed || !day.window) return { date: day.dateKey, closed: true, slots: [], availableCount: 0 };
+/**
+ * CR-2026-108 Stage 2 — pure: every candidate slot of one day WITH THE REASON.
+ *
+ * This is now the primary computation. Slots the previous version silently
+ * dropped (before the minimum notice, after the customer cutoff, not finishing
+ * before close) are produced here, marked unavailable and carrying the rule that
+ * excluded them — that is the whole point, so an analyst can answer "why was
+ * nothing offered on Tuesday?". `computeDayAvailability` below projects this
+ * down to the shape the public page already consumed, so /book is unchanged.
+ */
+export function computeDayDecision(now: Date, day: DayInput, existing: ExistingBooking[], rules: SlotRules): DayDecision {
+  // Day-level exclusions, in the order they are decided. Each is reported
+  // separately rather than collapsing into one "closed" flag: "we are shut on
+  // Sundays", "we are shut on Boxing Day" and "we do not take same-day online"
+  // are three different conversations with a customer.
+  if (!day.window) return closedDay(day.dateKey, 'CLOSED_WEEKDAY');
+  if (day.isClosedDate) return closedDay(day.dateKey, 'CLOSED_DATE');
+  if (day.isToday && !rules.sameDayAllowed) return closedDay(day.dateKey, 'SAME_DAY_NOT_ALLOWED');
 
   const earliest = now.getTime() + rules.minNoticeMinutes * MS;
   const step = Math.max(5, rules.slotIntervalMinutes) * MS;
   const duration = rules.durationMinutes * MS;
-  const slots: Slot[] = [];
-  for (let t = day.window.open.getTime(); t + duration <= day.window.close.getTime(); t += step) {
-    if (t < earliest) continue;
-    if (day.latestStart && t > day.latestStart.getTime()) break;
+  const limit = Math.max(1, rules.capacity);
+  const slots: SlotDecision[] = [];
+
+  // Walk the whole grid to the close, so a slot excluded by the cutoff is still
+  // reported. The loop no longer breaks early — an early `break` is exactly how
+  // the reason went missing before.
+  for (let t = day.window.open.getTime(); t < day.window.close.getTime(); t += step) {
     const start = new Date(t);
-    slots.push({
+    const end = new Date(t + duration);
+    const before = maxConcurrentOverlap(existing, start, end, rules.defaultDurationMinutes);
+    const base = {
       startAt: start.toISOString(),
-      endAt: new Date(t + duration).toISOString(),
-      available: isSlotAvailable(existing, start, rules),
-    });
+      endAt: end.toISOString(),
+      plannedMinutes: rules.durationMinutes,
+      capacity: { before, after: before + 1, limit },
+    };
+
+    if (t + duration > day.window.close.getTime()) {
+      slots.push({ ...base, available: false, reasonCode: 'OUTSIDE_OPENING_HOURS', rule: `closes ${day.window.close.toISOString()}` });
+      continue;
+    }
+    if (t < now.getTime() && rules.minNoticeMinutes === 0) {
+      // Staff have no notice requirement, so "too soon" really is just "past".
+      slots.push({ ...base, available: false, reasonCode: 'PAST' });
+      continue;
+    }
+    if (t < earliest) {
+      slots.push({ ...base, available: false, reasonCode: 'MINIMUM_NOTICE', rule: `booking_min_notice_minutes=${rules.minNoticeMinutes}` });
+      continue;
+    }
+    if (day.latestStart && t > day.latestStart.getTime()) {
+      slots.push({ ...base, available: false, reasonCode: 'CUSTOMER_LATEST_START', rule: `customer_booking_latest_start (${day.latestStart.toISOString()})` });
+      continue;
+    }
+    if (before >= limit) {
+      slots.push({ ...base, available: false, reasonCode: 'FIXED_CAPACITY_REACHED', rule: `booking_max_concurrent_appointments=${limit}` });
+      continue;
+    }
+    slots.push({ ...base, available: true, reasonCode: 'AVAILABLE' });
   }
+
   return { date: day.dateKey, closed: false, slots, availableCount: slots.filter((s) => s.available).length };
 }
 
-/** Pure: the whole window, with the first available slot called out. */
-export function computeAvailability(now: Date, days: DayInput[], existing: ExistingBooking[], rules: SlotRules): AvailabilityResult {
-  const out = days.map((d) => computeDayAvailability(now, d, existing, rules));
-  let nextAvailable: Slot | null = null;
+function closedDay(date: string, reasonCode: DayDecision['reasonCode']): DayDecision {
+  return { date, closed: true, reasonCode, slots: [], availableCount: 0 };
+}
+
+/** Pure: the whole window as internal decisions, first available called out. */
+export function computeAvailabilityDecision(
+  now: Date,
+  days: DayInput[],
+  existing: ExistingBooking[],
+  rules: SlotRules,
+): AvailabilityDecision {
+  const out = days.map((d) => computeDayDecision(now, d, existing, rules));
+  let nextAvailable: SlotDecision | null = null;
   for (const d of out) {
     const s = d.slots.find((x) => x.available);
     if (s) {
@@ -125,4 +185,21 @@ export function computeAvailability(now: Date, days: DayInput[], existing: Exist
     }
   }
   return { nextAvailable, days: out };
+}
+
+/**
+ * Pure: every candidate slot of one day with its availability.
+ *
+ * Retained shape (startAt/endAt/available only) — the customer-safe projection of
+ * `computeDayDecision`. Kept so existing callers and the public page are unchanged.
+ */
+export function computeDayAvailability(now: Date, day: DayInput, existing: ExistingBooking[], rules: SlotRules): DayAvailability {
+  const decision = computeDayDecision(now, day, existing, rules);
+  const [day0] = toCustomerAvailability({ nextAvailable: null, days: [decision] }).days;
+  return day0;
+}
+
+/** Pure: the whole window, with the first available slot called out. */
+export function computeAvailability(now: Date, days: DayInput[], existing: ExistingBooking[], rules: SlotRules): AvailabilityResult {
+  return toCustomerAvailability(computeAvailabilityDecision(now, days, existing, rules));
 }
