@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ResourcesService } from './resources.service';
+import { ResourceTruthAuditService } from './resource-truth-audit.service';
 import { ResourceAdminService, type ResourceWriteModel } from './resource-admin.service';
 import { AssignResourceDto } from './dto/assign-resource.dto';
 import { SetOperationalStatusDto } from './dto/set-operational-status.dto';
@@ -34,7 +35,20 @@ export class ResourcesController {
     private admin: ResourceAdminService,
     private prisma: PrismaService,
     private audit: AuditService,
+    private readonly truthAuditService: ResourceTruthAuditService,
   ) {}
+
+  /**
+   * CR-2026-108 Stage 5A — the Resource Truth Audit. READ-ONLY: it proposes a
+   * capacity classification for every resource and states what only management
+   * can confirm. Nothing here becomes production capacity on its own.
+   */
+  @Get('truth-audit')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Resource truth audit — proposed capacity roles and what needs management confirmation (read-only)' })
+  truthAudit() {
+    return this.truthAuditService.audit();
+  }
 
   @Get('board')
   @RequirePermission(PERMISSIONS.QUEUE_VIEW)

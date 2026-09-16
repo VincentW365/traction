@@ -20,7 +20,8 @@ Delivered in stages, each with tests:
 | 4D | Preflight + public preview (§G4) | complete — awaiting review |
 | 4E | Enforcement ON — six-service public catalogue (§H) | complete |
 | 4F | DEFAULT vs CATALOGUE impact analysis (§I) | complete — HOLD recommended |
-| 5 | Resource-aware capacity engine (SHADOW only) | not started |
+| 5A | Resource truth audit (§J) | complete — MANAGEMENT REVIEW GATE |
+| 5B–5D | Resource pool model, SHADOW engine, validation | blocked on 5A review |
 | 6 | Reservation semantics + end-to-end validation | not started |
 
 ---
@@ -993,3 +994,141 @@ CATALOGUE**. At that point re-run `pnpm booking:duration-impact`; it is repeatab
 and costs nothing.
 
 Production remains on `appointment_duration_source = DEFAULT`.
+
+---
+
+## §J. Stage 5A — Resource Truth Audit
+
+Read-only. `GET /resources/truth-audit` (`RESOURCE_MANAGE`). It proposes a capacity
+classification for every resource and states what only management can confirm.
+Nothing here becomes production capacity on its own, and no schema was changed.
+
+### J1. Three different capacity numbers are in play
+
+| Source | Capacity |
+| --- | ---: |
+| Production today (`booking_max_concurrent_appointments`) | **2** |
+| What RESOURCES mode would compute, unaudited | **13** |
+| What this audit proposes, pending confirmation | **7** |
+
+The 13 is the number this audit exists to stop anyone adopting by accident.
+
+### J2. Two resource models, and scheduling uses the OTHER one
+
+- `WorkResource` — 17 rows, **0** technician assignments have ever referenced one.
+- `WorkBay` (legacy) — 6 rows, **62** assignments reference it.
+- `ResourceReservation` — **0** rows.
+- `ResourceOperationalStatus` — **0** rows; every resource reads `NOT CONFIGURED`.
+
+**`ServiceType.requiredBayType` speaks the LEGACY vocabulary** (GENERAL, LUBE,
+ALIGNMENT, DIAGNOSTIC, INSPECTION, TIRE) — not `WorkResource.resourceCategory`
+(BAY, OVERFLOW, LIGHT_SLOT, POWER_WASH, EXTERNAL). A resource-aware engine built
+on `WorkResource` would be reasoning about rows the shop has never used, in a
+vocabulary the catalogue does not speak.
+
+**This must be resolved before Stage 5B.** It is the single largest risk in Stage 5.
+
+### J3. Proposed classification
+
+| Resource | Category | Proposed role | Counts? |
+| --- | --- | --- | --- |
+| BAY-01/02/03 | BAY | PRIMARY_SERVICE_POSITION | yes |
+| BAY-04 Mobile Lift | BAY | PRIMARY_SERVICE_POSITION | yes (SEDAN only) |
+| BAY-05 Power Jack | BAY | SUPPORT_EQUIPMENT | no |
+| BAY-06 / BAY-07 "(TBD)" | BAY | PLACEHOLDER_TBD | **no** |
+| MJACK-01/02 | BAY | SUPPORT_EQUIPMENT | no |
+| STAND-01/02 | BAY | SUPPORT_EQUIPMENT | no |
+| OVF-01/02 | OVERFLOW | OVERFLOW_SERVICE_POSITION | yes |
+| LT-01/02 | LIGHT_SLOT | SUPPORT_EQUIPMENT | no |
+| PWASH-01 | POWER_WASH | PRIMARY_SERVICE_POSITION | yes |
+| MSHOP-EXT | EXTERNAL | EXTERNAL | no |
+
+**What inflates capacity today:** six rows in the `BAY` category are not vehicle
+positions — two jacks, two stands, a power jack and two TBD placeholders. Counting
+them is exactly how one vehicle on a jack with two stands becomes four bookings.
+The SEDAN-only restriction on the mobile jacks is preserved as a vehicle-class
+constraint regardless of how they are classified.
+
+### J4. Bay-type coverage — the specialty bottleneck is real
+
+| Required | Services | Pilot services | Active bays | |
+| --- | ---: | ---: | ---: | --- |
+| GENERAL | 23 | 3 | 2 | |
+| ALIGNMENT | 1 | 1 | **1** | Wheel Alignment is a pilot service |
+| LUBE | 1 | 1 | **1** | Oil Change is a pilot service |
+| INSPECTION | 1 | 1 | **1** | Pre-Purchase Inspection is a pilot service |
+| DIAGNOSTIC | 4 | 0 | 1 | |
+| TIRE | 1 | 0 | **0** | required by a service, no bay exists |
+
+Three of the six pilot services sit on a **single** position each. Under FIXED
+capacity 2, two overlapping Wheel Alignments are accepted today with one alignment
+bay — the exact failure Stage 5 is meant to prevent.
+
+### J5. Technician data cannot be trusted as a constraint
+
+- 17 active accounts, 1 inactive.
+- **0 shift/attendance records.** The platform does not know who is on shift.
+- 10 of 12 skill codes are held by 70%+ of technicians — seeded breadth, not a
+  skill matrix. The only discriminating skills are `AC` and `COOLING`, one
+  technician each, and both are unverified.
+
+**The maximum simultaneous technician count the data can substantiate is UNKNOWN.**
+A roster is not an attendance record. Technician capacity must not become a
+limiting constraint until shift data is maintained.
+
+### J6. Arrival capacity vs active-work capacity — they are conflated
+
+Traced through `check-in.service.ts`: check-in creates a `ServiceVisit`
+(`CHECKED_IN`) and a `QueueTicket`. **No bay or resource is assigned at booking
+time or at check-in.** The vehicle joins the queue and waits for a technician.
+
+So operationally the platform is model **B** — an arrival appointment that queues
+before active service — while `booking_max_concurrent_appointments` is applied as
+model **A**, holding a position for the whole planned duration. An 80-minute
+booking "occupies" 10:00-11:20 in the engine even though the vehicle may not start
+work until 10:40.
+
+The single key is doing two jobs. The honest split is:
+
+- **arrivals per interval** — how many vehicles the front desk can receive and
+  process at once;
+- **concurrent work positions** — how many vehicles can physically be worked on.
+
+Recommended before Stage 5B: confirm which the current `2` was meant to express.
+No new key has been introduced — that is the decision being returned.
+
+### J7. Proposed minimal changes (none applied)
+
+1. **Decide the authoritative resource model** (J2). Everything else depends on it.
+2. **A capacity role on the resource** — the smallest addition that makes J3
+   durable. `WorkResource.capacityRole` as an enum
+   (`PRIMARY | OVERFLOW | SUPPORT_EQUIPMENT | PLACEHOLDER`), defaulting to
+   `SUPPORT_EQUIPMENT` so nothing counts until someone says it does. No existing
+   field carries this: `resourceCategory` is a type, not a capacity contract, and
+   `schedulingEnabled` means "may receive work", which a jack legitimately can.
+3. **Populate `ResourceOperationalStatus`**, currently empty for all 17 — Case 8
+   (out-of-service immediately reduces capacity) cannot work without it.
+4. **Possibly split the capacity key** (J6) — only after the arrival-vs-work
+   question is answered, not before.
+
+### J8. Confirmations required from management
+
+Returned in the audit payload and on the verification sheet: simultaneous vehicle
+count; which bays are operational; whether Bays 6 and 7 physically exist and are
+commissioned; whether the overflow slots are genuine positions and under what
+circumstances; whether mobile jacks and stands are positions or equipment;
+alignment / tire / lube position counts; where Vehicle Cleaning happens (a
+mechanical bay, or PWASH-01); where Pre-Purchase Inspections happen; which
+resources may substitute for GENERAL work; and whether any resource is unavailable
+at particular times.
+
+None of these may be inferred from historical throughput.
+
+### J9. Production controls unchanged (§19)
+
+```
+booking_enforce_online_bookable     : true
+appointment_duration_source         : DEFAULT
+booking_capacity_mode               : FIXED
+booking_max_concurrent_appointments : 2
+```
