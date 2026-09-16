@@ -20,6 +20,8 @@
     "deploy:bootstrap": "node scripts/deploy-bootstrap.mjs",
     "customers:import": "tsx apps/api/scripts/import-customers.ts",
     "customers:import:commit": "tsx apps/api/scripts/import-customers.ts --commit",
+  "customers:reconcile": "tsx apps/api/scripts/import-customers.ts --reconcile",
+  "customers:reconcile:master": "tsx apps/api/scripts/reconcile-master-list.ts",
     "customers:verify": "node scripts/customers-verify.mjs",
     "jobs:import": "tsx apps/api/scripts/import-jobs.ts",
     "jobs:import:commit": "tsx apps/api/scripts/import-jobs.ts --commit"

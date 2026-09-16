@@ -287,6 +287,7 @@ enum IntegrationSystem {
   SHAREPOINT_CONTACT_DB
   SHAREPOINT_JOB_SHEET
   TEST_DATA_RUN // CR-2026-020 — test-data run manifest tag (ExternalSystemRef)
+  PEACHTREE_CUSTOMER_LIST // CR-2026-106 — accounting customer master list (reconciliation source)
 }
 
 enum ReminderStatus {
@@ -1954,6 +1955,31 @@ model ResourceReservation {
 // =========================
 // v4.1 — EXTERNAL INTEGRATION REFERENCES
 // =========================
+
+/**
+ * CR-2026-106 — one row per import/reconciliation run (docs/121 §D "Migration").
+ * Counts only — never names, phones or plates. Lets the deployed site answer
+ * "when did the last import run, from which file, and did its totals reconcile to
+ * the source?" instead of assuming success.
+ */
+model ImportRun {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  system          IntegrationSystem
+  mode            String // DRY_RUN | RECONCILE | COMMIT | ROLLBACK
+  sourceFile      String            @map("source_file") // basename only
+  batchId         String?           @map("batch_id")
+  startedAt       DateTime          @map("started_at") @db.Timestamptz
+  finishedAt      DateTime?         @map("finished_at") @db.Timestamptz
+  totals          Json // reconciliationTotals() — counts only
+  exceptionsCount Int               @default(0) @map("exceptions_count")
+  reconciles      Boolean           @default(false)
+  actor           String? // OS user / operator label typed on the command line
+  databaseLabel   String?           @map("database_label") // host/db name without credentials
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([system, mode, startedAt])
+  @@map("import_runs")
+}
 
 model ExternalSystemRef {
   id            String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

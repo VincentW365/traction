@@ -40,6 +40,8 @@ interface DeploymentStatus {
     vehicles: number | null;
     serviceVisits: number | null;
     externalImportRefs: number | null;
+    /** CR-2026-106 — last COMMIT import run (counts only). */
+    lastImport?: { system: string; sourceFile: string; batchId: string | null; startedAt: string; finishedAt: string | null; totals: Record<string, unknown>; exceptionsCount: number; reconciles: boolean } | null;
     note: string | null;
   };
   configuration: {
@@ -154,6 +156,15 @@ export default function DeploymentStatusPage() {
             <Row label="Vehicles" value={num(d.operational.vehicles)} />
             <Row label="Service visits" value={num(d.operational.serviceVisits)} />
             <Row label="Import references" value={num(d.operational.externalImportRefs)} />
+            <Row
+              label="Last customer import"
+              value={
+                d.operational.lastImport
+                  ? `${new Date(d.operational.lastImport.startedAt).toLocaleString()} · ${d.operational.lastImport.sourceFile} · ${d.operational.lastImport.reconciles ? 'reconciled to source' : 'DID NOT RECONCILE'} · ${d.operational.lastImport.exceptionsCount} exception(s)`
+                  : 'none recorded on this database'
+              }
+              tone={d.operational.lastImport ? (d.operational.lastImport.reconciles ? 'ok' : 'bad') : 'warn'}
+            />
             {d.operational.note && (
               <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 leading-relaxed">
                 {d.operational.note}

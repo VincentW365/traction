@@ -120,3 +120,20 @@ Since CR-2026-106 the API start command runs `deploy-check --forms` before
 serving, `pnpm deploy:check` has a **Required form configuration** section that
 FAILS when a form is unusable, and Admin → Deployment shows Job Sheet /
 Pre-Job Inspection / Service Inspection as PASS/FAIL from the live database.
+
+
+## CR-2026-106 — go-live settings the deployed site needs (owner steps)
+
+These cannot be done from the repository; each is a Render dashboard setting or a command run against the deployed database.
+
+1. **Public app URL (customer links).** On `bsop-api` set `PUBLIC_APP_URL` to the public `bsop-web` address (https, e.g. `https://bsop-web.onrender.com`). Every customer-facing link — status page, booking manage link, booking link — is built from it. `deploy:check` FAILS in production when it is missing, not https, or an internal host; Admin → Deployment shows the verdict under **Public app URL (customer links)**.
+2. **Email.** Keep `EMAIL_PROVIDER=smtp` with `SMTP_HOST/PORT/SECURE/USER/PASS/FROM`. Set `NOTIFICATION_MODE=LIVE` to stop redirecting customer messages to the test recipient. Then open Admin → Deployment → **Prove outbound email works**, type a real mailbox, and read the mail server's own reply (accepted / rejected / response line). Every notification screen now shows the server's state — *Sent* means the provider accepted it, never "composed".
+3. **Required forms.** After any deploy or database change, Admin → Deployment must show **Job Sheet / Pre-Job Inspection / Service Inspection: PASS**. If not, run `DATABASE_URL=<External URL> pnpm db:seed` and re-check (the API refuses to start when a form is missing).
+4. **Customer data.** Reconcile before you trust any count:
+   ```
+   DATABASE_URL=<External URL> pnpm customers:reconcile -- --file /secure/customers.csv
+   DATABASE_URL=<External URL> pnpm customers:reconcile:master -- --file /secure/Customer_List_Master.xlsx
+   ```
+   "Would be created" > 0 means the deployed database is missing those rows: run `pnpm customers:import:commit -- --file …` and read the post-commit table. Admin → Deployment shows the last run under **Last customer import**. The 1,653 Peachtree-only customers are a separate decision (docs/121 §F6).
+5. **Booking rules.** Settings → Booking & ETA: `customer_booking_latest_start` (15:00), `staff_latest_start_enforced` (off), `booking_share_message_template`. The seed creates them; they are editable there.
+6. **Prove it from outside Bert's network.** On a phone on mobile data (Wi-Fi off): open a customer status link from a ticket, open the booking link from a customer page ("Send booking link" → WhatsApp), book a slot, receive the confirmation, open the manage link. A link that works on the office PC proves nothing about customer reach.

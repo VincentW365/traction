@@ -166,3 +166,51 @@ Each record states what was changed, where, how it was verified, and what remain
 | A later customer confirm at 14:00 (overlapping the now-full 15:00 window) | `409 SLOT_TAKEN` — the 80-minute window overlaps two staff bookings; the engine refused it for the customer exactly as it would for staff |
 
 The check-in → CUSTOMER_CONCERN note is covered by code review and is re-verified live in the fresh-environment pass (section G).
+
+### F6. SharePoint historical data — formal reconciliation (CR-2026-106e)
+
+**Change.**
+- `apps/api/src/modules/data-import/reconcile.ts` (pure, tested): builds the reconciliation from three things — what the parser read (including what it **dropped**), what the mapper planned, and what the database holds by **stable keys**. Confidence ladder for a planned customer: exact key (deterministic customer number / `ExternalSystemRef`) → mobile (digits-only, exactly one record) → email (exactly one) → *name + supporting attribute* = **review**, never a match → *name only* = **not a match** (listed as `NAME_ONLY_CANDIDATE` so nobody merges it by hand blindly). Vehicles: exact code → plate/VIN already on another record (exception) → create. Every table row adds up: `rows in file = parsed + dropped`; `planned customers = exact + mobile + email + would-create + review`; the report says **DOES NOT RECONCILE** when it does not.
+- `apps/api/scripts/import-customers.ts`: the CSV parser now **counts** the rows it drops (short/empty, no SharePoint Id) instead of filtering silently; new **`--reconcile`** mode (`pnpm customers:reconcile -- --file <csv>`) prints the table, writes `demo-output/import-reconciliation.md` + `import-exceptions.csv` (git-ignored, the only place names appear) and records an `ImportRun`; **`--commit`** now also writes a **customer-level `ExternalSystemRef`** (system `SHAREPOINT_CONTACT_DB`, `entityType 'Customer'`, the contact ids and dedupe key in metadata), records an `ImportRun` with the post-commit reconciliation, and prints **"Import complete"** only when every planned customer and vehicle is present by exact key afterwards — otherwise "Import INCOMPLETE" with exit code 2. Rollback records an `ImportRun` too.
+- `apps/api/scripts/reconcile-master-list.ts` (`pnpm customers:reconcile:master`): reconciles `Customer_List_Master.xlsx` (Source | Customer Name | Customer ID | Phone | Email | Vehicle Plate | Year | Make | Model | VIN) against the database per **source group** by vehicle code / plate / VIN / mobile / email — names are never a key — and records an `ImportRun` (system `PEACHTREE_CUSTOMER_LIST`).
+- Schema (AG-02, additive, migration `20260915140000_cr_2026_106_import_runs`): `ImportRun` (system, mode, sourceFile, batchId, started/finished, `totals` JSON of counts only, exceptionsCount, reconciles, actor, databaseLabel) and enum value `PEACHTREE_CUSTOMER_LIST`. `/health/deployment` → `operational.lastImport`; Admin → Deployment shows **Last customer import** (when, file, reconciled or not, exceptions) or "none recorded on this database".
+
+**Reconciliation — SharePoint Contact Database export (`customers.csv`, 7,157 data rows) against the local database where the import was committed (2026-06-09):**
+
+| Metric | Count |
+|---|---:|
+| Data rows in file | 7,157 |
+| Parsed | 7,157 |
+| Dropped (short/empty) | 0 |
+| Dropped (no SharePoint Id) | 0 |
+| Customers planned (after name+phone de-duplication) | 6,856 |
+| … present by exact key | **6,856** |
+| … matched by mobile / email / would create / review | 0 / 0 / 0 / 0 |
+| Vehicles planned (one per row) | 7,157 |
+| … present by exact key | **7,157** |
+| … plate/VIN on another vehicle / would create | 0 / 0 |
+| Flagged source rows (data quality, imported anyway) | 579 = MISSING_VIN 385 · DUPLICATE_PLATE 119 · DUPLICATE_VIN 89 · MISSING_PLATE 12 · JUNK_PLATE 11 |
+| Check | source ✓ · customers ✓ · vehicles ✓ |
+
+The same run against the **fresh probe database** (never imported): 0 present, **6,856 customers and 7,157 vehicles would be created**, checks ✓ — i.e. the tooling tells a never-imported deployment exactly what it is missing instead of "Import Complete".
+
+**Reconciliation — merged master list (`Customer_List_Master.xlsx`, 8,851 rows) against the local database:**
+
+| Source group | Rows | Present (by code / plate / VIN / mobile / email) | Not present | No usable key |
+|---|---:|---|---:|---:|
+| Existing | 7,158 | **7,158 (100.0%)** = 2,385 / 4,752 / 20 / 1 / 0 | 0 | 0 |
+| Peachtree (new) | 1,693 | **26 (1.5%)** = 26 / 0 / 0 / 0 / 0 | **1,653** | 14 |
+| All | 8,851 | 7,184 | 1,653 | 14 |
+
+Check ✓ (8,851 = 7,184 + 1,653 + 14). Every "Existing" row is in the database; the **1,653 Peachtree-only customers have never been imported** (14 more have no usable key at all). Their import needs the owner's decision (assumption E4) — there is no SharePoint contact row for them, so they would enter as customers without vehicles, and the accounting list carries only name, id, phone, and balance.
+
+**What the deployed database holds cannot be known from this machine.** The owner runs, from a laptop with the Render External Database URL:
+
+```
+DATABASE_URL=<External URL> pnpm customers:reconcile -- --file /secure/customers.csv
+DATABASE_URL=<External URL> pnpm customers:reconcile:master -- --file /secure/Customer_List_Master.xlsx
+```
+
+If the first table shows "would be created" > 0, run `pnpm customers:import:commit -- --file …` and read the **post-commit** table it prints; Admin → Deployment then shows the run under "Last customer import". Imported records are searchable at once (F1 uses the same normalised keys).
+
+**Verification.** `reconcile.spec.ts` (7: empty DB, tiers, name-only never matches, shared mobile = review, vehicle tiers, source check failure visible, PII only in the CSV), `import-tooling.spec.ts` (static: `--reconcile`, dropped-row counting, customer refs, ImportRun, "complete" only after re-check, master list groups/keys, package scripts), `health.spec.ts` green with the new lookup. Live: the two runs above recorded `import_runs` rows (`SHAREPOINT_CONTACT_DB RECONCILE reconciles=true exceptions=579`, `PEACHTREE_CUSTOMER_LIST RECONCILE reconciles=true exceptions=1667`).

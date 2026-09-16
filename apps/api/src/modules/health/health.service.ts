@@ -156,6 +156,21 @@ export class HealthService {
     // documented seed passwords. In production this is a standing security
     // incident; the Deployment page shows it until every one is changed.
     const defaultCredentialAccounts = await this.findDefaultCredentialAccounts();
+    const lastImportRow = await count(async () => {
+      const r = await (this.prisma as unknown as { importRun?: { findFirst: (a: unknown) => Promise<unknown> } }).importRun?.findFirst({
+        where: { mode: 'COMMIT' },
+        orderBy: { startedAt: 'desc' },
+        select: { system: true, sourceFile: true, batchId: true, startedAt: true, finishedAt: true, totals: true, exceptionsCount: true, reconciles: true },
+      });
+      return r ? 1 : 0;
+    });
+    const lastImport = lastImportRow
+      ? await (this.prisma as unknown as { importRun: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> } }).importRun.findFirst({
+          where: { mode: 'COMMIT' },
+          orderBy: { startedAt: 'desc' },
+          select: { system: true, sourceFile: true, batchId: true, startedAt: true, finishedAt: true, totals: true, exceptionsCount: true, reconciles: true },
+        })
+      : null;
 
     return {
       ...health,
@@ -176,6 +191,8 @@ export class HealthService {
         vehicles,
         serviceVisits,
         externalImportRefs: importedRefs,
+        // CR-2026-106 — the last COMMIT import run recorded on this database (counts only).
+        lastImport,
         note: operationalDataPresent
           ? null
           : 'Customer database is empty. If this is a fresh deployment, run the approved customer import (see docs/DEPLOYMENT_HANDOFF.md).',
