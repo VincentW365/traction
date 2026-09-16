@@ -106,6 +106,12 @@ export interface AppointmentMessageInput {
   /** CR-2026-106 — history linkage (the booking messages were invisible on the customer page without it). */
   customerId?: string | null;
   vehicleId?: string | null;
+  /**
+   * CR-2026-108 Stage 3 — explicit UAT context. A brand-new customer created in a
+   * UAT session has no history to resolve from, and the tag is written in the same
+   * request, so the classification is carried rather than rediscovered.
+   */
+  testContext?: { testDataRunId?: string | null; runLabel?: string | null } | null;
 }
 
 @Injectable()
@@ -396,7 +402,7 @@ export class NotificationsService {
     const body = lines.join('\n');
 
     if (input.phone) {
-      await this.queue({ entityType: 'Appointment', entityId: input.appointmentId, channel: 'SMS', templateKey, recipient: input.phone, templateData, customerId: input.customerId, vehicleId: input.vehicleId });
+      await this.queue({ entityType: 'Appointment', entityId: input.appointmentId, channel: 'SMS', templateKey, recipient: input.phone, templateData, customerId: input.customerId, vehicleId: input.vehicleId, testContext: input.testContext });
     }
     if (input.email) {
       await this.queue({
@@ -410,6 +416,7 @@ export class NotificationsService {
         body,
         customerId: input.customerId,
         vehicleId: input.vehicleId,
+        testContext: input.testContext,
       });
     }
   }

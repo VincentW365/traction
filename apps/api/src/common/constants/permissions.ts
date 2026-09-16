@@ -98,6 +98,11 @@ export const PERMISSIONS = {
   // would silently widen this if it were ever granted to advisors.
   NOTIFY_CAPTURED_VIEW: 'notify:captured_view',
 
+  // CR-2026-108 — the Admin Booking Simulator: reading the internal availability
+  // decision (capacity numbers, rule values, later resource facts) and minting UAT
+  // booking sessions. Diagnostic and privileged, so it is its own boundary.
+  BOOKING_SIMULATE: 'booking:simulate',
+
   // Visual Inspections (CR-2026-034)
   INSPECTION_VIEW: 'inspection:view',
   INSPECTION_CREATE: 'inspection:create',

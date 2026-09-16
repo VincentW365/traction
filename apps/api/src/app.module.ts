@@ -43,6 +43,7 @@ import { StaffModule } from './modules/staff/staff.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 // CR-2026-105c — customer self-service booking (public, token-gated manage links).
 import { PublicBookingModule } from './modules/public-booking/public-booking.module';
+import { BookingSimulatorModule } from './modules/booking-simulator/booking-simulator.module';
 
 @Module({
   imports: [
@@ -79,6 +80,7 @@ import { PublicBookingModule } from './modules/public-booking/public-booking.mod
     StaffModule,
     AvailabilityModule,
     PublicBookingModule,
+    BookingSimulatorModule,
   ],
 })
 export class AppModule {}

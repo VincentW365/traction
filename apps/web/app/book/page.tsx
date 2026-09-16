@@ -76,6 +76,19 @@ function Shell({ site, children }: { site?: SiteInfo | null; children: React.Rea
 export default function BookPage() {
   const [step, setStep] = useState<Step>('identify');
   const [error, setError] = useState<string | null>(null);
+  /**
+   * CR-2026-108 Stage 3 — an administrator-issued UAT session token, present only
+   * when this page was opened from the Booking Simulator's launch link. Read from
+   * the URL and passed through untouched; the server verifies the signature and
+   * ignores anything it cannot verify, so a hand-typed value changes nothing. The
+   * page is otherwise completely unchanged — this is the real customer flow.
+   */
+  const [uatToken, setUatToken] = useState('');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const t = new URLSearchParams(window.location.search).get('uat');
+    if (t) setUatToken(t);
+  }, []);
 
   // Step 1 — CR-2026-106: mobile + plate, or mobile + email (never name only)
   const [phone, setPhone] = useState('');
@@ -183,6 +196,11 @@ export default function BookPage() {
                 mileage: mileage.trim() ? Number(mileage.replace(/[^0-9]/g, '')) : undefined,
               }
             : undefined,
+        // CR-2026-108 Stage 3 — an administrator-issued UAT session, if this page
+        // was opened from the Booking Simulator. Passed straight through: the
+        // server verifies the signature, and an invalid one is simply ignored, so
+        // the booking then behaves as an ordinary real one.
+        uatToken: uatToken || undefined,
       };
       const res = await publicApi.post<Confirmation>('/public/booking/confirm', body);
       setDone(res);

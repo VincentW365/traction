@@ -13,7 +13,7 @@ Delivered in stages, each with tests:
 | 0 | Capacity evidence + reproducibility (§A) | complete |
 | 1 | Safe notification / UAT handling (§B) | complete |
 | 2 | Internal availability decision + reason model (§C) | complete |
-| 3 | Admin Booking Simulator (FIXED vs SHADOW) | not started |
+| 3 | Admin Booking Simulator + UAT session (§D) | complete |
 | 4 | Catalogue / self-service service configuration | not started |
 | 5 | Resource-aware capacity engine (SHADOW only) | not started |
 | 6 | Reservation semantics + end-to-end validation | not started |
@@ -387,3 +387,114 @@ staff   (identical)
 ```
 
 Full API suite: **1284 passed**.
+
+---
+
+## §D. Stage 3 — Admin Booking Simulator and the UAT booking session
+
+### D1. The simulator
+
+`Setup → Booking Simulator` (`/admin/testing/booking`), API under
+`/admin/testing/booking`, gated on a dedicated **`BOOKING_SIMULATE`** permission.
+
+It calls `BookingAvailabilityService.availabilityDecision` — the **production**
+service — and renders the internal decision for every candidate slot: the reason
+code, a plain-language explanation, capacity before/after against the limit, and
+the rule that decided (`booking_min_notice_minutes=120`). It holds no availability
+logic of its own; a simulator that re-implemented the rules would be explaining a
+system that does not exist.
+
+Verified live — 54 slot decisions over 2 days returning `AVAILABLE`,
+`MINIMUM_NOTICE`, `CUSTOMER_LATEST_START` and `OUTSIDE_OPENING_HOURS`, each with
+its capacity arithmetic. Advisor gets 403, anonymous 401.
+
+### D2. FIXED vs SHADOW — an honest empty column
+
+The page shows **Production model: FIXED** and **Shadow model: Not yet available**,
+with the reason stated on screen.
+
+The resource-aware engine is Stage 5 and does not exist. Populating the shadow
+column with a partial calculation would be worse than leaving it empty: it would
+*look* like evidence, and shadow mode exists precisely to decide whether the real
+model can be trusted. The presentation contract is built now, so Stage 5 fills it
+in without the interface changing.
+
+### D3. The UAT booking session — closing the brand-new-customer gap
+
+Stage 1 suppressed notifications by resolving `testDataRunId` from the customer,
+vehicle or visit a message was about. That covers a RETURNING test customer and
+**not at all** the case most worth testing: a genuinely brand-new customer, who
+has no anchor to resolve. Booking as a pre-tagged customer does not close it
+either — that is the existing-customer code path.
+
+So an administrator mints a session from the simulator and launches the **real**
+`/book` flow inside it:
+
+```
+Simulator → Start UAT session → signed token (30 min)
+          → /book?uat=<token>   ← the real public page, unchanged
+          → brand-new Customer + Vehicle tagged to the test run
+          → confirmation CAPTURED, never transmitted
+          → standard test-run cleanup removes everything
+```
+
+Constraints honoured:
+
+- **No `?test=true`.** The capability is a JWT signed with the server secret,
+  carrying the run id, the label and the issuing user, with its own `kind` so a
+  customer booking session can never be used as one.
+- **Unverifiable means ABSENT.** A bad signature, an expired token, the wrong
+  kind or missing claims all resolve to "no UAT context", and the booking proceeds
+  as a real one. That is the safe direction: a tester's booking behaving like a
+  real booking is loud and recoverable, whereas honouring a forged token would let
+  a stranger book invisibly — never notified, outside operational reporting, and
+  deletable by a cleanup that believed the records were disposable.
+- **The real controllers.** `/book` is untouched apart from reading the token from
+  the URL and passing it through; there is no simulator-only booking path.
+- **Attributable.** Every session writes `UAT_BOOKING_SESSION_STARTED` naming who
+  authorised it.
+
+The notification carries `testContext` explicitly rather than waiting for a lookup
+to rediscover a tag written moments earlier in the same request — the §B7
+mechanism, now used end to end.
+
+Verified live: brand-new customer booked, customer and vehicle tagged, 2
+notifications CAPTURED with nothing transmitted; the same booking without a token
+produced `SMS=SENT, EMAIL=SENT` untagged; **a forged token was ignored and the
+booking stayed genuine**.
+
+### D4. Shadow comparison table — schema agreed, migration DEFERRED to Stage 5
+
+Management's decision: a dedicated table, not application logs, because the
+purpose is analytical review before RESOURCE_AWARE can ever be trusted. The
+migration is deliberately **not** created here — the resource-aware fields cannot
+be pinned before the Stage 5 engine exists, and guessing them would mean altering
+a core table twice. The agreed shape:
+
+| Column | Notes |
+| --- | --- |
+| `id`, `siteId`, `observedAt` | |
+| `slotStartAt`, `slotEndAt` | the decision's window |
+| `serviceTypeCode` | never the customer's service *request* text |
+| `vehicleClass` | nullable; class only, never the vehicle |
+| `plannedMinutes` | |
+| `fixedAvailable`, `fixedReasonCode` | production answer |
+| `shadowAvailable`, `shadowReasonCode` | resource-aware answer |
+| `fixedCeiling` | the concurrency limit applied |
+| `resourceCapacity` | computed capacity-contributing positions |
+| `fallbackUsed`, `fallbackReason` | resource configuration incomplete |
+| `bookingConfigHash`, `resourceConfigHash` | so a disagreement is attributable to the configuration that produced it |
+| `source` | `SIMULATOR` or `AVAILABILITY` |
+
+**No customer PII** — no name, phone, email or plate. A shadow row describes a
+capacity decision, not a person.
+
+**Recorded selectively.** Persisting every candidate slot of every availability
+request would be millions of identical rows. Only materially interesting rows are
+written: FIXED available / SHADOW blocked, FIXED blocked / SHADOW available, both
+blocked for different operational reasons, a material capacity difference, or a
+resource-aware fallback. Aggregate agreement rates come from counters, not from
+retaining every identical decision.
+
+**Retention: 90 days**, sufficient for an operational review window, with a
+scheduled purge. This is diagnostic data, not an operational record.

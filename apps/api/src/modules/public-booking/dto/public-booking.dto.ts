@@ -139,6 +139,17 @@ export class ConfirmBookingDto {
   @ApiPropertyOptional({ type: ServiceRequestDto, description: 'CR-2026-106 — reason / concern / description / mileage' })
   @IsOptional() @ValidateNested() @Type(() => ServiceRequestDto)
   serviceRequest?: ServiceRequestDto;
+
+  /**
+   * CR-2026-108 Stage 3 — an administrator-issued UAT booking session, minted in
+   * the Booking Simulator. Signed and expiring; there is deliberately no plain
+   * flag, because anyone could set one and make their own booking invisible to
+   * notifications, reporting and cleanup. An unverifiable value is ignored and the
+   * booking proceeds as a normal, real one.
+   */
+  @ApiPropertyOptional({ description: 'Administrator-issued UAT session token (signed, short-lived)' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  uatToken?: string;
 }
 
 export class CancelBookingDto {

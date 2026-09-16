@@ -36,6 +36,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EtaService } from '../scheduling/eta/eta.service';
 import { localDayKey } from '../../common/helpers/operating-hours';
 import { phoneForStorage } from '../../common/helpers/search-terms';
+import { verifyUatSession, type UatSessionContext } from '../booking-simulator/uat-session';
 import type { BookingRules } from './booking.config';
 import { isSlotAvailable, type SlotRules } from './availability.engine';
 import {
@@ -269,6 +270,14 @@ export class PublicBookingService {
     this.avail.assertSlotAllowed(start, end, site, rules, 'CUSTOMER');
     const serviceRequest = normaliseServiceRequest(dto.serviceRequest);
 
+    // CR-2026-108 Stage 3 — an administrator-issued UAT session. Signed and
+    // expiring; an unverifiable token is treated as ABSENT, so the booking simply
+    // proceeds as a real one rather than becoming invisibly disposable.
+    const uat: UatSessionContext | null = verifyUatSession(dto.uatToken);
+    if (dto.uatToken && !uat) {
+      this.logger.warn('A /book confirm carried a UAT token that did not verify; proceeding as a normal customer booking.');
+    }
+
     // Who is booking?
     const sessionCustomerId = dto.sessionToken ? this.verifySession(dto.sessionToken) : null;
     if (!sessionCustomerId && !dto.customer) {
@@ -330,6 +339,9 @@ export class PublicBookingService {
             notificationOptInEmail: c.emailOptIn ?? true,
             notes: 'Created by customer self-service booking (CR-2026-105c).',
             ...(possibleDuplicate ? { identityReviewStatus: 'PENDING_REVIEW', possibleDuplicateOfId: possibleDuplicate.id } : {}),
+            // CR-2026-108 — created inside a UAT session: tagged to the run, so its
+            // notifications are captured and cleanup can remove it.
+            ...(uat ? { testDataRunId: uat.testDataRunId } : {}),
           },
           select: { id: true },
         });
@@ -365,6 +377,9 @@ export class PublicBookingService {
               make: v.make?.trim() || null,
               model: v.model?.trim() || null,
               modelYear: v.modelYear ?? null,
+              // CR-2026-108 — created inside a UAT session: tagged to the run, so
+              // its notifications are captured and cleanup can remove it.
+              ...(uat ? { testDataRunId: uat.testDataRunId } : {}),
             },
             select: { id: true },
           });
@@ -412,7 +427,7 @@ export class PublicBookingService {
         afterJson: { possibleDuplicateOfId: flag.possibleDuplicateOfId, matchedOn: flag.matchedOn, appointmentId: created.appt.id, actorType: 'CUSTOMER' },
       });
     }
-    await this.notify('CONFIRMED', created.appt, site, rules.booking, created.token);
+    await this.notify('CONFIRMED', created.appt, site, rules.booking, created.token, uat);
 
     return { ...this.confirmationView(created.appt, site, rules.booking, created.token), serviceRequest: serviceRequest.view };
   }
@@ -649,6 +664,10 @@ export class PublicBookingService {
     site: SiteContext,
     booking: BookingRules,
     token: string | null,
+    // CR-2026-108 Stage 3 — carried explicitly so a brand-new UAT customer's
+    // confirmation is captured on the FIRST message, rather than depending on a
+    // lookup rediscovering a tag written moments earlier in the same request.
+    uat?: { testDataRunId: string; runLabel: string } | null,
   ): Promise<void> {
     try {
       await this.notifications.queueAppointmentMessage(kind, {
@@ -667,6 +686,7 @@ export class PublicBookingService {
         vehicle: `${[appt.vehicle.make, appt.vehicle.model].filter(Boolean).join(' ') || 'Vehicle'} · plate ${maskPlate(appt.vehicle.plateNumber)}`,
         customerId: appt.customer.id,
         vehicleId: appt.vehicle.id,
+        ...(uat ? { testContext: { testDataRunId: uat.testDataRunId, runLabel: uat.runLabel } } : {}),
       });
     } catch (err) {
       this.logger.error(`Booking notification (${kind}) failed for ${appt.id}: ${(err as Error).message}`);
