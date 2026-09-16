@@ -75,4 +75,4 @@ artifacts/
 
 # CR-2026-093 — locally stored inspection photographs (customer property, never committed)
 .data/
-scripts/tmp-due-sample.mjs
+scripts/tmp-*

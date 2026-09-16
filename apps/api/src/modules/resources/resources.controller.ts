@@ -50,6 +50,21 @@ export class ResourcesController {
     return this.truthAuditService.audit();
   }
 
+  /**
+   * CR-2026-108 Stage 5B §6 — the reconciliation view. Two resource models exist;
+   * this shows both sides with their link state so a person can pair them. It
+   * merges nothing and deletes nothing.
+   *
+   * Declared above the parameterised routes so "reconciliation" is never parsed
+   * as an id.
+   */
+  @Get('reconciliation')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Resource / legacy bay reconciliation — both inventories with link state' })
+  reconciliation(@Query('siteId') siteId: string) {
+    return this.admin.reconciliation(siteId);
+  }
+
   @Get('board')
   @RequirePermission(PERMISSIONS.QUEUE_VIEW)
   async getDispatchBoard(@Query('siteId') siteId: string) {
@@ -184,6 +199,36 @@ export class ResourcesController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.admin.setStatus(id, body ?? ({} as never), user.sub);
+  }
+
+  /**
+   * §8/§9 — replace the set of work kinds this physical position can take.
+   * Capabilities describe versatility, not quantity: they never multiply capacity.
+   */
+  @Post(':id/capabilities')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Set which kinds of work this resource can take (replaces the set, audited)' })
+  setCapabilities(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { capabilities?: string[] },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.admin.setCapabilities(id, body?.capabilities ?? [], user.sub);
+  }
+
+  /**
+   * §5 — link this resource to the legacy bay it represents, or send
+   * `legacyBayId: null` to unlink. Manual and explicit; never inferred from codes.
+   */
+  @Post(':id/legacy-bay')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Link or unlink the legacy WorkBay this resource represents (audited)' })
+  linkLegacyBay(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { legacyBayId?: string | null },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.admin.linkLegacyBay(id, body?.legacyBayId ?? null, user.sub);
   }
 
   @Post(':id/retire')

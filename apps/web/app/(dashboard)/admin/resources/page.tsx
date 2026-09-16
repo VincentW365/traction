@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../../lib/api-client';
 import { useSiteId } from '../../../../hooks/use-site';
@@ -37,6 +38,8 @@ interface WorkResource {
   isActive: boolean;
   displayOrder: number;
   notes: string | null;
+  /** CR-2026-108 Stage 5B — every row starts UNVERIFIED and counts for nothing. */
+  capacityRole?: string;
   retiredAt: string | null;
   retireReason: string | null;
   updatedAt: string;
@@ -197,6 +200,9 @@ export default function ResourcesAdminPage() {
   };
 
   const data = resQuery.data ?? [];
+  // Unconfirmed rows are invisible on this screen but are the reason the derived
+  // position count is lower than the inventory looks. Surface the number here.
+  const unconfirmedCount = data.filter((r) => !r.retiredAt && (r.capacityRole ?? 'UNVERIFIED') === 'UNVERIFIED').length;
   const filtered = data
     .filter((r) => (showRetired ? true : !r.retiredAt))
     .filter((r) => (categoryFilter ? r.resourceCategory === categoryFilter : true))
@@ -257,9 +263,27 @@ export default function ResourcesAdminPage() {
         subtitle="The bays, lifts and equipment this site schedules work onto — changes take effect immediately"
         breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Setup' }, { label: 'Resources & Bays' }]}
         actions={
-          <button onClick={() => setAdding(true)} className="btn-primary text-sm">
-            Add Resource
-          </button>
+          <>
+            {/*
+              CR-2026-108 Stage 5B — the position count is worked out from what is
+              confirmed here, and every existing row starts unconfirmed. The badge
+              is the prompt: an unconfirmed bay contributes nothing, quietly.
+            */}
+            <Link
+              href="/admin/resources/reconciliation"
+              className="text-sm px-3 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 inline-flex items-center gap-2"
+            >
+              Confirm Work Positions
+              {unconfirmedCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800">
+                  {unconfirmedCount}
+                </span>
+              )}
+            </Link>
+            <button onClick={() => setAdding(true)} className="btn-primary text-sm">
+              Add Resource
+            </button>
+          </>
         }
       />
 

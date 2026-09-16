@@ -217,6 +217,26 @@ enum DrivingProfile {
 /// a lift under repair from a bay lost to flooding, and the return-to-service story
 /// differs for each. RETIRED is deliberately NOT here: retirement is a lifecycle
 /// fact on the resource itself, not an operational mood.
+/// CR-2026-108 Stage 5B — what kind of scheduling capacity a resource represents.
+/// Deliberately SEPARATE from ResourceOperationalState: this says what a thing is
+/// capable of being, that says whether it can be used right now. A PRIMARY position
+/// under MAINTENANCE contributes nothing today but is still a primary position.
+enum ResourceCapacityRole {
+  /// Nobody has classified it yet. Contributes ZERO derived capacity — and means
+  /// something different from SUPPORT_EQUIPMENT: an unclassified expansion bay is
+  /// not a jack, it is simply unconfirmed. Every existing row migrates to this.
+  UNVERIFIED
+  /// Independently holds one vehicle being worked on.
+  PRIMARY_SERVICE_POSITION
+  /// A genuine additional vehicle position, available under configured conditions.
+  OVERFLOW_SERVICE_POSITION
+  /// Required to perform work but creates no additional vehicle position — a jack,
+  /// a stand, specialty equipment. Confirmed as such, which UNVERIFIED is not.
+  SUPPORT_EQUIPMENT
+  /// Planned or uncertain. Contributes zero until it physically exists.
+  PLACEHOLDER
+}
+
 enum ResourceOperationalState {
   AVAILABLE
   TEMPORARILY_UNAVAILABLE
@@ -1358,6 +1378,32 @@ model TechnicianSkill {
   @@map("technician_skills")
 }
 
+/// CR-2026-108 Stage 5B — the kinds of work a physical resource can satisfy.
+///
+/// A join table, not a column, because one bay legitimately supports several work
+/// types — and because a capability must never imply a capacity unit. A bay with
+/// GENERAL + INSPECTION + BRAKE is still ONE physical position: once a job occupies
+/// it, it cannot satisfy a second overlapping reservation under any of its
+/// capabilities. The solver allocates resource IDENTITIES and then filters by
+/// capability; it never sums capability counts.
+///
+/// `capability` reuses the vocabulary `ServiceType.requiredBayType` already speaks
+/// (GENERAL, LUBE, ALIGNMENT, DIAGNOSTIC, INSPECTION, TIRE) rather than inventing a
+/// second taxonomy — that mismatch is what Stage 5A found.
+model WorkResourceCapability {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  resourceId String @map("resource_id") @db.Uuid
+  capability String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  resource WorkResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([resourceId, capability])
+  @@index([capability])
+  @@map("work_resource_capabilities")
+}
+
 model WorkBay {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   siteId    String   @map("site_id") @db.Uuid
@@ -1369,6 +1415,10 @@ model WorkBay {
 
   site        Site                   @relation(fields: [siteId], references: [id])
   assignments TechnicianAssignment[]
+  /// CR-2026-108 Stage 5B — the canonical resource that supersedes this bay, once
+  /// reconciliation links them. Historical assignments keep pointing HERE and are
+  /// never rewritten; reporting resolves across the link when it needs to.
+  resource    WorkResource?
 
   @@unique([siteId, code])
   @@map("work_bays")
@@ -1893,6 +1943,18 @@ model WorkResource {
   /// operational state: a spare jack can be AVAILABLE yet held out of scheduling.
   schedulingEnabled   Boolean             @default(true) @map("scheduling_enabled")
   capacity            Int                 @default(1)
+  /// CR-2026-108 Stage 5B — whether this resource contributes a simultaneous
+  /// VEHICLE position. Defaults to UNVERIFIED so a migration can never turn an
+  /// unclassified row into production capacity: derived capacity stays zero until
+  /// a person walks the shop and confirms. `resourceCategory` cannot carry this —
+  /// it says what a thing is, not what it contributes — and `schedulingEnabled`
+  /// means "may receive work", which a jack legitimately can.
+  capacityRole        ResourceCapacityRole @default(UNVERIFIED) @map("capacity_role")
+  /// CR-2026-108 Stage 5B — the legacy WorkBay this resource supersedes, when they
+  /// are the same physical position. Set ONLY by explicit reconciliation: legacy
+  /// BAY-01 is a GENERAL bay while resource BAY-01 is "Heavy Lift 1", so matching
+  /// on code would mis-map the shop. Optional — an expansion bay has no legacy row.
+  legacyBayId         String?             @unique @map("legacy_bay_id") @db.Uuid
   // Retirement is permanent lifecycle, never deleted: historical assignments keep
   // pointing here, and reports keep resolving the name.
   retiredAt           DateTime?           @map("retired_at") @db.Timestamptz
@@ -1909,6 +1971,10 @@ model WorkResource {
   reservations      ResourceReservation[]
   assignments       TechnicianAssignment[]
   operationalStatus ResourceOperationalStatus?
+  legacyBay         WorkBay?                   @relation(fields: [legacyBayId], references: [id])
+  /// Named for what it holds, and to avoid colliding with the existing
+  /// `capabilities` JSON extensibility column above.
+  serviceCapabilities WorkResourceCapability[]
 
   @@unique([siteId, code])
   @@map("work_resources")

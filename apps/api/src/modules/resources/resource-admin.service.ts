@@ -48,10 +48,34 @@ export interface ResourceWriteModel {
   displayOrder?: number;
   isActive?: boolean;
   notes?: string | null;
+  /**
+   * CR-2026-108 Stage 5B — what this contributes to simultaneous capacity.
+   * Separate from `isActive` and from operational status on purpose: a primary
+   * bay under maintenance is still a primary bay.
+   */
+  capacityRole?: string;
 }
 
 const CATEGORIES = ['BAY', 'OVERFLOW', 'LIGHT_SLOT', 'POWER_WASH', 'EXTERNAL'];
 const OP_STATES = ['AVAILABLE', 'TEMPORARILY_UNAVAILABLE', 'MAINTENANCE', 'OUT_OF_SERVICE'];
+const CAPACITY_ROLES = [
+  'UNVERIFIED',
+  'PRIMARY_SERVICE_POSITION',
+  'OVERFLOW_SERVICE_POSITION',
+  'SUPPORT_EQUIPMENT',
+  'PLACEHOLDER',
+];
+
+/**
+ * Does someone still have to say what this is?
+ *
+ * Retired rows are out of the conversation, and an EXTERNAL row is excluded from
+ * capacity by its category — classifying its physical position is not this shop's
+ * call. Shared so the reconciliation view and the truth audit report the same
+ * number; two spellings of "how much is left to do" would disagree on screen.
+ */
+const needsClassifying = (r: { capacityRole: string; retiredAt?: Date | null; resourceCategory?: unknown }): boolean =>
+  r.capacityRole === 'UNVERIFIED' && !r.retiredAt && String(r.resourceCategory) !== 'EXTERNAL';
 
 @Injectable()
 export class ResourceAdminService {
@@ -87,6 +111,11 @@ export class ResourceAdminService {
       // Zero has no defined meaning here: "no concurrent work" is what
       // schedulingEnabled=false says, and two spellings of one fact will disagree.
       throw new BadRequestException('Capacity is a whole number of at least 1.');
+    }
+    if (data.capacityRole !== undefined && !CAPACITY_ROLES.includes(data.capacityRole)) {
+      throw new BadRequestException(
+        `"${data.capacityRole}" is not a capacity role. Choose one of: ${CAPACITY_ROLES.join(', ')}.`,
+      );
     }
     if (data.supportsSedan === false && data.supportsSuv === false) {
       throw new BadRequestException(
@@ -133,6 +162,10 @@ export class ResourceAdminService {
         displayOrder: data.displayOrder ?? 0,
         isActive: data.isActive ?? true,
         notes: data.notes ?? null,
+        // §10 — a newly opened expansion bay needs no deployment and no legacy
+        // link, but it also does not get to claim capacity on the strength of
+        // having been typed in. It starts UNVERIFIED unless someone says otherwise.
+        capacityRole: (data.capacityRole as never) ?? 'UNVERIFIED',
         // Born AVAILABLE, explicitly, so every consumer reads one source of truth.
         operationalStatus: { create: { status: 'AVAILABLE', isOperational: true, setByUserId: actorUserId } },
       },
@@ -210,6 +243,7 @@ export class ResourceAdminService {
         ...(data.displayOrder !== undefined ? { displayOrder: data.displayOrder } : {}),
         ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
         ...(data.notes !== undefined ? { notes: data.notes } : {}),
+        ...(data.capacityRole !== undefined ? { capacityRole: data.capacityRole as never } : {}),
       },
     });
 
@@ -412,11 +446,232 @@ export class ResourceAdminService {
     return { deleted: true, code: resource.code };
   }
 
-  /** What a change would touch — powers the §29 warnings before the user commits. */
+  /**
+   * CR-2026-108 Stage 5B §8 — the vocabulary capabilities are allowed to use.
+   *
+   * Read from the data rather than hard-coded, so it cannot drift from what the
+   * catalogue actually asks for. A capability nobody requires and no bay provides
+   * would be a typo that silently excluded a resource from every pool.
+   */
+  async capabilityVocabulary(): Promise<string[]> {
+    const [fromServices, fromBays] = await Promise.all([
+      this.prisma.serviceType.findMany({
+        where: { requiredBayType: { not: null } },
+        distinct: ['requiredBayType'],
+        select: { requiredBayType: true },
+      }),
+      this.prisma.workBay.findMany({ distinct: ['bayType'], select: { bayType: true } }),
+    ]);
+    const all = new Set<string>();
+    for (const s of fromServices) if (s.requiredBayType) all.add(s.requiredBayType);
+    for (const b of fromBays) all.add(b.bayType);
+    return [...all].sort();
+  }
+
+  /**
+   * §8/§9 — what kinds of work this physical position can take.
+   *
+   * Replace-set semantics: the caller sends the full list, because a bay that can
+   * no longer do alignment must be able to stop, and an add-only API cannot say so.
+   *
+   * §9 is the part worth stating out loud: three capabilities on one resource means
+   * one position that can do three kinds of work, NOT three positions. Nothing here
+   * multiplies capacity — `capacity` is a separate field and is untouched.
+   */
+  async setCapabilities(id: string, capabilities: string[], actorUserId: string) {
+    const resource = await this.prisma.workResource.findUnique({
+      where: { id },
+      select: { id: true, code: true, retiredAt: true, serviceCapabilities: { select: { capability: true } } },
+    });
+    if (!resource) throw new NotFoundException('Resource not found');
+    if (resource.retiredAt) {
+      throw new BadRequestException('This resource is retired. Reactivate it before changing what work it can take.');
+    }
+
+    const wanted = [...new Set(capabilities.map((c) => c.trim().toUpperCase()).filter(Boolean))].sort();
+    const vocabulary = await this.capabilityVocabulary();
+    const unknown = wanted.filter((c) => !vocabulary.includes(c));
+    if (unknown.length > 0) {
+      throw new BadRequestException(
+        `${unknown.join(', ')} ${unknown.length === 1 ? 'is not a kind of work' : 'are not kinds of work'} this platform recognises. ` +
+          `Valid values are: ${vocabulary.join(', ')}. These come from the service catalogue — add the service first if a genuinely new kind of work exists.`,
+      );
+    }
+
+    const before = resource.serviceCapabilities.map((c) => c.capability).sort();
+    if (JSON.stringify(before) === JSON.stringify(wanted)) return { code: resource.code, capabilities: wanted, changed: false };
+
+    await this.prisma.$transaction([
+      this.prisma.workResourceCapability.deleteMany({ where: { resourceId: id, capability: { notIn: wanted } } }),
+      this.prisma.workResourceCapability.createMany({
+        data: wanted.map((capability) => ({ resourceId: id, capability })),
+        skipDuplicates: true,
+      }),
+    ]);
+
+    await this.audit.log({
+      actorUserId,
+      action: 'RESOURCE_CAPABILITIES_SET',
+      entityType: 'WorkResource',
+      entityId: id,
+      beforeJson: { capabilities: before },
+      afterJson: { capabilities: wanted },
+    });
+    this.logger.log(`Resource ${resource.code} capabilities set to [${wanted.join(', ')}] by ${actorUserId}`);
+    return { code: resource.code, capabilities: wanted, changed: true };
+  }
+
+  /**
+   * §5 — declare that this resource IS the legacy bay, or that it is not.
+   *
+   * Manual and explicit. The temptation is to match on code, and it would even
+   * work for BAY-01; it would also quietly fuse two unrelated rows the first time
+   * a code was reused, and nobody would ever see it happen.
+   *
+   * §7 — this writes one nullable pointer. No assignment, work order or history
+   * row is touched, and unlinking restores exactly the state before linking.
+   */
+  async linkLegacyBay(id: string, legacyBayId: string | null, actorUserId: string) {
+    const resource = await this.prisma.workResource.findUnique({
+      where: { id },
+      select: { id: true, code: true, siteId: true, legacyBayId: true },
+    });
+    if (!resource) throw new NotFoundException('Resource not found');
+    if (resource.legacyBayId === legacyBayId) return { code: resource.code, legacyBayId, changed: false };
+
+    let bayCode: string | null = null;
+    if (legacyBayId) {
+      const bay = await this.prisma.workBay.findUnique({
+        where: { id: legacyBayId },
+        select: { id: true, code: true, siteId: true, resource: { select: { code: true } } },
+      });
+      if (!bay) throw new NotFoundException('That bay does not exist.');
+      if (bay.siteId !== resource.siteId) {
+        throw new BadRequestException('A resource can only be linked to a bay at the same site.');
+      }
+      if (bay.resource && bay.resource.code !== resource.code) {
+        throw new ConflictException(
+          `Bay ${bay.code} is already linked to resource ${bay.resource.code}. One bay is one physical position — unlink it there first.`,
+        );
+      }
+      bayCode = bay.code;
+    }
+
+    await this.prisma.workResource.update({ where: { id }, data: { legacyBayId } });
+    await this.audit.log({
+      actorUserId,
+      action: legacyBayId ? 'RESOURCE_LEGACY_BAY_LINK' : 'RESOURCE_LEGACY_BAY_UNLINK',
+      entityType: 'WorkResource',
+      entityId: id,
+      beforeJson: { legacyBayId: resource.legacyBayId },
+      afterJson: { legacyBayId, bayCode },
+    });
+    this.logger.log(
+      legacyBayId
+        ? `Resource ${resource.code} linked to legacy bay ${bayCode} by ${actorUserId}`
+        : `Resource ${resource.code} unlinked from its legacy bay by ${actorUserId}`,
+    );
+    return { code: resource.code, legacyBayId, bayCode, changed: true };
+  }
+
+  /**
+   * §6 — the reconciliation view: both models side by side, nothing merged.
+   *
+   * Two inventories exist and disagree. This screen is how a person resolves that,
+   * so it must show what each side actually contains, which rows are already paired,
+   * and — the important column — which are not. A bay with 40 assignments and no
+   * resource is not noise; it is the model scheduling has really been using.
+   */
+  async reconciliation(siteId: string) {
+    const [resources, bays] = await Promise.all([
+      this.prisma.workResource.findMany({
+        where: { siteId },
+        orderBy: [{ displayOrder: 'asc' }, { code: 'asc' }],
+        select: {
+          id: true, code: true, name: true, resourceCategory: true, capacity: true,
+          capacityRole: true, isActive: true, retiredAt: true, schedulingEnabled: true,
+          legacyBayId: true,
+          legacyBay: { select: { id: true, code: true, bayType: true } },
+          operationalStatus: { select: { status: true } },
+          serviceCapabilities: { select: { capability: true }, orderBy: { capability: 'asc' } },
+        },
+      }),
+      this.prisma.workBay.findMany({
+        where: { siteId },
+        orderBy: { code: 'asc' },
+        select: {
+          id: true, code: true, bayType: true, status: true,
+          resource: { select: { id: true, code: true } },
+          _count: { select: { assignments: true } },
+        },
+      }),
+    ]);
+
+    return {
+      capabilityVocabulary: await this.capabilityVocabulary(),
+      capacityRoles: CAPACITY_ROLES,
+      resources: resources.map((r) => ({
+        id: r.id,
+        code: r.code,
+        name: r.name,
+        category: String(r.resourceCategory),
+        capacity: r.capacity,
+        capacityRole: r.capacityRole,
+        capabilities: r.serviceCapabilities.map((c) => c.capability),
+        // Absence of a status row means AVAILABLE — `setStatus` upserts on change.
+        operationalStatus: r.operationalStatus?.status ?? 'AVAILABLE',
+        isActive: r.isActive && !r.retiredAt,
+        retired: r.retiredAt != null,
+        schedulingEnabled: r.schedulingEnabled,
+        link: r.legacyBay
+          ? { state: 'LINKED' as const, bayId: r.legacyBay.id, bayCode: r.legacyBay.code, bayType: r.legacyBay.bayType }
+          : { state: 'UNLINKED' as const, bayId: null, bayCode: null, bayType: null },
+        // An EXTERNAL row is excluded from capacity by category, so leaving it
+        // unclassified is not a gap in THIS shop's configuration. Counting it
+        // here would put a number on screen that never reaches zero, and would
+        // disagree with the audit's own incompleteness figure.
+        needsAttention: needsClassifying(r),
+      })),
+      legacyBays: bays.map((b) => ({
+        id: b.id,
+        code: b.code,
+        bayType: b.bayType,
+        status: b.status,
+        historicalAssignments: b._count.assignments,
+        link: b.resource
+          ? { state: 'LINKED' as const, resourceId: b.resource.id, resourceCode: b.resource.code }
+          : { state: 'UNLINKED' as const, resourceId: null, resourceCode: null },
+        // An unlinked bay that scheduling has actually used is the urgent case.
+        needsAttention: !b.resource && b._count.assignments > 0,
+      })),
+      summary: {
+        resourceRows: resources.length,
+        legacyBayRows: bays.length,
+        linkedPairs: resources.filter((r) => r.legacyBayId).length,
+        unlinkedResources: resources.filter((r) => !r.legacyBayId && !r.retiredAt).length,
+        unlinkedBaysWithHistory: bays.filter((b) => !b.resource && b._count.assignments > 0).length,
+        unverifiedResources: resources.filter(needsClassifying).length,
+      },
+    };
+  }
+
+  /**
+   * What a change would touch — powers the §29 warnings before the user commits.
+   *
+   * CR-2026-108 Stage 5B §14. The counts below are all keyed on `resourceId`, and
+   * NOTHING in this platform preassigns one: every technician assignment on record
+   * references the legacy bay instead. So this method used to answer "no impact"
+   * for every resource, including the only alignment bay in the building, on a week
+   * with alignment appointments booked. Zero rows is not zero impact.
+   *
+   * The honest question is about the CAPABILITY, not the row: if this resource
+   * stopped being usable, how many positions could still do this kind of work, and
+   * what is already booked that needs it?
+   */
   async impact(id: string) {
     const resource = await this.prisma.workResource.findUnique({
       where: { id },
-      include: { occupancy: true },
+      include: { occupancy: true, serviceCapabilities: { select: { capability: true } } },
     });
     if (!resource) throw new NotFoundException('Resource not found');
 
@@ -437,7 +692,103 @@ export class ResourceAdminService {
       futureReservations,
       historicalAssignments,
       everUsed: historicalAssignments > 0 || resource.occupancy?.serviceVisitId != null,
+      capabilityImpact: await this.capabilityImpact(
+        id,
+        resource.serviceCapabilities.map((c) => c.capability),
+      ),
     };
+  }
+
+  /**
+   * §14/§15 — the part of the impact a row count cannot see.
+   *
+   * Deliberately NOT precise. It does not claim an appointment will be delayed,
+   * because that depends on duration, arrival order and manual dispatch, none of
+   * which this method models. It states two checkable facts — how many positions
+   * would remain, and what is already booked that needs this kind of work — and
+   * says plainly when the configuration is too incomplete to be trusted.
+   */
+  private async capabilityImpact(id: string, capabilities: string[]) {
+    if (capabilities.length === 0) return [];
+    const now = new Date();
+    const horizonDays = 30;
+    const horizon = new Date(now.getTime() + horizonDays * 86_400_000);
+
+    // §12 — an unclassified resource may well serve these capabilities. If any
+    // exist, every "remaining positions" figure below is a lower bound, and the
+    // warnings must say so rather than implying a complete inventory.
+    const unverified = await this.prisma.workResource.count({
+      where: { capacityRole: 'UNVERIFIED', retiredAt: null, isActive: true, resourceCategory: { not: 'EXTERNAL' } },
+    });
+
+    const usable = await this.prisma.workResource.findMany({
+      where: {
+        retiredAt: null,
+        isActive: true,
+        schedulingEnabled: true,
+        capacityRole: { in: ['PRIMARY_SERVICE_POSITION', 'OVERFLOW_SERVICE_POSITION'] },
+        serviceCapabilities: { some: { capability: { in: capabilities } } },
+      },
+      select: {
+        id: true,
+        capacity: true,
+        operationalStatus: { select: { status: true } },
+        serviceCapabilities: { select: { capability: true } },
+      },
+    });
+    // Absence of a status row means AVAILABLE — `setStatus` upserts only on change.
+    const availableNow = usable.filter((r) => (r.operationalStatus?.status ?? 'AVAILABLE') === 'AVAILABLE');
+
+    const booked = await this.prisma.$queryRaw<Array<{ capability: string; appointments: bigint }>>`
+      SELECT st.required_bay_type AS capability, count(DISTINCT a.id) AS appointments
+      FROM appointments a
+      JOIN appointment_services asv ON asv.appointment_id = a.id
+      JOIN service_types st ON st.id = asv.service_type_id
+      WHERE a.status IN ('CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS')
+        AND a.scheduled_start_at BETWEEN ${now} AND ${horizon}
+        AND st.required_bay_type = ANY(${capabilities})
+      GROUP BY 1
+    `;
+    const bookedBy = new Map(booked.map((b) => [b.capability, Number(b.appointments)]));
+
+    return capabilities.map((capability) => {
+      const has = (r: { serviceCapabilities: Array<{ capability: string }> }) =>
+        r.serviceCapabilities.some((c) => c.capability === capability);
+      const positionsBefore = availableNow.filter(has).reduce((n, r) => n + r.capacity, 0);
+      const positionsAfter = availableNow.filter((r) => r.id !== id && has(r)).reduce((n, r) => n + r.capacity, 0);
+      const futureAppointmentsNeeding = bookedBy.get(capability) ?? 0;
+
+      const severity =
+        positionsAfter === 0 ? ('LAST_POSITION' as const) : positionsAfter < positionsBefore ? ('REDUCED' as const) : ('NONE' as const);
+      const parts: string[] = [];
+      if (severity === 'LAST_POSITION') {
+        parts.push(
+          `This is the only position currently able to do ${capability} work. Taking it out leaves none.`,
+        );
+      } else if (severity === 'REDUCED') {
+        parts.push(`${capability} positions would go from ${positionsBefore} to ${positionsAfter}.`);
+      }
+      if (futureAppointmentsNeeding > 0 && severity !== 'NONE') {
+        parts.push(
+          `${futureAppointmentsNeeding} appointment${futureAppointmentsNeeding === 1 ? '' : 's'} in the next ${horizonDays} days need${futureAppointmentsNeeding === 1 ? 's' : ''} ${capability}. ` +
+            'Whether any of them is actually delayed depends on timing and dispatch, which this check does not model — review them rather than assuming either way.',
+        );
+      }
+      if (unverified > 0 && severity !== 'NONE') {
+        parts.push(
+          `PHYSICAL CAPACITY REQUIRES CONFIRMATION — ${unverified} resources are still unclassified, so the remaining count is a lower bound.`,
+        );
+      }
+      return {
+        capability,
+        positionsBefore,
+        positionsAfter,
+        futureAppointmentsNeeding,
+        horizonDays,
+        severity,
+        warning: parts.length > 0 ? parts.join(' ') : null,
+      };
+    });
   }
 
   /** Who did what to this resource — the §32 change history, from the audit log. */

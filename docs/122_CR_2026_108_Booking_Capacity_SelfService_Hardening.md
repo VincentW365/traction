@@ -1276,3 +1276,216 @@ customers should be scheduled to arrive or start around the same time, given the
 front desk, check-in, and how long a vehicle may reasonably wait in the queue?
 That is a different number from "how many bays exist", and the proposal does not
 guess it.
+
+---
+
+## §L. Stage 5B — resource registry bridge: IMPLEMENTED
+
+Approved in principle with 25 amendments. Built to those amendments, with two
+findings that correct the Stage 5A report — recorded in L2 and L3.
+
+### L1. What was built
+
+**Schema** (`20260916160000_cr_2026_108_resource_capacity_role`) — additive only:
+
+| Change | Purpose |
+| --- | --- |
+| `ResourceCapacityRole` enum | UNVERIFIED / PRIMARY_SERVICE_POSITION / OVERFLOW_SERVICE_POSITION / SUPPORT_EQUIPMENT / PLACEHOLDER |
+| `WorkResource.capacityRole` | `NOT NULL DEFAULT 'UNVERIFIED'` — every existing row lands on "counts for nothing" |
+| `WorkResource.legacyBayId` | nullable, **unique**, `ON DELETE SET NULL` — the manual bridge |
+| `work_resource_capabilities` | `(resourceId, capability)` unique; reuses the `requiredBayType` vocabulary |
+
+The relation is named `serviceCapabilities`, not `capabilities`: `WorkResource`
+already carries a `capabilities Json?` extensibility column, and two fields of the
+same name meaning different things is the kind of thing that costs an afternoon
+eighteen months from now.
+
+**Derived capacity** (`resource-truth-audit.service.ts`) — `derivedCapacity()`
+computes `verifiedActivePositions` from confirmed role plus usable-today status,
+and `capabilityPools` per kind of work. Nobody types a number. While any resource
+is UNVERIFIED the payload carries `configurationIncomplete: true`, an explicit
+warning, and `confidence: 'LOWER_BOUND'` on every pool.
+
+**Admin surface** — `capacityRole` joins the existing concurrency-guarded, audited
+`update()`; `POST /resources/:id/capabilities` replaces the capability set; `POST
+/resources/:id/legacy-bay` links or unlinks; `GET /resources/reconciliation`
+returns both inventories with link state.
+
+**UI** — `/admin/resources/reconciliation`, "Confirm Work Positions", reached from
+a badge on Resources and Bays showing the unconfirmed count.
+
+### L2. §3 resolved — and a Stage 5A correction
+
+Stage 5A reported operational status as "NOT CONFIGURED" for all 17 resources.
+That reading was wrong.
+
+`resource-admin.setStatus()` does upsert `ResourceOperationalStatus` and audits
+`RESOURCE_OPERATIONAL_STATUS_CHANGE`. It writes only when a status *changes*, so
+an empty table means **nobody has ever taken a resource out of service** — absence
+is AVAILABLE, not unconfigured. It is already the single authoritative
+current-status mechanism, and Stage 5B added no rival: a test asserts the three new
+methods never touch that table.
+
+The audit and the reconciliation view now both read absence as AVAILABLE.
+
+### L3. §23 resolved — `ResourceReservation` semantics
+
+`ResourceReservation.resourceId` is `String?`, carrying the comment
+`null = "any compatible resource"`, with a PENDING / ACTIVE / CLAIMED / EXPIRED /
+CANCELLED lifecycle.
+
+So the table **already supports abstract capacity reservation** — it was designed
+for it. The gap is narrower than Stage 5A suspected, and more specific: there is no
+capability column, so "compatible with **what**?" is unanswerable. A null-resource
+reservation cannot be counted against a pool, because nothing says which pool it
+belongs to.
+
+That is a Stage 5C decision — a `requiredCapability` column, or resolution through
+the appointment's services — and no `ResourceReservation` rows are written by this
+stage.
+
+### L4. §14 — the impact warning was broken, and is now fixed
+
+`impact()` counted `ResourceReservation` and `TechnicianAssignment` rows keyed on
+`resourceId`. **No technician assignment in this database has ever referenced a
+`WorkResource`** — all 62 reference the legacy bay. So the warning returned "no
+impact" for every resource, including the only alignment bay, in a week with
+alignment appointments booked.
+
+`capabilityImpact()` asks the question that actually matters: if this stopped being
+usable, how many positions could still do this kind of work, and what is already
+booked that needs it? Booked work is counted through `appointment_services` join
+`service_types.required_bay_type`, not through assignments.
+
+Proven live on BAY-01:
+
+```
+rows keyed on this resource : 0 active / 0 reserved   <- the old answer, "no impact"
+capability view             : ALIGNMENT 1 -> 0, severity LAST_POSITION
+warning                     : "This is the only position currently able to do ALIGNMENT
+                               work. Taking it out leaves none. PHYSICAL CAPACITY REQUIRES
+                               CONFIRMATION — 15 resources are still unclassified, so the
+                               remaining count is a lower bound."
+```
+
+Per §15 it refuses false precision. It does not claim an appointment will be
+delayed; it reports positions before and after, the count of appointments needing
+that capability within 30 days, and says in words that timing and dispatch are not
+modelled.
+
+### L5. §17 — specialty double-booking risk under FIXED
+
+Unchanged from Stage 4F and 5A, and worth stating plainly because it is live today.
+
+`booking_max_concurrent_appointments = 2` is a single number covering the whole
+site. The catalogue disagrees with the inventory:
+
+| Kind of work | Active bays | Services | Offered online |
+| --- | --- | --- | --- |
+| ALIGNMENT | 1 | 1 | 1 (TIR-02 Wheel Alignment) |
+| LUBE | 1 | 1 | 1 (OIL-01 Oil Change) |
+| INSPECTION | 1 | 1 | 1 (INSP-01 Pre-Purchase) |
+| TIRE | **0** | 1 | 0 |
+| GENERAL | 2 | 23 | 3 |
+| DIAGNOSTIC | 1 | 4 | 0 |
+
+Two customers can book the same 20-minute slot. If both choose Wheel Alignment, the
+platform has accepted two vehicles for one alignment bay. The same holds for OIL-01
+and INSP-01. This is a **present-tense** exposure, not a Stage 5 forecast.
+
+**Recommendation, not implemented (§17).** Do *not* set the affected services
+`bookableOnline = false`. The exposure is real but narrow — it needs two customers
+choosing the same specialty in the same slot — and withdrawing three of the six
+pilot services would gut the pilot to fix a problem the manager may resolve in a
+sentence ("we have three alignment bays now"). The bay inventory is known-stale,
+and acting on a stale count is how the capacity-of-7 error nearly happened.
+
+Two lower-cost options, in preference order:
+
+1. **Confirm the inventory first** — the walk this stage exists to enable. If
+   ALIGNMENT genuinely has one position, the decision changes and is then based on
+   fact rather than on a table nobody has checked.
+2. If the risk must be closed before that walk, prefer a **per-capability cap** over
+   withdrawing services. That is Stage 5C work and should not be rushed in.
+
+Meanwhile the risk is surfaced on the reconciliation screen and in the audit
+payload, so it is visible rather than latent.
+
+### L6. §20 — arrival control: documented, inactive
+
+Stage 5A found arrival capacity and active-work capacity conflated in one setting.
+The concept, for the record and for 5C:
+
+- **Physical work capacity** — how many vehicles can be worked on at once. Derived
+  from confirmed resources. Modelled in this stage.
+- **Arrival control** — how many customers should be scheduled to arrive around the
+  same time, given the front desk, check-in, and a tolerable queue wait. A different
+  number, governed by different facts.
+
+`booking_max_concurrent_appointments = 2` is today doing both jobs. Nothing here
+changes that, and per §19 **no `booking_max_arrivals_per_slot` key was created and
+no arrival number was guessed.** The arrival number is a question for management,
+carried into Stage 5C alongside the K6 question.
+
+### L7. Verification
+
+Against the live database, every write rolled back:
+
+```
+ 1. all 17 existing resources migrated to UNVERIFIED — none became production capacity
+ 2. derived capacity = 0 with 16 unclassified — reported as "configuration incomplete"
+ 3. confirming BAY-01 raised derived capacity 0 -> 1 immediately — no config key, no restart
+ 4. BAY-01 into maintenance: 1 -> 0, and its role is STILL PRIMARY_SERVICE_POSITION
+ 5. BAY-01 back to available: capacity returns to 1 without reclassifying anything
+ 6. BAY-05 (Power Jack) as equipment: capacity unchanged at 1
+ 7. BAY-01 given GENERAL + ALIGNMENT + LUBE: total positions still 1, pools 1/1/1
+ 8. BAY-01 linked to bay BAY-01; a second claim refused by the database;
+    all 39 historical assignments untouched
+ 9. production controls unchanged: FIXED / 2 / DEFAULT / enforcement ON with 6 services
+10. rolled back — all 17 UNVERIFIED again, derived capacity 0, database as found
+```
+
+16 unclassified of 17: `MSHOP-EXT` is `EXTERNAL`, excluded from capacity by
+category, so leaving it unclassified is not a gap in this shop's configuration.
+
+Through the HTTP surface, same rollback discipline: the reconciliation view
+reported 17 resources / 6 bays with 4 unmatched bays carrying job history;
+confirming a bay and assigning capabilities moved the derived count; an invalid
+role and a misspelled capability were both refused with 400; a second claim on a
+linked bay was refused with 409; the linked bay kept all 39 historical jobs; and
+`RESOURCE_UPDATE`, `RESOURCE_CAPABILITIES_SET` and `RESOURCE_LEGACY_BAY_LINK` all
+appear in the resource's history.
+
+Tests: `capacity-role.spec.ts`, 32 cases covering unverified defaults, migration
+additivity, role/status separation, one status mechanism, bridge exclusivity and
+non-destructiveness, no code-based inference, capability validation and
+replace-semantics, capabilities never touching `capacity`, derived capacity never
+reading a config key, the impact fix, and the reconciliation view. Full API suite:
+1381 passed, 17 skipped.
+
+### L8. Production controls unchanged (§24)
+
+```
+booking_enforce_online_bookable     : true   (six pilot services)
+appointment_duration_source         : DEFAULT
+booking_capacity_mode               : FIXED
+booking_max_concurrent_appointments : 2
+```
+
+No customer-visible behaviour changed. A test asserts the public booking engine,
+the public booking service and the booking availability service reference neither
+`capacityRole` nor the capability relation. Verified live: the public catalogue
+still offers six services and Wheel Alignment still returns availability.
+
+### L9. Stop point
+
+Per the amendment closing §25: **stop here.** Stage 5C does not begin until the
+actual expanded Service Centre inventory has been entered and verified through
+`/admin/resources/reconciliation`, because a SHADOW engine run against 17
+unclassified rows would measure the same stale inventory that produced the
+withdrawn capacity-of-7 recommendation.
+
+Carried into 5C: the arrival-control number (§20 / L6), the `ResourceReservation`
+capability question (§23 / L3), the specialty double-booking decision once the
+inventory is real (§17 / L5), and re-running the Stage 4F comparison against
+confirmed capacity.
