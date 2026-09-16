@@ -14,7 +14,15 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { BookingAvailabilityService, type BookingAudience } from '../scheduling/availability/booking-availability.service';
 import type { AvailabilityDecision } from '../scheduling/availability/slot-decision';
 import { AuditService } from '../audit/audit.service';
-import { signUatSession, UAT_SESSION_TTL_MINUTES } from './uat-session';
+import {
+  signUatLaunchToken,
+  signUatSessionCookie,
+  verifyUatLaunchToken,
+  UAT_LAUNCH_TTL_MINUTES,
+  UAT_SESSION_TTL_MINUTES,
+  type UatContext,
+  type UatLaunchRejection,
+} from './uat-session';
 
 /**
  * Which capacity model produced a column.
@@ -139,18 +147,18 @@ export class BookingSimulatorService {
         select: { id: true, status: true },
       }));
 
-    const { token, expiresAt } = signUatSession({ testDataRunId: run.id, runLabel: label, issuedByUserId: actorUserId });
+    const { token, jti, expiresAt } = signUatLaunchToken({ testDataRunId: run.id, runLabel: label, issuedByUserId: actorUserId });
 
     await this.audit.log({
       actorUserId,
       action: 'UAT_BOOKING_SESSION_STARTED',
       entityType: 'TestDataRun',
       entityId: run.id,
-      afterJson: { runLabel: label, ttlMinutes: UAT_SESSION_TTL_MINUTES, expiresAt: expiresAt.toISOString() },
+      afterJson: { runLabel: label, jti, ttlMinutes: UAT_LAUNCH_TTL_MINUTES, expiresAt: expiresAt.toISOString() },
       reasonCode: 'UAT_BOOKING_SESSION',
       notes: 'Records created through /book with this session are tagged to the test run and their notifications are captured.',
     });
-    this.logger.log(`UAT booking session for run "${label}" issued by ${actorUserId}, valid ${UAT_SESSION_TTL_MINUTES}m.`);
+    this.logger.log(`UAT launch token for run "${label}" issued by ${actorUserId}, redeemable for ${UAT_LAUNCH_TTL_MINUTES}m.`);
 
     const base = (opts.publicBaseUrl ?? process.env.PUBLIC_APP_URL ?? '').replace(/\/+$/, '');
     return {
@@ -158,8 +166,62 @@ export class BookingSimulatorService {
       runLabel: label,
       testDataRunId: run.id,
       expiresAt,
-      ttlMinutes: UAT_SESSION_TTL_MINUTES,
+      ttlMinutes: UAT_LAUNCH_TTL_MINUTES,
       bookingUrl: base ? `${base}/book?uat=${encodeURIComponent(token)}` : null,
     };
+  }
+
+  /**
+   * Redeem a launch token ONCE and mint the session cookie value.
+   *
+   * Single use is enforced by recording the token's `jti` when it is redeemed and
+   * refusing a second redemption of the same one. The record lives in the audit
+   * log rather than in memory so a restart cannot re-open the window — and so the
+   * redemption is evidence, not just a guard.
+   */
+  async redeemUatLaunchToken(
+    token: string | null | undefined,
+  ): Promise<
+    | { ok: true; context: UatContext; cookieValue: string; expiresAt: Date }
+    | { ok: false; reason: UatLaunchRejection | 'ALREADY_REDEEMED' }
+  > {
+    const verified = verifyUatLaunchToken(token);
+    if (!verified.ok) {
+      this.logger.warn(`UAT launch token refused: ${verified.reason}.`);
+      return { ok: false, reason: verified.reason };
+    }
+    const { jti, testDataRunId, runLabel, issuedByUserId } = verified.claims;
+
+    const alreadyRedeemed = await this.prisma.auditLog.findFirst({
+      where: { action: 'UAT_BOOKING_SESSION_REDEEMED', afterJson: { path: ['jti'], equals: jti } },
+      select: { id: true },
+    });
+    if (alreadyRedeemed) {
+      this.logger.warn(`UAT launch token ${jti} refused: already redeemed.`);
+      return { ok: false, reason: 'ALREADY_REDEEMED' };
+    }
+
+    // The run must still be usable; a cleaned-up run must not come back to life.
+    const run = await this.prisma.testDataRun.findUnique({ where: { id: testDataRunId }, select: { status: true } });
+    if (!run || run.status !== 'ACTIVE') {
+      this.logger.warn(`UAT launch token ${jti} refused: test run is ${run?.status ?? 'missing'}.`);
+      return { ok: false, reason: 'INCOMPLETE' };
+    }
+
+    const context: UatContext = { testDataRunId, runLabel, issuedByUserId };
+    const { value, expiresAt } = signUatSessionCookie(context);
+
+    await this.audit.log({
+      actorUserId: issuedByUserId,
+      action: 'UAT_BOOKING_SESSION_REDEEMED',
+      entityType: 'TestDataRun',
+      entityId: testDataRunId,
+      afterJson: { runLabel, jti, sessionExpiresAt: expiresAt.toISOString(), sessionTtlMinutes: UAT_SESSION_TTL_MINUTES },
+      reasonCode: 'UAT_BOOKING_SESSION',
+      notes: 'Launch token exchanged for an HttpOnly session cookie; the token cannot be redeemed again.',
+    });
+    this.logger.log(`UAT launch token ${jti} redeemed for run "${runLabel}".`);
+
+    return { ok: true, context, cookieValue: value, expiresAt };
   }
 }

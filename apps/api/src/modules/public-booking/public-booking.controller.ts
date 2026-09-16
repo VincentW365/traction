@@ -1,7 +1,9 @@
-import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Query, Req, Res } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { PublicBookingService } from './public-booking.service';
+import { BookingSimulatorService } from '../booking-simulator/booking-simulator.service';
+import { readCookie, uatCookieOptions, verifyUatSessionCookie, UAT_COOKIE_NAME } from '../booking-simulator/uat-session';
 import {
   AvailabilityQueryDto,
   CancelBookingDto,
@@ -19,7 +21,10 @@ import {
 @ApiTags('Public Booking')
 @Controller('public/booking')
 export class PublicBookingController {
-  constructor(private readonly booking: PublicBookingService) {}
+  constructor(
+    private readonly booking: PublicBookingService,
+    private readonly simulator: BookingSimulatorService,
+  ) {}
 
   private clientKey(req: Request): string {
     const fwd = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim();
@@ -51,10 +56,39 @@ export class PublicBookingController {
     return this.booking.availability(codes, q.from, q.days, this.clientKey(req));
   }
 
+  /**
+   * CR-2026-108 Stage 3 — exchange an administrator-issued LAUNCH token for an
+   * HttpOnly session cookie, once. The privileged token then leaves the URL for
+   * good: the page immediately navigates to a clean /book and everything after
+   * runs on the cookie, which the browser cannot read back.
+   *
+   * A refusal is NEVER downgraded into a normal booking. A tester holding an
+   * expired link must be told, not silently allowed to create a real customer and
+   * send them a real message. The reason is logged, not returned — this endpoint
+   * must not become an oracle for token validity.
+   */
+  @Post('uat/redeem')
+  @ApiOperation({ summary: 'Redeem a UAT launch token for an HttpOnly session cookie (single use)' })
+  async redeemUat(@Body() body: { token?: string }, @Res({ passthrough: true }) res: Response) {
+    const result = await this.simulator.redeemUatLaunchToken(body?.token);
+    if (!result.ok) {
+      throw new BadRequestException({
+        code: 'UAT_SESSION_INVALID',
+        message:
+          'This test booking session is invalid or has expired. Return to the Booking Simulator and start a new UAT session.',
+      });
+    }
+    res.cookie(UAT_COOKIE_NAME, result.cookieValue, uatCookieOptions(result.expiresAt));
+    return { runLabel: result.context.runLabel, expiresAt: result.expiresAt.toISOString() };
+  }
+
   @Post('confirm')
   @ApiOperation({ summary: 'Reserve the chosen slot (transactional; 409 SLOT_TAKEN if just claimed)' })
   confirm(@Body() dto: ConfirmBookingDto, @Req() req: Request) {
-    return this.booking.confirm(dto, this.clientKey(req));
+    // The UAT context, if any, is whatever the HttpOnly cookie proves — never a
+    // value the page could set.
+    const uat = verifyUatSessionCookie(readCookie(req.headers.cookie, UAT_COOKIE_NAME));
+    return this.booking.confirm(dto, this.clientKey(req), uat);
   }
 
   @Get('manage/:token')

@@ -498,3 +498,64 @@ retaining every identical decision.
 
 **Retention: 90 days**, sufficient for an operational review window, with a
 scheduled purge. This is diagnostic data, not an operational record.
+
+### D5. Stage 3 hardening — launch/exchange, and no silent downgrade
+
+Applied after management's review.
+
+**The token no longer lives in the URL.** A launch token is a privileged
+capability: it makes bookings disposable and silences customer notifications. In
+an address bar it is copied into history, bookmarks, referrers and screenshots,
+and stays valid for anyone who finds it. So it is now redeemed once and exchanged:
+
+```
+launch token (single use, <= 30 min, in the URL for ONE request)
+  -> POST /public/booking/uat/redeem
+  -> bsop_uat cookie: HttpOnly, Secure + SameSite=None in production
+  -> window.history.replaceState -> clean /book
+  -> the rest of the booking runs on the cookie
+```
+
+`ConfirmBookingDto` has **no** UAT field at all — the context can only come from
+the cookie, never from a body the page could set. The cookie is read from the raw
+`Cookie` header rather than adding `cookie-parser`: it is the only cookie the
+platform reads, and a new dependency in a core flow needs approval it does not
+warrant.
+
+**Single use is enforced in the audit log, not in memory.** Redemption records the
+token's `jti`; a second attempt is refused. Recording it in the database means a
+restart cannot re-open the window — and the redemption is evidence in its own
+right, which a fingerprint in a process would not be.
+
+**An invalid attempt is refused, never downgraded.** This is the dangerous case
+the review identified: an expired link, a tester who believes UAT is active, and a
+booking that quietly becomes a real customer who is really texted and really
+counted. So `/book` now blocks:
+
+> This test booking session is invalid or has expired. Return to the Booking
+> Simulator and start a new UAT session.
+
+…with a separate link for anyone who actually meant to book. No token or
+cryptographic detail is exposed — the endpoint must not become an oracle for
+token validity, so every rejection returns one message while the reason goes to
+the log. Absent token still means an ordinary booking; that path is unchanged.
+
+An active session is also unmistakable on the page: a banner naming the run and
+stating that nothing reaches a real customer. A tester who cannot tell whether
+they are in a session is exactly how a real customer gets contacted.
+
+**Evidence (live, then cleaned up):**
+
+```
+ 2. redeemed -> bsop_uat cookie; attrs: Path=/, Expires=…, HttpOnly, SameSite=Lax
+ 3. replay refused: HTTP 400 UAT_SESSION_INVALID
+ 4. booked BK-B01-260916-009 on the cookie alone — records tagged, 2 CAPTURED
+ 5. no cookie => genuine: SMS=SENT, EMAIL=SENT, untagged
+ 6. forged / malformed / empty tokens all refused, no cookie set, one safe message
+```
+
+(`SameSite=Lax` above is the local-development value; production uses
+`Secure; SameSite=None`, which is the only combination a browser accepts for the
+cross-origin hop between the booking page and the API. Pinned by test.)
+
+24 token tests including the mandated replay test. Full API suite: **1308 passed**.

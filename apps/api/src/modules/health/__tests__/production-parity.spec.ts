@@ -42,6 +42,12 @@ const ALLOWED_GATES: Record<string, string> = {
   auth: 'dev-login is refused when NODE_ENV=production (gates a dev utility OFF, never a feature)',
   sandbox: 'test-data tooling is dev/staging only by design',
   health: 'REPORTS the environment name on the status page — reads it, gates nothing on it',
+  // CR-2026-108 — no feature is gated here. The UAT session cookie must be
+  // Secure + SameSite=None to survive the cross-origin hop in a deployed
+  // environment, and browsers reject exactly that combination over plain http,
+  // which is what local development uses. The capability is identical either way;
+  // only the cookie attributes differ, because the browser demands it.
+  'booking-simulator': 'sets UAT cookie attributes a browser only accepts over https — gates no behaviour',
 };
 
 function tsFilesUnder(dir: string): string[] {

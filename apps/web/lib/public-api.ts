@@ -28,6 +28,10 @@ async function send<T>(method: 'GET' | 'POST', path: string, body?: unknown): Pr
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
+    // CR-2026-108 Stage 3 — carries the HttpOnly UAT session cookie once one has
+    // been exchanged. It is the only cookie this API sets, the page can never read
+    // it, and for an ordinary customer there is simply nothing to send.
+    credentials: 'include',
   });
   if (!res.ok) {
     let parsed: unknown = null;

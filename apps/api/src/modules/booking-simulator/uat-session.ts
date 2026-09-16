@@ -1,5 +1,5 @@
 /**
- * CR-2026-108 Stage 3 — the UAT booking session.
+ * CR-2026-108 Stage 3 — the UAT booking session, as a LAUNCH/EXCHANGE pair.
  *
  * THE PROBLEM IT SOLVES
  * Stage 1 suppresses notifications per record, by resolving `testDataRunId` from
@@ -8,44 +8,48 @@
  * brand-new customer coming through /book for the first time. Such a customer has
  * no anchor to resolve, so their records look real and their confirmation is sent.
  *
- * Booking as a pre-tagged customer does not close the gap either: it converts the
- * scenario into the existing-customer workflow, which is a different code path.
+ * WHY TWO TOKENS
+ * The launch token is a privileged capability: it makes bookings disposable and
+ * silences customer notifications. A capability like that must not live in an
+ * address bar, where it is copied into browser history, referrers, bookmarks,
+ * screenshots and shoulder-surfing range, and stays valid for anyone who finds it.
  *
- * So an administrator mints a short-lived, signed session and launches the REAL
- * /book flow carrying it. Records created during that session are tagged to the
- * test run, their notifications are captured, and standard test-run cleanup
- * removes them.
+ * So it is redeemed ONCE, immediately, and exchanged for a session the browser
+ * cannot read:
  *
- * WHY A SIGNED TOKEN AND NOT A FLAG
- * A `?test=true` parameter would let anyone mark their own booking as a test:
- * free bookings that never notify anyone, invisible to operational reporting, and
- * removable by a cleanup that thinks they are disposable. The capability has to be
- * unforgeable and expiring, so it is a JWT signed with the server secret — the
- * same mechanism as the existing booking session, with its own `kind` so the two
- * can never be interchanged.
+ *   launch token (single use, <= 30 min, in the URL for one request only)
+ *     -> POST /public/booking/uat/redeem
+ *     -> session cookie (HttpOnly, Secure in production, bounded lifetime)
+ *     -> the URL is cleaned; the rest of the booking uses the cookie
+ *
+ * Single use is enforced by recording the token's `jti` in the audit log at
+ * redemption, so a replay is refused even across a restart — and the redemption
+ * is auditable evidence in its own right, which a fingerprint in memory is not.
  */
 import * as jwt from 'jsonwebtoken';
+import { randomUUID } from 'node:crypto';
 
+export const UAT_LAUNCH_KIND = 'uat-booking-launch';
 export const UAT_SESSION_KIND = 'uat-booking-session';
-/** Matches the customer booking session; long enough to walk the flow, short
- *  enough that a leaked link is not a standing capability. */
-export const UAT_SESSION_TTL_MINUTES = 30;
 
-export interface UatSessionClaims {
-  kind: typeof UAT_SESSION_KIND;
-  /** The TestDataRun everything created in this session belongs to. */
+/** How long a launch link stays redeemable. */
+export const UAT_LAUNCH_TTL_MINUTES = 30;
+/** How long the exchanged session lasts — long enough to finish a booking. */
+export const UAT_SESSION_TTL_MINUTES = 60;
+
+/** The cookie the exchanged session lives in. HttpOnly: JS never sees it. */
+export const UAT_COOKIE_NAME = 'bsop_uat';
+
+export interface UatContext {
   testDataRunId: string;
-  /** Human label, carried so captures can be filtered without a second lookup. */
   runLabel: string;
-  /** Who minted it — every test booking is attributable to a person. */
   issuedByUserId: string;
 }
 
-export interface UatSessionContext {
-  testDataRunId: string;
-  runLabel: string;
-  issuedByUserId: string;
-  expiresAt: Date;
+export interface UatLaunchClaims extends UatContext {
+  kind: typeof UAT_LAUNCH_KIND;
+  /** Unique per launch token; the handle single-use redemption is recorded under. */
+  jti: string;
 }
 
 function secret(): string {
@@ -54,36 +58,121 @@ function secret(): string {
   return s;
 }
 
-export function signUatSession(claims: Omit<UatSessionClaims, 'kind'>): { token: string; expiresAt: Date } {
-  const token = jwt.sign({ ...claims, kind: UAT_SESSION_KIND }, secret(), {
-    expiresIn: `${UAT_SESSION_TTL_MINUTES}m`,
+// ---------------------------------------------------------------------------
+// Launch token — minted by the simulator, redeemed once
+// ---------------------------------------------------------------------------
+
+export function signUatLaunchToken(ctx: UatContext): { token: string; jti: string; expiresAt: Date } {
+  const jti = randomUUID();
+  const token = jwt.sign({ ...ctx, kind: UAT_LAUNCH_KIND, jti }, secret(), {
+    expiresIn: `${UAT_LAUNCH_TTL_MINUTES}m`,
   });
-  return { token, expiresAt: new Date(Date.now() + UAT_SESSION_TTL_MINUTES * 60_000) };
+  return { token, jti, expiresAt: new Date(Date.now() + UAT_LAUNCH_TTL_MINUTES * 60_000) };
 }
 
 /**
- * Verify a UAT session token.
- *
- * Returns null for ANY problem — bad signature, expired, wrong `kind`, missing
- * claims. Null means "no UAT context", and the booking then proceeds exactly as a
- * normal public booking: a real customer record, a real notification. That is the
- * safe direction. Treating an unverifiable token as valid would let a stranger
- * book invisibly; treating it as absent merely means a tester's booking behaves
- * like a real one, which is loud and recoverable.
+ * Why a launch token could not be redeemed. The caller turns this into ONE
+ * customer-safe message — the distinctions exist for logs and tests, never for
+ * the page, which must not become an oracle for token validity.
  */
-export function verifyUatSession(token: string | null | undefined): UatSessionContext | null {
-  if (!token) return null;
+export type UatLaunchRejection = 'MISSING' | 'MALFORMED' | 'EXPIRED' | 'WRONG_KIND' | 'INCOMPLETE';
+
+export function verifyUatLaunchToken(
+  token: string | null | undefined,
+): { ok: true; claims: UatLaunchClaims } | { ok: false; reason: UatLaunchRejection } {
+  if (!token) return { ok: false, reason: 'MISSING' };
+  let decoded: Partial<UatLaunchClaims> & { name?: string };
   try {
-    const decoded = jwt.verify(token, secret()) as Partial<UatSessionClaims> & { exp?: number };
+    decoded = jwt.verify(token, secret()) as Partial<UatLaunchClaims>;
+  } catch (e: unknown) {
+    const name = (e as { name?: string })?.name;
+    return { ok: false, reason: name === 'TokenExpiredError' ? 'EXPIRED' : 'MALFORMED' };
+  }
+  if (decoded.kind !== UAT_LAUNCH_KIND) return { ok: false, reason: 'WRONG_KIND' };
+  if (!decoded.jti || !decoded.testDataRunId || !decoded.runLabel || !decoded.issuedByUserId) {
+    return { ok: false, reason: 'INCOMPLETE' };
+  }
+  return {
+    ok: true,
+    claims: {
+      kind: UAT_LAUNCH_KIND,
+      jti: decoded.jti,
+      testDataRunId: decoded.testDataRunId,
+      runLabel: decoded.runLabel,
+      issuedByUserId: decoded.issuedByUserId,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Session cookie — what the rest of the booking runs on
+// ---------------------------------------------------------------------------
+
+export function signUatSessionCookie(ctx: UatContext): { value: string; expiresAt: Date } {
+  const value = jwt.sign({ ...ctx, kind: UAT_SESSION_KIND }, secret(), {
+    expiresIn: `${UAT_SESSION_TTL_MINUTES}m`,
+  });
+  return { value, expiresAt: new Date(Date.now() + UAT_SESSION_TTL_MINUTES * 60_000) };
+}
+
+/** Null for any problem — see `resolveUatFromRequest` for what null then means. */
+export function verifyUatSessionCookie(value: string | null | undefined): UatContext | null {
+  if (!value) return null;
+  try {
+    const decoded = jwt.verify(value, secret()) as Partial<UatContext> & { kind?: string };
     if (decoded.kind !== UAT_SESSION_KIND) return null;
     if (!decoded.testDataRunId || !decoded.runLabel || !decoded.issuedByUserId) return null;
     return {
       testDataRunId: decoded.testDataRunId,
       runLabel: decoded.runLabel,
       issuedByUserId: decoded.issuedByUserId,
-      expiresAt: decoded.exp ? new Date(decoded.exp * 1000) : new Date(),
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Read one cookie from a raw `Cookie` header.
+ *
+ * Hand-rolled rather than adding cookie-parser: this is the only cookie the
+ * platform reads, and a new dependency in a core flow needs approval it does not
+ * warrant (CLAUDE.md §9).
+ */
+export function readCookie(header: string | undefined, name: string): string | null {
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        return part.slice(eq + 1).trim();
+      }
+    }
+  }
+  return null;
+}
+
+/** Cookie options: Secure only where the browser will actually accept it. */
+export function uatCookieOptions(expiresAt: Date): {
+  httpOnly: true;
+  secure: boolean;
+  sameSite: 'none' | 'lax';
+  path: string;
+  expires: Date;
+} {
+  // Cross-site by construction: the booking page and the API are different
+  // origins, so the cookie must be SameSite=None — which browsers only accept
+  // together with Secure, i.e. over https. In local development both are on
+  // http://localhost, which is same-site enough for Lax to work.
+  const production = process.env.NODE_ENV === 'production';
+  return {
+    httpOnly: true,
+    secure: production,
+    sameSite: production ? 'none' : 'lax',
+    path: '/',
+    expires: expiresAt,
+  };
 }

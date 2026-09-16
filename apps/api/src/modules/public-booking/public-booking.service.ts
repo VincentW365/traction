@@ -36,7 +36,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EtaService } from '../scheduling/eta/eta.service';
 import { localDayKey } from '../../common/helpers/operating-hours';
 import { phoneForStorage } from '../../common/helpers/search-terms';
-import { verifyUatSession, type UatSessionContext } from '../booking-simulator/uat-session';
+import type { UatContext } from '../booking-simulator/uat-session';
 import type { BookingRules } from './booking.config';
 import { isSlotAvailable, type SlotRules } from './availability.engine';
 import {
@@ -257,7 +257,7 @@ export class PublicBookingService {
   // Step 5 — confirm (transactional, locked)
   // ---------------------------------------------------------------------------
 
-  async confirm(dto: ConfirmBookingDto, clientKey: string) {
+  async confirm(dto: ConfirmBookingDto, clientKey: string, uatContext: UatContext | null = null) {
     const site = await this.resolveSite();
     const rules = await this.loadRules(site.id);
     this.assertEnabled(rules.booking);
@@ -270,13 +270,12 @@ export class PublicBookingService {
     this.avail.assertSlotAllowed(start, end, site, rules, 'CUSTOMER');
     const serviceRequest = normaliseServiceRequest(dto.serviceRequest);
 
-    // CR-2026-108 Stage 3 — an administrator-issued UAT session. Signed and
-    // expiring; an unverifiable token is treated as ABSENT, so the booking simply
-    // proceeds as a real one rather than becoming invisibly disposable.
-    const uat: UatSessionContext | null = verifyUatSession(dto.uatToken);
-    if (dto.uatToken && !uat) {
-      this.logger.warn('A /book confirm carried a UAT token that did not verify; proceeding as a normal customer booking.');
-    }
+    // CR-2026-108 Stage 3 — the UAT context comes from the HttpOnly session cookie
+    // the controller resolved, never from this request body. An invalid or expired
+    // attempt is refused UPSTREAM at redemption rather than downgraded here: a
+    // tester who believes UAT is active must never silently create a real customer
+    // and send them a real message.
+    const uat: UatContext | null = uatContext;
 
     // Who is booking?
     const sessionCustomerId = dto.sessionToken ? this.verifySession(dto.sessionToken) : null;
