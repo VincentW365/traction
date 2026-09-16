@@ -155,24 +155,55 @@ export function readCookie(header: string | undefined, name: string): string | n
   return null;
 }
 
-/** Cookie options: Secure only where the browser will actually accept it. */
-export function uatCookieOptions(expiresAt: Date): {
+export interface UatCookieOptions {
   httpOnly: true;
   secure: boolean;
   sameSite: 'none' | 'lax';
   path: string;
-  expires: Date;
-} {
-  // Cross-site by construction: the booking page and the API are different
-  // origins, so the cookie must be SameSite=None — which browsers only accept
-  // together with Secure, i.e. over https. In local development both are on
-  // http://localhost, which is same-site enough for Lax to work.
+  expires?: Date;
+}
+
+/**
+ * Cookie policy.
+ *
+ * SameSite=**Lax** is the default, including in production. There is no
+ * cross-site embedding and no cross-site booking flow here: the tester opens
+ * /book directly, and the page then calls the API from the same site whenever the
+ * two share a registrable domain (e.g. book.example.com and api.example.com).
+ * Https alone is not a reason to widen this.
+ *
+ * `UAT_COOKIE_CROSS_SITE=true` opts into SameSite=None for the one documented
+ * case that genuinely fails under Lax: web and API deployed as separate services
+ * under a PUBLIC-SUFFIX host, where each subdomain is its own registrable domain
+ * and the browser therefore treats the call as cross-site. Render's default
+ * `bsop-web.onrender.com` / `bsop-api.onrender.com` pair is exactly that; a
+ * custom domain is not, and should stay on Lax.
+ *
+ * Secure is set in production regardless — and browsers require it for None, so
+ * the widened setting can never be used over plain http.
+ */
+export function uatCookieOptions(expiresAt: Date): UatCookieOptions {
   const production = process.env.NODE_ENV === 'production';
+  const crossSite = process.env.UAT_COOKIE_CROSS_SITE === 'true';
   return {
     httpOnly: true,
     secure: production,
-    sameSite: production ? 'none' : 'lax',
+    // None requires Secure; never emit that combination where it cannot be honoured.
+    sameSite: crossSite && production ? 'none' : 'lax',
     path: '/',
     expires: expiresAt,
   };
+}
+
+/**
+ * How to CLEAR the session — same attributes, no expiry, so the browser drops it.
+ *
+ * Used the moment a UAT booking completes. Without this the cookie would outlive
+ * the thing it was for, and the tester's NEXT booking in the same browser — a real
+ * one — would be silently tagged as test data and never notify the customer. A
+ * bounded lifetime alone is not enough: the window is the whole problem.
+ */
+export function uatClearCookieOptions(): UatCookieOptions {
+  const { expires: _ignored, ...rest } = uatCookieOptions(new Date(0));
+  return rest;
 }

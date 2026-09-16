@@ -3,7 +3,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { PublicBookingService } from './public-booking.service';
 import { BookingSimulatorService } from '../booking-simulator/booking-simulator.service';
-import { readCookie, uatCookieOptions, verifyUatSessionCookie, UAT_COOKIE_NAME } from '../booking-simulator/uat-session';
+import { readCookie, uatClearCookieOptions, uatCookieOptions, verifyUatSessionCookie, UAT_COOKIE_NAME } from '../booking-simulator/uat-session';
 import {
   AvailabilityQueryDto,
   CancelBookingDto,
@@ -84,11 +84,18 @@ export class PublicBookingController {
 
   @Post('confirm')
   @ApiOperation({ summary: 'Reserve the chosen slot (transactional; 409 SLOT_TAKEN if just claimed)' })
-  confirm(@Body() dto: ConfirmBookingDto, @Req() req: Request) {
+  async confirm(@Body() dto: ConfirmBookingDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     // The UAT context, if any, is whatever the HttpOnly cookie proves — never a
     // value the page could set.
     const uat = verifyUatSessionCookie(readCookie(req.headers.cookie, UAT_COOKIE_NAME));
-    return this.booking.confirm(dto, this.clientKey(req), uat);
+    const result = await this.booking.confirm(dto, this.clientKey(req), uat);
+    if (uat) {
+      // The session ends with the booking it was for. Left in place, the tester's
+      // NEXT booking in this browser — a real one — would be silently tagged as
+      // test data and the customer would never be told anything.
+      res.clearCookie(UAT_COOKIE_NAME, uatClearCookieOptions());
+    }
+    return result;
   }
 
   @Get('manage/:token')

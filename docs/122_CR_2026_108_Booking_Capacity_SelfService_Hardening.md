@@ -15,7 +15,8 @@ Delivered in stages, each with tests:
 | 2 | Internal availability decision + reason model (§C) | complete |
 | 3 | Admin Booking Simulator + UAT session (§D) | complete |
 | 4A | Catalogue capability, enforcement OFF (§E) | complete |
-| 4B–4F | Readiness audit, configuration, preflight, preview, activation | not started |
+| 4B | Catalogue readiness audit (§F) | complete — awaiting review |
+| 4C–4F | Configuration, preflight, preview, activation | not started |
 | 5 | Resource-aware capacity engine (SHADOW only) | not started |
 | 6 | Reservation semantics + end-to-end validation | not started |
 
@@ -635,3 +636,95 @@ DEFAULT vs CATALOGUE duration preview, then the duration switch.
 
 No service has been made bookable, and no starting set has been seeded — that is
 management's decision after the readiness audit, not a default.
+
+---
+
+## §F. Stage 4B — Catalogue Readiness Audit
+
+Read-only decision support at Setup → Services → Catalogue Readiness. It writes
+nothing — not `bookableOnline`, not a name, not a duration. Tests assert that,
+including a static guard that the service file contains no mutating Prisma call.
+
+### F1. Cookie policy review (carried out first)
+
+`SameSite=None` is no longer the production default. There is no cross-site
+embedding and no cross-site booking flow, and https alone is not a reason to
+widen a cookie. **Lax is now the default everywhere**, with `UAT_COOKIE_CROSS_SITE`
+as an explicit opt-in for the one case that genuinely fails under it: web and API
+deployed as separate services under a public-suffix host, where each subdomain is
+its own registrable domain. Render's default `bsop-web.onrender.com` /
+`bsop-api.onrender.com` pair is exactly that, so render.yaml sets it — with a note
+to remove it on a shared custom domain.
+
+The review also found a real gap: the cookie outlived the booking it was for. A
+tester's NEXT booking in the same browser — a real one — would have been silently
+tagged as test data and the customer never told anything. The cookie is now
+cleared the moment a UAT booking completes.
+
+### F2. What the audit found
+
+31 active services · 30 offered to customers today · 0 marked bookable online.
+
+| Readiness | Count |
+| --- | --- |
+| Ready for review | 16 |
+| Needs configuration | 6 |
+| Not suitable for direct self-service | 9 |
+
+**The 31st service** is `MSHOP-01` Machine Shop Work, excluded by the existing
+`isExternal` filter — nothing to do with the new flag.
+
+**Nine of the 30 currently offered should not be.** The legacy behaviour is
+exposing too much:
+
+| Code | Name | Why not |
+| --- | --- | --- |
+| ENG-01, GEN-01, ELE-01, TRANS-01 | the four Diagnostics | Scope, and therefore duration, is unknown until the vehicle is examined |
+| WIPER-01, AIR-FLT-01, OIL-FLT-01 | package sub-operations | `INCLUDED_NO_ADDITIONAL_BENCHMARK` — absorbed by a larger service, not a job a customer books alone |
+| EST-01 | Estimate / Inspection | An assessment carried out before the work is known |
+| MSHOP-01 | Machine Shop Work | External |
+
+The package-component verdicts use the **existing** KPI component-role data, not
+a new relationship model.
+
+**Six need configuration**, all for reasons a customer would feel:
+
+- `BEL-01` "Belt / Hose Replacement" vs `BELT-01` "Belt Replacement" — indistinguishable.
+- `SHOCK-01` "Shocks Replacement" vs `SUSP-02` "Shock / Strut Replacement" — indistinguishable.
+- `ENG-02`, `RACK-01`, `SUSP-02` at 180 minutes — long and likely variable. Flagged as
+  a documented heuristic, explicitly not a business rule.
+
+### F3. Evidence quality — the headline
+
+**There is no per-service historical duration evidence at all.** All 9,055
+imported job records carry zero service-type lines, so nothing can be attributed
+to a service. The only per-service timing comes from 68 orders performed on this
+platform, which is far too small to set a duration from.
+
+Every service therefore shows `LIVE_PLATFORM: n=0..1` and
+`HISTORICAL_IMPORT: n=0`, marked insufficient rather than printing a median next
+to a sample of one. Catalogue durations must be reviewed by people who know the
+work — they cannot be derived from this data, and the audit says so on screen.
+
+### F4. Method
+
+Deterministic rules, categorical verdicts, explicit reasons — **no numeric score**.
+A score would average away the single fact that disqualifies a service: a perfect
+name does not offset an unknowable three-hour scope.
+
+Two refinements after the first run, both from reading real output:
+
+- Structural unsuitability is decided **first**, so a service that will never be
+  offered cannot make another look ambiguous. "Oil Change" was being flagged
+  against "Oil Filter Change", which is a package component no customer will see.
+- Crude singular/plural folding, without which "Shocks Replacement" and
+  "Shock / Strut Replacement" did not compare.
+
+### F5. Known limitation
+
+`BRK-02` "Brake Pad Replacement" (90m) and `DISC-01` "Disc Pad Change" (60m) are
+plausibly the same work at two durations, and the name heuristic does **not** catch
+them — they share only one distinctive token. Raising the sensitivity enough to
+catch it produced false positives elsewhere, so it is reported here for human
+review rather than tuned for. Both appear in the proposed set; management should
+decide whether both belong on a public page.

@@ -7,6 +7,7 @@ import {
   verifyUatSessionCookie,
   readCookie,
   uatCookieOptions,
+  uatClearCookieOptions,
   UAT_LAUNCH_KIND,
   UAT_SESSION_KIND,
   UAT_LAUNCH_TTL_MINUTES,
@@ -96,25 +97,50 @@ describe('UAT session cookie', () => {
     expect(verifyUatSessionCookie(jwt.sign({ ...CTX, kind: UAT_SESSION_KIND }, 'wrong-secret-at-least-32-characters'))).toBeNull();
   });
 
-  it('is HttpOnly, and Secure + SameSite=None only where a browser will accept it', () => {
-    const saved = process.env.NODE_ENV;
+  it('defaults to SameSite=Lax in production — https alone is not a reason to widen it', () => {
+    const saved = { env: process.env.NODE_ENV, cross: process.env.UAT_COOKIE_CROSS_SITE };
     try {
       process.env.NODE_ENV = 'production';
+      delete process.env.UAT_COOKIE_CROSS_SITE;
       const prod = uatCookieOptions(new Date());
       expect(prod.httpOnly).toBe(true);
       expect(prod.secure).toBe(true);
-      // Cross-site by construction (page and API are different origins), and
-      // browsers only accept SameSite=None together with Secure.
-      expect(prod.sameSite).toBe('none');
+      expect(prod.sameSite).toBe('lax');
+    } finally {
+      process.env.NODE_ENV = saved.env;
+      if (saved.cross === undefined) delete process.env.UAT_COOKIE_CROSS_SITE; else process.env.UAT_COOKIE_CROSS_SITE = saved.cross;
+    }
+  });
 
+  it('widens to None ONLY on the documented cross-site opt-in, and never without Secure', () => {
+    const saved = { env: process.env.NODE_ENV, cross: process.env.UAT_COOKIE_CROSS_SITE };
+    try {
+      process.env.UAT_COOKIE_CROSS_SITE = 'true';
+      process.env.NODE_ENV = 'production';
+      const prod = uatCookieOptions(new Date());
+      expect(prod.sameSite).toBe('none');
+      expect(prod.secure).toBe(true);
+
+      // Opting in outside production must NOT emit None: browsers reject
+      // None without Secure, and the cookie would simply be dropped.
       process.env.NODE_ENV = 'development';
       const dev = uatCookieOptions(new Date());
-      expect(dev.httpOnly).toBe(true);
-      expect(dev.secure).toBe(false);
       expect(dev.sameSite).toBe('lax');
+      expect(dev.secure).toBe(false);
     } finally {
-      process.env.NODE_ENV = saved;
+      process.env.NODE_ENV = saved.env;
+      if (saved.cross === undefined) delete process.env.UAT_COOKIE_CROSS_SITE; else process.env.UAT_COOKIE_CROSS_SITE = saved.cross;
     }
+  });
+
+  it('expires with the session, and the clear variant carries no expiry', () => {
+    const at = new Date(Date.now() + 60 * 60_000);
+    expect(uatCookieOptions(at).expires).toEqual(at);
+    const cleared = uatClearCookieOptions();
+    expect(cleared).not.toHaveProperty('expires');
+    // Same attributes otherwise, or the browser will not match and drop it.
+    expect(cleared.httpOnly).toBe(true);
+    expect(cleared.path).toBe('/');
   });
 
   it('reads its cookie out of a raw header without a parser dependency', () => {

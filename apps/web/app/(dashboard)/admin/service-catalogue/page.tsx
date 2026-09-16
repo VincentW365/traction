@@ -77,6 +77,12 @@ export default function ServiceCataloguePage() {
           </select>
         }
       />
+      {/* CR-2026-108 Stage 4B — read-only decision support for self-service booking. */}
+      <div className="mb-3">
+        <a href="/admin/service-catalogue/readiness" className="text-xs font-medium text-blue-600 hover:underline">
+          Catalogue Readiness — which services are suitable for customer self-service booking →
+        </a>
+      </div>
 
       {stQuery.isLoading && <LoadingState message="Loading service types..." />}
 

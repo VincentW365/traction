@@ -57,6 +57,13 @@ services:
         sync: false                    # set to the bsop-web URL after first deploy
       - key: PUBLIC_APP_URL
         sync: false                    # CR-2026-106: the public bsop-web URL (https), used for every customer-facing link
+      # CR-2026-108 — the UAT booking cookie is SameSite=Lax by default. Render's
+      # default hostnames put bsop-web and bsop-api under onrender.com, which is a
+      # public suffix, so each subdomain is its own registrable domain and the
+      # browser treats the call as cross-site — Lax would drop the cookie. Remove
+      # this when the services move to a shared custom domain.
+      - key: UAT_COOKIE_CROSS_SITE
+        value: "true"
 
   - type: web
     name: bsop-web

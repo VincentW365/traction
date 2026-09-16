@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Patch, Body, Param, NotFoundException, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiParam, ApiBearerAuth } from '@nestjs/swagger';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { CatalogueReadinessService } from './catalogue-readiness.service';
 import { AuditService } from '../audit/audit.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
@@ -14,7 +15,22 @@ export class ServiceTypesController {
   constructor(
     private prisma: PrismaService,
     private audit: AuditService,
+    private readiness: CatalogueReadinessService,
   ) {}
+
+  /**
+   * CR-2026-108 Stage 4B — the Catalogue Readiness Audit. READ-ONLY decision
+   * support: which services are safe, understandable and operationally suitable
+   * for customer self-service. It changes nothing; a person decides.
+   */
+  @Get('readiness')
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @ApiBearerAuth()
+  @RequirePermission(PERMISSIONS.SERVICE_TYPE_MANAGE)
+  @ApiOperation({ summary: 'Catalogue readiness audit for customer self-service booking (read-only)' })
+  async catalogueReadiness() {
+    return this.readiness.audit();
+  }
 
   @Get()
   @ApiOperation({ summary: 'List all active service types (public)' })
