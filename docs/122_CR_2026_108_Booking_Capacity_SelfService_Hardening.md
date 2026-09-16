@@ -25,18 +25,38 @@ Delivered in stages, each with tests:
 Management asked for a capacity recommendation derived from configured resources and real
 operating history rather than a guessed number, and for the analysis to be reproducible.
 
-### A1. The decision taken
+### A1. The decision taken — NO capacity change
 
-| Setting | Pilot value | Meaning |
-| --- | --- | --- |
-| total concurrency ceiling | **3** | hard safety limit on simultaneous booked positions |
-| `booking_walkin_reserve_positions` | **1** | positions held back from online self-service |
-| online self-service maximum | **2** | ceiling − reserve |
-| `booking_online_capacity_ratio` | **1.0** (neutral) | the absolute reserve provides the restriction; a ratio is NOT also applied, so capacity is never double-reduced |
+**`booking_max_concurrent_appointments` stays at its current production value.**
 
-**3 is a controlled pilot ceiling, not a proven physical maximum.** It is an observed
-*utilisation* figure from legacy data, and §A4 lists the reasons it may understate (or
-misrepresent) true safe capacity. It must not be quoted as "the Service Centre's capacity".
+An earlier draft of this document proposed a pilot ceiling of 3, derived from the p95
+concurrency below. Management withdrew that on reviewing §A4: the sample turned out to
+cover **6.9% of service orders**, and **624 of its 626 records are `HISTORICAL_IMPORT`**
+— only 2 reflect this platform actually operating. That is not a basis for authorising
+how much work the shop accepts.
+
+So the analysis is retained as a **historical observation only**. It may be used to
+design and validate the shadow model. It is **not authoritative capacity data** and must
+never be cited as evidence that the live Service Centre can safely run three concurrent
+appointments.
+
+A new production capacity value will be set only after both of:
+
+1. the Resources & Bays operational audit (which resources are genuinely
+   capacity-contributing service positions — Stage 5), and
+2. an operational staffing review (how many technicians actually work concurrently).
+
+Until then: keep building FIXED / SHADOW / RESOURCE_AWARE capability, and **do not
+activate RESOURCE_AWARE**.
+
+The reserve/ratio design below still stands for when a value IS set — in particular that
+an absolute reserve and a ratio must never both bite, or capacity is double-reduced:
+
+| Setting | Intended meaning when eventually configured |
+| --- | --- |
+| total concurrency ceiling | hard safety limit on simultaneous booked positions |
+| `booking_walkin_reserve_positions` | positions held back from online self-service |
+| `booking_online_capacity_ratio` | left neutral at **1.0** while an absolute reserve provides the restriction |
 
 ### A2. Exact query criteria (reproducible)
 
@@ -87,7 +107,8 @@ Configured resources, for contrast:
 | Observed p95 | 3 |
 
 Adopting 13 would have authorised roughly **4× the observed p95** and 2.6× the all-time
-peak. That is the specific error this analysis exists to prevent.
+peak. That is the specific error this analysis exists to prevent — and §A4 is why the
+observed figures were not adopted as a production value either.
 
 ### A4. Why this sample is weak evidence — read before reusing it
 
@@ -117,7 +138,7 @@ peak. That is the specific error this analysis exists to prevent.
   timestamps instead of imported ones.
 - SHADOW-mode comparison logs (Stage 5) reviewed against what the shop actually did.
 
-Until then the pilot ceiling stays conservative and RESOURCE_AWARE stays off.
+Until then the existing production capacity value stays unchanged and RESOURCE_AWARE stays off.
 
 ---
 
@@ -206,3 +227,86 @@ record, so it is genuine and its confirmation is sent. That is correct behaviour
 but it means UAT of the first-time-customer path must either use a pre-tagged
 customer or accept a real send to a tester-controlled address. Stage 3's simulator
 is the natural place to make "book as a test customer" a first-class action.
+
+### B7. Stage 1 hardening (post-review)
+
+Applied after management's review of the Stage 1 delivery.
+
+**Observable classification failures (§3).** The verdict is now three-valued:
+`TEST` / `GENUINE` / `UNKNOWN`. `UNKNOWN` means the lookup itself failed — which is
+*not* the same as "this is a genuine customer", and is no longer recorded as if it
+were. It still delivers (a real customer must not be silently cut off), but it
+also writes a structured error log and an `AuditLog` row
+(`NOTIFICATION_TEST_CLASSIFICATION_UNAVAILABLE`) carrying the notification id, the
+entity, the customer/vehicle ids, the channel, the template and the failure
+reason. An audit-write problem never blocks the customer message.
+
+**Explicit test context takes precedence (§3).** `QueueNotificationInput.testContext`
+travels with the request and wins outright — including over a database lookup that
+failed — because the caller already knows it is a test. This is the mechanism
+Stage 3's UAT booking session will use, and it is the long-term direction:
+propagate a known test context through the workflow rather than rediscovering it
+from related rows on every message.
+
+**Authorization boundary (§4).** Reading captured content means reading what a
+customer would have been told, including their address. It moved off `CONFIG_VIEW`
+(semantically "view configuration", and a boundary that would silently widen if it
+were ever granted to advisors) onto a dedicated `NOTIFY_CAPTURED_VIEW`. ADMIN
+holds every permission, so the effective audience is unchanged today — Manager
+only — but the boundary is now the right one. Access is audited
+(`NOTIFICATION_CAPTURED_VIEWED`: who, which run, when) and paginated
+(`take` 1–200, default 50, plus `skip`). Content is deliberately **not** masked:
+an authorised tester has to verify the exact wording a customer would receive.
+
+**Cleanup participation (§5) — no schema change needed.** A CAPTURED row holds the
+full rendered message and the real recipient address, so it must leave with its
+test run. It already does: `NotificationLog` is polymorphic on `entityId`, the
+manifest collects it over every id the run created (including the run's
+Appointments, which are collected from the run's customers), and it is deleted
+first in `CLEANUP_DELETE_SEQUENCE`. Tests now pin each link in that chain so it
+cannot be broken silently. Retained UAT evidence, if we ever want it, must be an
+explicit export — not database residue left behind by an incomplete cleanup.
+
+**Migration (§2).** `ALTER TYPE ... ADD VALUE IF NOT EXISTS` is idempotent and
+re-runnable; PostgreSQL 12+ permits it inside Prisma's transaction, and the value
+is not used in that same transaction. Deployment order (migrate → generate →
+start) means no running process writes `CAPTURED` before the type carries it. The
+rollback procedure is documented in the migration file, together with the reason
+the preferred rollback is to leave the unused value in place: rewriting captured
+rows to `FAILED` would misrepresent withheld test messages as failures.
+
+**`CAPTURED` display (§2).** Added to the web status maps
+(`communication-history.tsx`, `notification-composer.tsx`) as "Test capture — not
+sent". The duplicate-contact guard and "last contacted" queries filter on
+`SENT`/`DELIVERED`/`MANUAL` and therefore already exclude it — a captured message
+correctly does not count as having contacted anybody.
+
+**Global mode coverage (§7).** The production/non-LIVE deployment failure now has
+automated coverage asserting it fails rather than warns, names the consequence,
+and defaults to `TEST` when unset so an unconfigured production deploy still fails.
+
+### B8. Carried into Stage 3 scope — UAT booking session
+
+The first-time-customer gap is **not** accepted as permanent. Booking as a
+pre-tagged customer converts the scenario into an existing-customer workflow and
+therefore does not test the brand-new-customer path at all.
+
+Stage 3 will add an administrator-generated **UAT booking session**: from the
+Booking Simulator, an authorised tester launches the *real* `/book` flow carrying
+a signed, unguessable, short-lived test context. A completely new customer and
+vehicle created through that flow receive the `testDataRunId`, the appointment
+stays associated with the test context, its notifications are CAPTURED, the
+records are excluded from operational KPIs, and standard test-run cleanup removes
+them.
+
+Constraints fixed now so Stage 3 cannot drift:
+
+- no simple `?test=true` parameter;
+- customers and the public must not be able to manufacture a test session;
+- the token is signed, unguessable and expiring;
+- `/book` behaves exactly as today when no valid UAT context is present;
+- it uses the real public booking controllers and services — never a
+  simulator-only parallel booking path.
+
+`testContext` on the notification input (§B7) is the first piece of that
+mechanism, delivered early because it also hardens the resolver-failure case.

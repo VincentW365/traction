@@ -169,7 +169,7 @@ describe('CR-2026-108 — TestRecordResolver', () => {
       customer: { findUnique: vi.fn(async () => ({ testDataRun: { label: 'uat-1' } })) },
       vehicle: none, serviceVisit: none, appointment: none,
     });
-    await expect(r.resolve({ customerId: 'c1' })).resolves.toEqual({ isTest: true, via: 'CUSTOMER', runLabel: 'uat-1' });
+    await expect(r.resolve({ customerId: 'c1' })).resolves.toEqual({ isTest: true, classification: 'TEST', via: 'CUSTOMER', runLabel: 'uat-1' });
   });
 
   it('recognises a test record through the vehicle link', async () => {
@@ -203,7 +203,7 @@ describe('CR-2026-108 — TestRecordResolver', () => {
       },
     });
     await expect(r.resolve({ entityType: 'Appointment', entityId: 'a1' })).resolves.toEqual({
-      isTest: true, via: 'APPOINTMENT', runLabel: 'uat-booking',
+      isTest: true, classification: 'TEST', via: 'APPOINTMENT', runLabel: 'uat-booking',
     });
   });
 
@@ -215,7 +215,7 @@ describe('CR-2026-108 — TestRecordResolver', () => {
       appointment: { findUnique: vi.fn(async () => ({ customer: { testDataRun: null }, vehicle: { testDataRun: null }, serviceVisit: null })) },
     });
     await expect(r.resolve({ entityType: 'Appointment', entityId: 'a1', customerId: 'c1', vehicleId: 'v1' })).resolves.toEqual({
-      isTest: false, via: null, runLabel: null,
+      isTest: false, classification: 'GENUINE', via: null, runLabel: null,
     });
   });
 
@@ -223,6 +223,111 @@ describe('CR-2026-108 — TestRecordResolver', () => {
     const r = resolverWith({ customer: { findUnique: vi.fn(async () => { throw new Error('db down'); }) } });
     // Withholding a genuine message is the worse failure: it silently denies a
     // customer information about their vehicle.
-    await expect(r.resolve({ customerId: 'c1' })).resolves.toEqual({ isTest: false, via: null, runLabel: null });
+    await expect(r.resolve({ customerId: 'c1' })).resolves.toMatchObject({ isTest: false, classification: 'UNKNOWN' });
+  });
+});
+
+/**
+ * CR-2026-108 hardening §3 — "I could not tell" must never be silent, and must
+ * never be recorded as if the message had been positively classified as genuine.
+ */
+describe('CR-2026-108 §3 — unestablished classification is observable', () => {
+  function buildWithAudit(resolveImpl: () => Promise<unknown>) {
+    const provider = { send: vi.fn(async (_i: { recipient: string; channel: string }) => ({ success: true })) };
+    const audits: Array<Record<string, unknown>> = [];
+    const prisma = {
+      notificationLog: {
+        create: vi.fn(async (a: { data: Record<string, unknown> }) => ({ id: 'log-1', ...a.data })),
+        update: vi.fn(async () => ({ id: 'log-1' })),
+      },
+      auditLog: { create: vi.fn(async (a: { data: Record<string, unknown> }) => { audits.push(a.data); return a.data; }) },
+    };
+    const resolver = { resolve: vi.fn(resolveImpl) };
+    const service = new NotificationsService(prisma as never, provider as never, LIVE_CAPS, resolver as unknown as TestRecordResolver);
+    return { service, provider, audits, prisma };
+  }
+
+  const UNKNOWN = async () => ({ isTest: false, classification: 'UNKNOWN', via: null, runLabel: null, failureReason: 'db down' });
+  const GENUINE = async () => ({ isTest: false, classification: 'GENUINE', via: null, runLabel: null });
+
+  it('writes an audit row naming the notification, the entity and the reason', async () => {
+    const h = buildWithAudit(UNKNOWN);
+    await h.service.queue(APPOINTMENT_MESSAGE);
+
+    expect(h.audits).toHaveLength(1);
+    const a = h.audits[0];
+    expect(a.action).toBe('NOTIFICATION_TEST_CLASSIFICATION_UNAVAILABLE');
+    expect(a.entityType).toBe('NotificationLog');
+    expect(a.entityId).toBe('log-1');
+    const after = a.afterJson as Record<string, unknown>;
+    expect(after.failureReason).toBe('db down');
+    expect(after.entityId).toBe('appt-1');
+    expect(after.customerId).toBe('cust-1');
+    expect(after.outcome).toBe('DELIVERED_WITHOUT_CLASSIFICATION');
+  });
+
+  it('still delivers the message — a real customer is never silently cut off', async () => {
+    const h = buildWithAudit(UNKNOWN);
+    await h.service.queue(APPOINTMENT_MESSAGE);
+    expect(h.provider.send).toHaveBeenCalledOnce();
+  });
+
+  it('a positively GENUINE classification writes no such audit row', async () => {
+    const h = buildWithAudit(GENUINE);
+    await h.service.queue(APPOINTMENT_MESSAGE);
+    expect(h.audits).toHaveLength(0);
+    expect(h.provider.send).toHaveBeenCalledOnce();
+  });
+
+  it('an audit-write failure does not stop the customer message', async () => {
+    const h = buildWithAudit(UNKNOWN);
+    h.prisma.auditLog.create = vi.fn(async () => { throw new Error('audit table gone'); });
+    await expect(h.service.queue(APPOINTMENT_MESSAGE)).resolves.toBe('log-1');
+    expect(h.provider.send).toHaveBeenCalledOnce();
+  });
+});
+
+/**
+ * CR-2026-108 hardening §3 — explicit context beats a broken lookup. This is the
+ * path Stage 3's UAT booking session will use for a brand-new customer, who has
+ * no tagged anchor to rediscover.
+ */
+describe('CR-2026-108 §3 — explicit test context takes precedence', () => {
+  it('captures on explicit context even when no anchor exists', async () => {
+    const resolver = new TestRecordResolver({} as never); // any lookup would throw
+    const v = await resolver.resolve({
+      entityType: 'Appointment',
+      entityId: 'a1',
+      customerId: 'brand-new',
+      testContext: { runLabel: 'uat-session-42' },
+    });
+    expect(v).toEqual({ isTest: true, classification: 'TEST', via: 'EXPLICIT_CONTEXT', runLabel: 'uat-session-42' });
+  });
+
+  it('explicit context wins over a database that is down', async () => {
+    const resolver = new TestRecordResolver({
+      customer: { findUnique: async () => { throw new Error('db down'); } },
+    } as never);
+    const v = await resolver.resolve({ customerId: 'c1', testContext: { testDataRunId: 'run-7' } });
+    expect(v.isTest).toBe(true);
+    expect(v.classification).toBe('TEST');
+  });
+
+  it('an empty test context is not treated as a test', async () => {
+    const resolver = new TestRecordResolver({
+      customer: { findUnique: async () => ({ testDataRun: null }) },
+    } as never);
+    const v = await resolver.resolve({ customerId: 'c1', testContext: { testDataRunId: null, runLabel: null } });
+    expect(v.classification).toBe('GENUINE');
+  });
+
+  it('a lookup error classifies UNKNOWN, not GENUINE, and carries the reason', async () => {
+    const resolver = new TestRecordResolver({
+      customer: { findUnique: async () => { throw new Error('connection reset'); } },
+    } as never);
+    const v = await resolver.resolve({ customerId: 'c1' });
+    expect(v.classification).toBe('UNKNOWN');
+    expect(v.isTest).toBe(false);
+    expect(v.failureReason).toContain('connection reset');
   });
 });

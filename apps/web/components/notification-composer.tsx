@@ -119,6 +119,8 @@ const DISPLAY_STATE_LABELS: Record<string, string> = {
   SIMULATED: 'Simulated — not delivered',
   MANUAL: 'Logged (manual)',
   CANCELLED: 'Cancelled',
+  // CR-2026-108 — test-record message: rendered and recorded, deliberately not sent.
+  CAPTURED: 'Test capture — not sent',
 };
 
 function fmtWhen(v: string | null | undefined): string {

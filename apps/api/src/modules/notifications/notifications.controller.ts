@@ -104,12 +104,19 @@ export class NotificationsController {
    * instead of a mailbox and no real customer is contacted during UAT.
    */
   @Get('captured')
-  @RequirePermission(PERMISSIONS.CONFIG_VIEW)
+  @RequirePermission(PERMISSIONS.NOTIFY_CAPTURED_VIEW)
   @ApiOperation({ summary: 'Notifications withheld because they were about a test record (UAT results)' })
-  captured(@Query('runLabel') runLabel?: string, @Query('take') take?: string) {
+  captured(
+    @CurrentUser() user: JwtPayload,
+    @Query('runLabel') runLabel?: string,
+    @Query('take') take?: string,
+    @Query('skip') skip?: string,
+  ) {
     return this.notificationsService.listCapturedNotifications({
       runLabel,
       take: take ? parseInt(take, 10) : undefined,
+      skip: skip ? parseInt(skip, 10) : undefined,
+      actorUserId: user.sub,
     });
   }
 

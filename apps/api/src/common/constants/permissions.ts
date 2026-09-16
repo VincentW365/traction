@@ -91,6 +91,13 @@ export const PERMISSIONS = {
   // customers. Template management stays behind CONFIG_VIEW/CONFIG_EDIT.
   NOTIFY_SEND: 'notify:send',
 
+  // CR-2026-108 — reading the FULL content of notifications captured during UAT:
+  // subject, body and the recipient address they would have gone to. That is
+  // customer-message content, not configuration, so it gets its own boundary
+  // rather than riding on CONFIG_VIEW — which is only Manager-level today, but
+  // would silently widen this if it were ever granted to advisors.
+  NOTIFY_CAPTURED_VIEW: 'notify:captured_view',
+
   // Visual Inspections (CR-2026-034)
   INSPECTION_VIEW: 'inspection:view',
   INSPECTION_CREATE: 'inspection:create',

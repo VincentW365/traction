@@ -264,3 +264,46 @@ describe('executeCleanup — deletes in order, marks CLEANED_UP, audits', () => 
     await expect(executeCleanup(db, { runId: 'run-1', backup: '/b', actorUserId: 'u1' })).rejects.toThrow(/not ACTIVE/);
   });
 });
+
+/**
+ * CR-2026-108 §5 — a test run must not leave captured notification bodies and
+ * recipient addresses behind after its data is removed. A CAPTURED row holds the
+ * full rendered message and the real address it would have gone to, so it is
+ * exactly the kind of residue that must go with the run.
+ *
+ * No schema change was needed: NotificationLog is polymorphic on entityId, the
+ * manifest collects it over every id the run created (including the run's
+ * Appointments), and it is deleted FIRST in the sequence. These assertions pin
+ * that so the guarantee cannot be removed without failing here.
+ */
+describe('CR-2026-108 — captured notifications participate in test-run cleanup', () => {
+  it('NotificationLog is deleted, and deleted before the rows it points at', () => {
+    expect(CLEANUP_DELETE_SEQUENCE).toContain('NotificationLog');
+    expect(CLEANUP_DELETE_SEQUENCE.indexOf('NotificationLog')).toBeLessThan(
+      CLEANUP_DELETE_SEQUENCE.indexOf('Appointment'),
+    );
+    expect(CLEANUP_DELETE_SEQUENCE.indexOf('NotificationLog')).toBeLessThan(
+      CLEANUP_DELETE_SEQUENCE.indexOf('Customer'),
+    );
+  });
+
+  it('maps to a real Prisma model so the delete can actually run', () => {
+    expect(MODEL_BY_TYPE.NotificationLog).toBe('notificationLog');
+  });
+
+  /**
+   * A captured booking message carries entityType 'Appointment'. Appointments are
+   * collected from the run's customers, and NotificationLog is collected over all
+   * collected ids — so the capture is reachable. This guards the chain by source,
+   * because breaking any link would silently orphan customer message content.
+   */
+  it('the manifest reaches an Appointment-scoped notification', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const manifestSrc = fs.readFileSync(path.join(__dirname, '..', 'manifest.ts'), 'utf8');
+    // Appointments come from the run's customers...
+    expect(manifestSrc).toMatch(/appointment\.findMany\(\{\s*where:\s*\{\s*customerId:\s*\{\s*in:\s*customerIds/);
+    // ...and notifications are collected over every id the run created.
+    expect(manifestSrc).toMatch(/notificationLog\.findMany\(\{\s*where:\s*\{\s*entityId:\s*\{\s*in:\s*allIds/);
+  });
+});

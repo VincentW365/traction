@@ -4,7 +4,38 @@
 -- reinterpreted, and no application behaviour changes for genuine customers.
 --
 -- CAPTURED is deliberately distinct from the states already present:
---   FAILED    something went wrong          (nothing went wrong here)
---   simulated no provider was configured    (a provider may well be configured)
---   testRouted global TEST mode redirected  (nothing was redirected; it was withheld)
+--   FAILED     something went wrong          (nothing went wrong here)
+--   simulated  no provider was configured    (a provider may well be configured)
+--   testRouted global TEST mode redirected   (nothing was redirected; it was withheld)
+--
+-- CAPTURED means, precisely: the message was rendered successfully, the recipient
+-- was resolved, the provider was deliberately not called, and the message is
+-- retained for authorised UAT inspection.
+--
+-- DEPLOY SAFETY
+--   `ADD VALUE IF NOT EXISTS` is idempotent and re-runnable. PostgreSQL 12+ allows
+--   it inside a transaction (Prisma wraps migrations in one); the new value simply
+--   cannot be USED in that same transaction, which this migration does not do.
+--   Deployment order is migrate → generate → start, so no running process writes
+--   'CAPTURED' before the type carries it.
+--
+-- ROLLBACK
+--   PostgreSQL cannot DROP an enum value. Rolling back is therefore a data
+--   decision, not a schema one, and is only needed if the feature is abandoned:
+--
+--     -- 1. no row may reference the value
+--     UPDATE notification_logs SET status = 'FAILED',
+--            failure_reason = coalesce(failure_reason, '') || ' [rolled back from CAPTURED]'
+--      WHERE status = 'CAPTURED';
+--     -- 2. then recreate the type without it
+--     ALTER TYPE "NotificationDeliveryStatus" RENAME TO "NotificationDeliveryStatus_old";
+--     CREATE TYPE "NotificationDeliveryStatus" AS ENUM
+--       ('PENDING','SCHEDULED','SENT','DELIVERED','FAILED','CANCELLED','MANUAL');
+--     ALTER TABLE notification_logs
+--       ALTER COLUMN status TYPE "NotificationDeliveryStatus"
+--       USING status::text::"NotificationDeliveryStatus";
+--     DROP TYPE "NotificationDeliveryStatus_old";
+--
+--   Leaving the unused value in place is harmless and is the preferred rollback:
+--   step 1 above would misrepresent withheld test messages as failures.
 ALTER TYPE "NotificationDeliveryStatus" ADD VALUE IF NOT EXISTS 'CAPTURED';

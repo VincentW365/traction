@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
-import { TestRecordResolver } from './test-record.resolver';
+import { TestRecordResolver, type TestRecordVerdict } from './test-record.resolver';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import {
   NOTIFICATION_CAPABILITIES,
@@ -77,6 +77,13 @@ export interface QueueNotificationInput {
   /** CR-2026-106 — so the customer's Communication History (filtered by customer/vehicle) shows this message. */
   customerId?: string | null;
   vehicleId?: string | null;
+  /**
+   * CR-2026-108 §3 — explicit test context carried WITH the request. When present
+   * the message is captured regardless of what the database lookup says (or
+   * whether it worked at all). Preferred over rediscovering test-ness from
+   * related rows; Stage 3's UAT booking session will populate it end-to-end.
+   */
+  testContext?: { testDataRunId?: string | null; runLabel?: string | null } | null;
 }
 
 /** CR-2026-105c — what a booking message needs to say. Customer contact is opt-in gated by the caller. */
@@ -149,14 +156,15 @@ export class NotificationsService {
     // about a test record is rendered and recorded in full but never transmitted,
     // so UAT of the public booking flow cannot reach a real person. Genuine
     // customer messages are untouched by this branch.
-    const testRecord = this.testRecords
+    const testRecord: TestRecordVerdict = this.testRecords
       ? await this.testRecords.resolve({
           entityType: input.entityType,
           entityId: input.entityId,
           customerId: input.customerId ?? null,
           vehicleId: input.vehicleId ?? null,
+          testContext: input.testContext ?? null,
         })
-      : { isTest: false as const, via: null, runLabel: null };
+      : { isTest: false, classification: 'GENUINE', via: null, runLabel: null };
 
     if (testRecord.isTest) {
       const { subject, body } = this.renderForChannel(input);
@@ -207,6 +215,16 @@ export class NotificationsService {
       },
     });
 
+    // CR-2026-108 §3 — the classification could not be established, so this
+    // message is being delivered WITHOUT the test safety net having actually been
+    // checked. That is a real operating condition, not a log line to lose: it is
+    // audited with the identifiers needed to find the record afterwards. The
+    // message still goes out (a real customer must not be silently cut off), but
+    // nothing anywhere records it as "positively classified as genuine".
+    if (testRecord.classification === 'UNKNOWN') {
+      await this.auditTestClassificationFailure(log.id, input, testRecord.failureReason);
+    }
+
     if (routing.blocked) {
       await this.prisma.notificationLog.update({
         where: { id: log.id },
@@ -224,6 +242,48 @@ export class NotificationsService {
     }
 
     return log.id;
+  }
+
+  /**
+   * CR-2026-108 §3 — make an unestablished test classification observable.
+   * Never throws: an audit-write problem must not stop a customer message.
+   */
+  private async auditTestClassificationFailure(
+    notificationId: string,
+    input: QueueNotificationInput,
+    failureReason: string | undefined,
+  ): Promise<void> {
+    const detail = {
+      notificationId,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      customerId: input.customerId ?? null,
+      vehicleId: input.vehicleId ?? null,
+      channel: input.channel,
+      templateKey: input.templateKey,
+      failureReason: failureReason ?? 'unknown',
+      outcome: 'DELIVERED_WITHOUT_CLASSIFICATION',
+    };
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          actorUserId: null,
+          action: 'NOTIFICATION_TEST_CLASSIFICATION_UNAVAILABLE',
+          entityType: 'NotificationLog',
+          entityId: notificationId,
+          afterJson: detail as unknown as never,
+          reasonCode: 'TEST_CLASSIFICATION_UNAVAILABLE',
+          notes:
+            'Could not determine whether this message was about a test record; it was delivered as a real customer message. ' +
+            'Investigate before relying on per-record UAT suppression.',
+        },
+      });
+    } catch (e: unknown) {
+      this.logger.error(
+        `Could not audit an unestablished test classification for notification ${notificationId}: ` +
+          `${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   /**
@@ -788,12 +848,41 @@ export class NotificationsService {
    * and a tester has to be able to check the exact wording, recipient and channel.
    * It is still permission-gated (CONFIG_VIEW) and never reachable publicly.
    */
-  async listCapturedNotifications(opts: { take?: number; runLabel?: string } = {}) {
-    const take = Math.min(opts.take ?? 100, 500);
+  async listCapturedNotifications(
+    opts: { take?: number; skip?: number; runLabel?: string; actorUserId?: string } = {},
+  ) {
+    const take = Math.min(Math.max(opts.take ?? 50, 1), 200);
+    const skip = Math.max(opts.skip ?? 0, 0);
+
+    // CR-2026-108 §4 — reading captured content means reading what a customer
+    // would have been told, including their address. Permission-gated to
+    // NOTIFY_CAPTURED_VIEW and audited: who looked, at which run, and when.
+    if (opts.actorUserId) {
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            actorUserId: opts.actorUserId,
+            action: 'NOTIFICATION_CAPTURED_VIEWED',
+            entityType: 'NotificationLog',
+            entityId: null as unknown as string,
+            afterJson: { runLabel: opts.runLabel ?? null, take, skip } as unknown as never,
+            reasonCode: 'UAT_EVIDENCE_REVIEW',
+          },
+        });
+      } catch {
+        // Never block a tester on an audit write; the request itself is still
+        // permission-gated and logged by the platform.
+      }
+    }
+
+    const total = await this.prisma.notificationLog.count({
+      where: { status: 'CAPTURED' as NotificationDeliveryStatus },
+    });
     const rows = await this.prisma.notificationLog.findMany({
       where: { status: 'CAPTURED' as NotificationDeliveryStatus },
       orderBy: { createdAt: 'desc' },
       take,
+      skip,
       select: {
         id: true, createdAt: true, entityType: true, entityId: true,
         channel: true, templateKey: true, recipient: true, intendedRecipient: true,
@@ -821,7 +910,15 @@ export class NotificationsService {
       }))
       .filter((i) => !opts.runLabel || i.runLabel === opts.runLabel);
 
-    return { total: items.length, items };
+    return {
+      /** Captured rows in the database (before any runLabel filter). */
+      total,
+      /** Rows in THIS page after the runLabel filter. */
+      returned: items.length,
+      take,
+      skip,
+      items,
+    };
   }
 
   /**

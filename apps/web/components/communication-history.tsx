@@ -57,6 +57,9 @@ const STATE_META: Record<string, { label: string; cls: string }> = {
   SIMULATED: { label: 'Simulated — not delivered', cls: 'bg-slate-100 text-slate-600' },
   MANUAL: { label: 'Logged (manual)', cls: 'bg-slate-100 text-slate-600' },
   CANCELLED: { label: 'Cancelled', cls: 'bg-slate-100 text-slate-500' },
+  // CR-2026-108 — a test-record message: written out in full, deliberately not
+  // sent. Must never read as sent, queued or failed (none of those happened).
+  CAPTURED: { label: 'Test capture — not sent', cls: 'bg-violet-50 text-violet-700' },
 };
 
 /** Older API responses carry only `status`; map it the same way the server does. */

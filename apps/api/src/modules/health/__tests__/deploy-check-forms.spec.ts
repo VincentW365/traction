@@ -75,3 +75,31 @@ describe('deploy-check — PUBLIC_APP_URL', () => {
     expect(envExample).toContain('PUBLIC_APP_URL');
   });
 });
+
+/**
+ * CR-2026-108 §7 — the global notification mode is an independent safety control
+ * and must stay one. Per-record capture handles UAT now, so there is no longer
+ * any reason to run production with messages globally diverted — and every reason
+ * not to: a real customer would simply stop being told their car is ready, with
+ * nothing on any screen looking wrong.
+ */
+describe('deploy-check — global notification mode', () => {
+  it('fails the deployment when production is not in LIVE mode', () => {
+    const block = deployCheck.slice(deployCheck.indexOf("const mode = (process.env.NOTIFICATION_MODE"));
+    const section = block.slice(0, block.indexOf('} // !FORMS_ONLY'));
+    // Production + non-LIVE must reach a failing check(...) call.
+    expect(section).toContain("process.env.NODE_ENV === 'production'");
+    expect(section).toContain("mode !== 'LIVE'");
+    expect(section).toMatch(/check\(\s*'NOTIFICATION_MODE',\s*false/);
+    // And it must not be softened to a warning.
+    expect(section).not.toContain('warnOnly');
+  });
+
+  it('names the consequence rather than just the setting', () => {
+    expect(deployCheck).toContain('every customer message would be diverted');
+  });
+
+  it('defaults to TEST when unset, so an unconfigured production deploy still fails', () => {
+    expect(deployCheck).toContain("process.env.NOTIFICATION_MODE ?? 'TEST'");
+  });
+});
