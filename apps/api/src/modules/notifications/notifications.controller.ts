@@ -98,6 +98,21 @@ export class NotificationsController {
     return this.customerNotifications.getNotification(id);
   }
 
+  /**
+   * CR-2026-108 Stage 1 — UAT results. Messages about TEST records are rendered
+   * and recorded here instead of being transmitted, so a tester reads this
+   * instead of a mailbox and no real customer is contacted during UAT.
+   */
+  @Get('captured')
+  @RequirePermission(PERMISSIONS.CONFIG_VIEW)
+  @ApiOperation({ summary: 'Notifications withheld because they were about a test record (UAT results)' })
+  captured(@Query('runLabel') runLabel?: string, @Query('take') take?: string) {
+    return this.notificationsService.listCapturedNotifications({
+      runLabel,
+      take: take ? parseInt(take, 10) : undefined,
+    });
+  }
+
   @Post('retry/:id')
   @RequirePermission(PERMISSIONS.NOTIFY_SEND)
   @ApiOperation({ summary: 'Retry a failed notification (new auditable attempt)' })

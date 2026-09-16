@@ -162,6 +162,11 @@ enum NotificationDeliveryStatus {
   FAILED
   CANCELLED
   MANUAL
+  /// CR-2026-108 — the message was about a TEST record, so it was rendered and
+  /// recorded in full but deliberately never transmitted. Distinct from FAILED
+  /// (nothing went wrong) and from `simulated` (which means no provider was
+  /// configured). Additive: no existing row changes.
+  CAPTURED
 }
 
 // CR-2026-096 — why a customer notification was sent. Legacy rows (pre-CR) have null.

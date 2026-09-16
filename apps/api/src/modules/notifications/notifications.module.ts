@@ -11,6 +11,7 @@ import { NotificationsService } from './notifications.service';
 import { NotificationsCronService } from './notifications-cron.service';
 import { NotificationsController } from './notifications.controller';
 import { CustomerNotificationsService } from './customer-notifications.service';
+import { TestRecordResolver } from './test-record.resolver';
 import { StubNotificationProvider } from './providers/stub.provider';
 import { TwilioNotificationProvider, TwilioMessageClient } from './providers/twilio.provider';
 import {
@@ -104,9 +105,12 @@ function notificationCapabilitiesFactory(): NotificationCapabilities {
     NotificationsService,
     NotificationsCronService,
     CustomerNotificationsService,
+    // CR-2026-108 Stage 1 — decides, per record, whether a message is about a
+    // test run and must be captured rather than transmitted.
+    TestRecordResolver,
     { provide: NOTIFICATION_PROVIDER, useFactory: notificationProviderFactory },
     { provide: NOTIFICATION_CAPABILITIES, useFactory: notificationCapabilitiesFactory },
   ],
-  exports: [NotificationsService, CustomerNotificationsService],
+  exports: [NotificationsService, CustomerNotificationsService, TestRecordResolver],
 })
 export class NotificationsModule {}

@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { TestRecordResolver } from './test-record.resolver';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import {
   NOTIFICATION_CAPABILITIES,
@@ -23,7 +24,9 @@ export type DeliveryDisplayState =
   | 'TEST_REDIRECTED'
   | 'SIMULATED'
   | 'MANUAL'
-  | 'CANCELLED';
+  | 'CANCELLED'
+  /** CR-2026-108 — about a TEST record: rendered and recorded, deliberately not sent. */
+  | 'CAPTURED';
 
 export function deliveryDisplayState(row: { status: string; simulated?: boolean | null; testRouted?: boolean | null }): DeliveryDisplayState {
   switch (row.status) {
@@ -38,6 +41,9 @@ export function deliveryDisplayState(row: { status: string; simulated?: boolean 
       return 'MANUAL';
     case 'CANCELLED':
       return 'CANCELLED';
+    // CR-2026-108 — never let a withheld test message read as queued or sent.
+    case 'CAPTURED':
+      return 'CAPTURED';
     case 'SENT':
       if (row.simulated) return 'SIMULATED';
       if (row.testRouted) return 'TEST_REDIRECTED';
@@ -105,6 +111,10 @@ export class NotificationsService {
     private provider: NotificationProvider,
     @Inject(NOTIFICATION_CAPABILITIES)
     private caps: NotificationCapabilities,
+    // CR-2026-108 — @Optional so the many existing specs that construct this
+    // service directly keep compiling. Absent resolver = nothing is ever treated
+    // as a test record, i.e. exactly the pre-CR behaviour.
+    @Optional() private testRecords?: TestRecordResolver,
   ) {}
 
   /**
@@ -135,6 +145,49 @@ export class NotificationsService {
   }
 
   async queue(input: QueueNotificationInput): Promise<string> {
+    // CR-2026-108 Stage 1 — decide per RECORD, before anything else. A message
+    // about a test record is rendered and recorded in full but never transmitted,
+    // so UAT of the public booking flow cannot reach a real person. Genuine
+    // customer messages are untouched by this branch.
+    const testRecord = this.testRecords
+      ? await this.testRecords.resolve({
+          entityType: input.entityType,
+          entityId: input.entityId,
+          customerId: input.customerId ?? null,
+          vehicleId: input.vehicleId ?? null,
+        })
+      : { isTest: false as const, via: null, runLabel: null };
+
+    if (testRecord.isTest) {
+      const { subject, body } = this.renderForChannel(input);
+      const captured = await this.prisma.notificationLog.create({
+        data: {
+          entityType: input.entityType,
+          entityId: input.entityId,
+          channel: input.channel as NotificationChannel,
+          templateKey: input.templateKey,
+          // Recorded as the person it WOULD have gone to — both fields, so the UAT
+          // view can show the real destination without any chance of it being read
+          // as "delivered".
+          recipient: input.recipient,
+          intendedRecipient: input.recipient,
+          testRouted: false,
+          simulated: false,
+          status: 'CAPTURED' as NotificationDeliveryStatus,
+          failureReason: `Captured for test run ${testRecord.runLabel ?? 'unknown'} (matched via ${testRecord.via}) — not transmitted`,
+          ...(subject ? { subject } : {}),
+          ...(body ? { body, generatedBody: body } : {}),
+          ...(input.customerId ? { customerId: input.customerId } : {}),
+          ...(input.vehicleId ? { vehicleId: input.vehicleId } : {}),
+        },
+      });
+      this.logger.log(
+        `Notification ${captured.id} CAPTURED (test run ${testRecord.runLabel ?? 'unknown'}, via ${testRecord.via}): ` +
+          `${input.channel} "${input.templateKey}" for ${input.recipient} was not transmitted.`,
+      );
+      return captured.id;
+    }
+
     const routing = this.routeRecipient(input.channel, input.recipient);
 
     const log = await this.prisma.notificationLog.create({
@@ -173,21 +226,32 @@ export class NotificationsService {
     return log.id;
   }
 
+  /**
+   * CR-2026-106 — EVERY email carries a rendered subject + body (docs/121 §C3).
+   * The legacy flows (pickup-ready, reminder sweep, midday follow-up, maintenance
+   * reminders) passed only a template key, which the SMTP provider refuses.
+   *
+   * CR-2026-108 — extracted so a CAPTURED message records exactly what a SENT one
+   * would have contained. If capture rendered differently, UAT would be signing off
+   * wording the customer never receives.
+   */
+  private renderForChannel(input: QueueNotificationInput): { subject?: string; body?: string } {
+    let subject = input.subject;
+    let body = input.body;
+    if (input.channel === 'EMAIL' && !(body ?? '').trim()) {
+      const rendered = renderEmailContent(input.templateKey, input.templateData);
+      subject = subject ?? rendered.subject;
+      body = rendered.body;
+    }
+    return { subject, body };
+  }
+
   private async processNotification(
     logId: string,
     input: QueueNotificationInput,
   ) {
     try {
-      // CR-2026-106 — EVERY email carries a rendered subject + body (docs/121 §C3).
-      // The legacy flows (pickup-ready, reminder sweep, midday follow-up, maintenance
-      // reminders) passed only a template key, which the SMTP provider refuses.
-      let subject = input.subject;
-      let body = input.body;
-      if (input.channel === 'EMAIL' && !(body ?? '').trim()) {
-        const rendered = renderEmailContent(input.templateKey, input.templateData);
-        subject = subject ?? rendered.subject;
-        body = rendered.body;
-      }
+      const { subject, body } = this.renderForChannel(input);
 
       const result = await this.provider.send({
         channel: input.channel,
@@ -713,6 +777,51 @@ export class NotificationsService {
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
+  }
+
+  /**
+   * CR-2026-108 Stage 1 — the UAT results view: every message that was withheld
+   * because it was about a test record, with what the customer WOULD have
+   * received. This is what a tester reads instead of a mailbox.
+   *
+   * Staff-facing and unmasked ON PURPOSE: these are test records by definition,
+   * and a tester has to be able to check the exact wording, recipient and channel.
+   * It is still permission-gated (CONFIG_VIEW) and never reachable publicly.
+   */
+  async listCapturedNotifications(opts: { take?: number; runLabel?: string } = {}) {
+    const take = Math.min(opts.take ?? 100, 500);
+    const rows = await this.prisma.notificationLog.findMany({
+      where: { status: 'CAPTURED' as NotificationDeliveryStatus },
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: {
+        id: true, createdAt: true, entityType: true, entityId: true,
+        channel: true, templateKey: true, recipient: true, intendedRecipient: true,
+        subject: true, body: true, failureReason: true,
+        customer: { select: { id: true, firstName: true, lastName: true, testDataRun: { select: { label: true } } } },
+        vehicle: { select: { id: true, plateNumber: true, testDataRun: { select: { label: true } } } },
+      },
+    });
+
+    const items = rows
+      .map((r) => ({
+        id: r.id,
+        capturedAt: r.createdAt,
+        runLabel: r.customer?.testDataRun?.label ?? r.vehicle?.testDataRun?.label ?? null,
+        about: { entityType: r.entityType, entityId: r.entityId },
+        channel: r.channel,
+        templateKey: r.templateKey,
+        // The address the message was addressed to and did NOT go to.
+        wouldHaveGoneTo: r.intendedRecipient ?? r.recipient,
+        subject: r.subject,
+        body: r.body,
+        note: r.failureReason,
+        customer: r.customer ? { id: r.customer.id, name: `${r.customer.firstName} ${r.customer.lastName}` } : null,
+        vehicle: r.vehicle ? { id: r.vehicle.id, plateNumber: r.vehicle.plateNumber } : null,
+      }))
+      .filter((i) => !opts.runLabel || i.runLabel === opts.runLabel);
+
+    return { total: items.length, items };
   }
 
   /**

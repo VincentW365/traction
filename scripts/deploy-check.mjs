@@ -90,6 +90,26 @@ if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_LOGIN === 'tr
 } else {
   check('ALLOW_DEV_LOGIN', true, process.env.ALLOW_DEV_LOGIN === 'true' ? 'enabled (non-production)' : 'off');
 }
+
+// CR-2026-108 Stage 1 — the GLOBAL notification mode. TEST redirects EVERY
+// customer message to one mailbox: safe on a laptop, silently harmful in
+// production, where a real customer simply stops being told their car is ready
+// and nothing looks broken. UAT no longer needs it (test records are captured
+// individually), so leaving it on in production is now a hard failure rather
+// than something an administrator has to remember to notice.
+{
+  const mode = (process.env.NOTIFICATION_MODE ?? 'TEST').toUpperCase();
+  if (process.env.NODE_ENV === 'production' && mode !== 'LIVE') {
+    check(
+      'NOTIFICATION_MODE',
+      false,
+      `is "${mode}" in production — every customer message would be diverted. Set LIVE; ` +
+        'UAT is covered per-record (test records are captured, see docs/122 §B).',
+    );
+  } else {
+    check('NOTIFICATION_MODE', true, mode === 'LIVE' ? 'LIVE — customers are contacted normally' : `${mode} (non-production)`);
+  }
+}
 } // !FORMS_ONLY
 
 // ---------------------------------------------------------------------------
