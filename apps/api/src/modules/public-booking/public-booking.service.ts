@@ -665,6 +665,8 @@ export class PublicBookingService {
         instructions: booking.arrivalInstructions,
         // CR-2026-106 — the customer must know WHICH car the confirmation is for.
         vehicle: `${[appt.vehicle.make, appt.vehicle.model].filter(Boolean).join(' ') || 'Vehicle'} · plate ${maskPlate(appt.vehicle.plateNumber)}`,
+        customerId: appt.customer.id,
+        vehicleId: appt.vehicle.id,
       });
     } catch (err) {
       this.logger.error(`Booking notification (${kind}) failed for ${appt.id}: ${(err as Error).message}`);

@@ -156,6 +156,8 @@ export class AppointmentsService {
         reference: appt.appointmentNumber ?? '',
         vehicle: `${[appt.vehicle.make, appt.vehicle.model].filter(Boolean).join(' ') || 'Vehicle'} · plate ${maskPlate(appt.vehicle.plateNumber)}`,
         changeGuidance: kind === 'RESCHEDULED' ? 'This change was made by the service centre. If the new time does not suit you, please call us.' : undefined,
+        customerId: (appt as { customerId?: string }).customerId ?? null,
+        vehicleId: (appt as { vehicleId?: string }).vehicleId ?? null,
       });
       await this.auditService.log({
         actorUserId: userId,

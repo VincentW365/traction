@@ -68,6 +68,9 @@ export interface QueueNotificationInput {
   /** CR-2026-105c — pre-rendered content (the email provider needs a body; SMS may override the template). */
   subject?: string;
   body?: string;
+  /** CR-2026-106 — so the customer's Communication History (filtered by customer/vehicle) shows this message. */
+  customerId?: string | null;
+  vehicleId?: string | null;
 }
 
 /** CR-2026-105c — what a booking message needs to say. Customer contact is opt-in gated by the caller. */
@@ -87,6 +90,9 @@ export interface AppointmentMessageInput {
   vehicle?: string;
   /** CR-2026-106 — what to do to change/cancel when there is no manage link to hand. */
   changeGuidance?: string;
+  /** CR-2026-106 — history linkage (the booking messages were invisible on the customer page without it). */
+  customerId?: string | null;
+  vehicleId?: string | null;
 }
 
 @Injectable()
@@ -143,6 +149,8 @@ export class NotificationsService {
         simulated: routing.simulated,
         status: input.scheduledAt ? 'SCHEDULED' : 'PENDING',
         scheduledAt: input.scheduledAt,
+        ...(input.customerId ? { customerId: input.customerId } : {}),
+        ...(input.vehicleId ? { vehicleId: input.vehicleId } : {}),
       },
     });
 
@@ -264,7 +272,7 @@ export class NotificationsService {
     const body = lines.join('\n');
 
     if (input.phone) {
-      await this.queue({ entityType: 'Appointment', entityId: input.appointmentId, channel: 'SMS', templateKey, recipient: input.phone, templateData });
+      await this.queue({ entityType: 'Appointment', entityId: input.appointmentId, channel: 'SMS', templateKey, recipient: input.phone, templateData, customerId: input.customerId, vehicleId: input.vehicleId });
     }
     if (input.email) {
       await this.queue({
@@ -276,6 +284,8 @@ export class NotificationsService {
         templateData,
         subject,
         body,
+        customerId: input.customerId,
+        vehicleId: input.vehicleId,
       });
     }
   }
