@@ -228,6 +228,31 @@ export class CheckInService {
           },
         });
 
+        // CR-2026-106 — what the customer told us when booking online (reason /
+        // concern / description / reported mileage) becomes the visit's
+        // CUSTOMER_CONCERN note, so the Job Sheet is prepared from it instead of
+        // asking the customer again. Staff bookings carry no such note.
+        const bookingNote = (appointment as { notes?: string | null }).notes ?? null;
+        const reportedMileage = (appointment as { customerReportedMileage?: number | null }).customerReportedMileage ?? null;
+        if (appointment.sourceChannel === 'CUSTOMER_SELF_SERVICE' && (bookingNote?.startsWith('[Customer booking]') || reportedMileage != null)) {
+          const text = [
+            bookingNote ? bookingNote.replace(/^\[Customer booking\]\s*/, '') : null,
+            reportedMileage != null && !(bookingNote ?? '').includes('Reported mileage') ? `Reported mileage: ${reportedMileage.toLocaleString('en-US')}` : null,
+          ]
+            .filter(Boolean)
+            .join(' | ');
+          await tx.visitNote.create({
+            data: {
+              serviceVisitId: serviceVisit.id,
+              kind: 'CUSTOMER_CONCERN',
+              text: `From the online booking: ${text}`,
+              authorUserId: userId,
+              authorRole: 'CUSTOMER_BOOKING',
+              requiresAttention: false,
+            },
+          });
+        }
+
                 // 5. Allocate the ticket identifiers (CR-2026-089).
         //
         // checkinSequence is still generated because the FIFO scheduler orders the

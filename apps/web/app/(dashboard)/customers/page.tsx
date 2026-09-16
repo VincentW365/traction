@@ -172,6 +172,7 @@ export default function CustomersPage() {
         breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Customers' }]}
         actions={
           <div className="flex items-center gap-2">
+            {isDirectory && <Link href="/customers/identity-review" className="btn-secondary">Identity review</Link>}
             <ExportMenu build={buildExport} disabled={exportItems.length === 0} />
             <button onClick={() => setShowCreateForm(!showCreateForm)} className={showCreateForm ? 'btn-secondary' : 'btn-primary'}>
               {showCreateForm ? 'Cancel' : '+ New Customer'}

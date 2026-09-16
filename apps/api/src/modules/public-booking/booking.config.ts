@@ -22,6 +22,11 @@ export const BOOKING_RULE_KEYS = [
   'staff_capacity_warning_enabled',
   'appointment_auto_missed_enabled',
   'appointment_duration_source',
+  // CR-2026-106 — latest start a CUSTOMER may book (HH:mm site-local; empty = none),
+  // whether staff are held to it too, and the WhatsApp/SMS text staff send with the link.
+  'customer_booking_latest_start',
+  'staff_latest_start_enforced',
+  'booking_share_message_template',
 ] as const;
 
 export interface BookingRules {
@@ -41,6 +46,12 @@ export interface BookingRules {
   staffCapacityWarning: boolean;
   autoMissedEnabled: boolean;
   durationSource: 'DEFAULT' | 'CATALOGUE';
+  /** CR-2026-106 — "15:00" = customers are never offered/allowed a start after 3:00 PM; null = no cutoff. */
+  customerLatestStart: string | null;
+  /** CR-2026-106 — when true staff bookings are held to the same latest start (explicit, audited override). */
+  staffLatestStartEnforced: boolean;
+  /** CR-2026-106 — message staff send with the booking link; {bookingUrl} and {siteName} are replaced. */
+  shareMessageTemplate: string;
 }
 
 export const BOOKING_DEFAULTS: BookingRules = {
@@ -61,7 +72,12 @@ export const BOOKING_DEFAULTS: BookingRules = {
   staffCapacityWarning: true,
   autoMissedEnabled: false,
   durationSource: 'DEFAULT',
+  customerLatestStart: '15:00',
+  staffLatestStartEnforced: false,
+  shareMessageTemplate: 'Hi! You can book your next service at {siteName} online here: {bookingUrl} — pick your vehicle, the service you need, and a time that suits you.',
 };
+
+const HHMM = /^([01]?\d|2[0-3]):[0-5]\d$/;
 
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -99,6 +115,12 @@ export function bookingRulesFromRows(rows: Array<{ ruleKey: string; valueJson: u
       case 'staff_capacity_warning_enabled': r.staffCapacityWarning = bool(v, r.staffCapacityWarning); break;
       case 'appointment_auto_missed_enabled': r.autoMissedEnabled = bool(v, r.autoMissedEnabled); break;
       case 'appointment_duration_source': if (v === 'DEFAULT' || v === 'CATALOGUE') r.durationSource = v; break;
+      case 'customer_booking_latest_start':
+        if (v === null || v === '' || v === false) r.customerLatestStart = null;
+        else if (typeof v === 'string' && HHMM.test(v.trim())) r.customerLatestStart = v.trim().padStart(5, '0');
+        break;
+      case 'staff_latest_start_enforced': r.staffLatestStartEnforced = bool(v, r.staffLatestStartEnforced); break;
+      case 'booking_share_message_template': if (typeof v === 'string' && v.trim()) r.shareMessageTemplate = v; break;
       default: break;
     }
   }

@@ -60,6 +60,39 @@ export class AppointmentsController {
     return this.appointmentsService.findBySite(siteId, { date, status, customerId });
   }
 
+  // CR-2026-106 — declared BEFORE `:id` so these paths are not captured as an id.
+  @Get('availability')
+  @RequirePermission(PERMISSIONS.APPOINTMENT_CREATE)
+  @ApiOperation({ summary: 'Staff availability — the same engine/rules as the public booking page, STAFF audience' })
+  @ApiQuery({ name: 'siteId', required: true })
+  @ApiQuery({ name: 'serviceCodes', required: false, description: 'Comma-separated service codes (duration source)' })
+  @ApiQuery({ name: 'from', required: false, description: 'First day, YYYY-MM-DD (site local)' })
+  @ApiQuery({ name: 'days', required: false, description: 'Days to compute (max 31)' })
+  @ApiQuery({ name: 'excludeAppointmentId', required: false, description: 'When rescheduling, ignore this appointment' })
+  async availability(
+    @Query('siteId') siteId: string,
+    @Query('serviceCodes') serviceCodes?: string,
+    @Query('from') from?: string,
+    @Query('days') days?: string,
+    @Query('excludeAppointmentId') excludeAppointmentId?: string,
+  ) {
+    if (!siteId) throw new BadRequestException('siteId is required');
+    if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new BadRequestException('from must be YYYY-MM-DD');
+    const d = days ? Number(days) : undefined;
+    if (d !== undefined && (!Number.isInteger(d) || d < 1 || d > 31)) throw new BadRequestException('days must be 1–31');
+    return this.appointmentsService.staffAvailability(siteId, (serviceCodes ?? '').split(',').map((c) => c.trim()).filter(Boolean), from, d, excludeAppointmentId || undefined);
+  }
+
+  @Get('booking-link')
+  @RequirePermission(PERMISSIONS.APPOINTMENT_CREATE)
+  @ApiOperation({ summary: 'The public booking link and the share message (WhatsApp/SMS hand-off)' })
+  @ApiQuery({ name: 'siteId', required: true })
+  @ApiQuery({ name: 'phone', required: false, description: 'Customer mobile to address the WhatsApp/SMS deep link to' })
+  async bookingLink(@Query('siteId') siteId: string, @Query('phone') phone?: string) {
+    if (!siteId) throw new BadRequestException('siteId is required');
+    return this.appointmentsService.bookingLink(siteId, phone || undefined);
+  }
+
   @Get(':id')
   @RequirePermission(PERMISSIONS.APPOINTMENT_VIEW)
   @ApiOperation({ summary: 'Get appointment by ID' })

@@ -93,6 +93,11 @@ export default function ManageBookingPage() {
         setSlot(null);
         await qc.invalidateQueries({ queryKey: ['public-availability'] });
         setError('Sorry — that time was just taken. Here are the current openings.');
+      } else if (e instanceof PublicApiError && e.code === 'AFTER_LATEST_START') {
+        // CR-2026-106 — the server enforces the latest start; refresh what is offered.
+        setSlot(null);
+        await qc.invalidateQueries({ queryKey: ['public-availability'] });
+        setError(e.message);
       } else {
         setError(e instanceof PublicApiError ? e.message : 'We could not move the appointment. Please try again.');
       }

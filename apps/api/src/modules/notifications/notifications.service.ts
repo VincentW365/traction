@@ -83,6 +83,10 @@ export interface AppointmentMessageInput {
   reference: string;
   manageUrl?: string;
   instructions?: string;
+  /** CR-2026-106 — "Toyota Corolla · plate ending 34" so the customer knows WHICH car. */
+  vehicle?: string;
+  /** CR-2026-106 — what to do to change/cancel when there is no manage link to hand. */
+  changeGuidance?: string;
 }
 
 @Injectable()
@@ -248,10 +252,12 @@ export class NotificationsService {
       '',
       `Reference: ${input.reference}`,
       `When: ${when}`,
+      ...(input.vehicle ? [`Vehicle: ${input.vehicle}`] : []),
       ...(kind !== 'CANCELLED' && input.durationMinutes > 0 ? [`Planned time: about ${input.durationMinutes} minutes`] : []),
       ...(input.services.length ? [`Service: ${input.services.join(', ')}`] : []),
       ...(kind !== 'CANCELLED' && input.instructions ? ['', input.instructions] : []),
       ...(input.manageUrl ? ['', `View, move or cancel: ${input.manageUrl}`] : []),
+      ...(!input.manageUrl && kind !== 'CANCELLED' ? ['', input.changeGuidance ?? 'To change or cancel, use the link in your original confirmation message or call the service centre.'] : []),
       '',
       `${input.siteName}`,
     ];

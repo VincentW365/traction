@@ -1,14 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Patch,
-  Param,
-  Body,
-  Query,
-  UseGuards,
-  ParseUUIDPipe,
-} from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards, ParseUUIDPipe, BadRequestException } from '@nestjs/common';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -53,6 +43,23 @@ export class CustomersController {
   @ApiOkResponse({ description: 'Paginated directory (no phone in list shape)' })
   async directory(@Query() dto: CustomerDirectoryDto) {
     return this.customersService.directory(dto);
+  }
+
+  // CR-2026-106 — pending identity review (declared BEFORE `:id`).
+  @Get('identity-review')
+  @RequirePermission(PERMISSIONS.CUSTOMER_UPDATE)
+  @ApiOperation({ summary: 'Self-service customers that may duplicate an existing record — a person decides, nothing auto-merges' })
+  async identityReview() {
+    return this.customersService.identityReview();
+  }
+
+  @Post(':id/identity-review')
+  @RequirePermission(PERMISSIONS.CUSTOMER_UPDATE)
+  @ApiOperation({ summary: 'Resolve an identity review: DISTINCT or MERGE_INTO_EXISTING (audited)' })
+  async resolveIdentityReview(@Param('id') id: string, @Body() body: { decision?: string }, @CurrentUser() user: JwtPayload) {
+    const decision = body?.decision;
+    if (decision !== 'DISTINCT' && decision !== 'MERGE_INTO_EXISTING') throw new BadRequestException('decision must be DISTINCT or MERGE_INTO_EXISTING');
+    return this.customersService.resolveIdentityReview(id, decision, user.sub);
   }
 
   @Post()

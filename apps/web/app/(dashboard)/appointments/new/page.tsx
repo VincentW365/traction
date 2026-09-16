@@ -1,33 +1,44 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+/**
+ * CR-2026-106 — the staff appointment wizard (docs/121 §C5).
+ *
+ * Customer → Vehicle → Service request → Date → Available time → Review → Confirm.
+ * Every step is reachable backwards (click a step or "Change"); changing the
+ * customer resets the vehicle and the chosen time; changing the vehicle keeps the
+ * customer. The Date/Time steps show the SAME slots the customer booking page
+ * shows, from the same engine (GET /appointments/availability, STAFF audience),
+ * so an advisor and a customer can never disagree about what is free. Capacity
+ * and the latest-start rule are enforced by the server; the browser only displays
+ * them and lets the advisor make an explicit, recorded exception.
+ */
+
+import { useEffect, useMemo, useReducer, useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../../../lib/api-client';
 import { useSiteId } from '../../../../hooks/use-site';
 import { PageHeader } from '../../../../components/ui/page-header';
+import { SlotPicker, type Availability } from '../../../book/slot-picker';
+import { fmtDayLabel, fmtWhen } from '../../../../lib/public-api';
+import {
+  INITIAL_WIZARD_STATE,
+  WIZARD_STEPS,
+  WIZARD_STEP_LABELS,
+  canEnter,
+  wizardReducer,
+  type WizardCustomer,
+  type WizardStep,
+  type WizardVehicle,
+} from '../../../../lib/appointment-wizard';
 
-interface CustomerResult {
+interface CustomerDetail {
   id: string;
   customerNumber: string;
   firstName: string;
   lastName: string;
-  phone: string;
-}
-
-interface Vehicle {
-  id: string;
-  plateNumber: string;
-  make: string | null;
-  model: string | null;
-  modelYear: number | null;
-}
-
-interface CustomerDetail {
-  id: string;
-  firstName: string;
-  lastName: string;
-  phone: string;
-  vehicles: Vehicle[];
+  phones?: string[];
+  phone?: string;
+  vehicles: WizardVehicle[];
 }
 
 interface ServiceType {
@@ -39,170 +50,136 @@ interface ServiceType {
   partsPrepositionRequired?: boolean;
 }
 
-type Step = 'customer' | 'vehicle' | 'services' | 'time' | 'success';
+function todayKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
-const STEP_META: Record<Exclude<Step, 'success'>, { number: number; label: string }> = {
-  customer: { number: 1, label: 'Select Customer' },
-  vehicle: { number: 2, label: 'Select Vehicle' },
-  services: { number: 3, label: 'Choose Services' },
-  time: { number: 4, label: 'Pick Date & Time' },
-};
+function addDays(key: string, n: number): string {
+  const [y, m, d] = key.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
 
-const STEPS: Array<Exclude<Step, 'success'>> = ['customer', 'vehicle', 'services', 'time'];
-
-function StepIndicator({ currentStep }: { currentStep: Step }) {
-  if (currentStep === 'success') return null;
-  const currentMeta = STEP_META[currentStep];
-
+function StepIndicator({ current, state, onGo }: { current: WizardStep; state: Parameters<typeof canEnter>[0]; onGo: (s: (typeof WIZARD_STEPS)[number]) => void }) {
+  if (current === 'success') return null;
+  const idx = WIZARD_STEPS.indexOf(current as (typeof WIZARD_STEPS)[number]);
   return (
-    <div className="flex items-center gap-2 mb-6">
-      {STEPS.map((s, idx) => {
-        const meta = STEP_META[s];
-        const isCurrent = s === currentStep;
-        const isComplete = meta.number < currentMeta.number;
-
+    <ol className="mb-6 flex flex-wrap items-center gap-2" aria-label="Booking steps">
+      {WIZARD_STEPS.map((s, i) => {
+        const isCurrent = s === current;
+        const isComplete = i < idx;
+        const reachable = i <= idx || canEnter(state, s);
         return (
-          <div key={s} className="flex items-center gap-2">
-            {idx > 0 && (
-              <div className={`w-8 h-px ${isComplete ? 'bg-blue-400' : 'bg-slate-200'}`} />
-            )}
-            <div className="flex items-center gap-2">
-              <div
-                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
-                  isCurrent
-                    ? 'bg-blue-600 text-white'
-                    : isComplete
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'bg-slate-100 text-slate-400'
-                }`}
-              >
-                {isComplete ? (
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  meta.number
-                )}
-              </div>
-              <span
-                className={`text-xs font-medium hidden sm:block ${
-                  isCurrent ? 'text-slate-900' : isComplete ? 'text-blue-600' : 'text-slate-400'
-                }`}
-              >
-                {meta.label}
+          <li key={s} className="flex items-center gap-2">
+            {i > 0 && <div className={`h-px w-6 ${isComplete ? 'bg-blue-400' : 'bg-slate-200'}`} />}
+            <button
+              type="button"
+              onClick={() => reachable && onGo(s)}
+              disabled={!reachable}
+              aria-current={isCurrent ? 'step' : undefined}
+              className={`flex min-h-9 items-center gap-2 rounded-full px-2 py-1 text-xs font-medium transition-colors ${
+                isCurrent ? 'bg-blue-600 text-white' : isComplete ? 'bg-blue-50 text-blue-700 hover:bg-blue-100' : reachable ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-slate-50 text-slate-400'
+              }`}
+            >
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${isCurrent ? 'bg-white text-blue-700' : isComplete ? 'bg-blue-600 text-white' : 'bg-white text-slate-500'}`}>
+                {isComplete ? '✓' : i + 1}
               </span>
-            </div>
-          </div>
+              <span className="hidden sm:inline">{WIZARD_STEP_LABELS[s]}</span>
+            </button>
+          </li>
         );
       })}
+    </ol>
+  );
+}
+
+function Summary({ label, value, onChange }: { label: string; value: string; onChange?: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+      <div className="min-w-0">
+        <p className="text-[11px] uppercase tracking-wide text-slate-400">{label}</p>
+        <p className="truncate text-sm font-medium text-slate-900">{value}</p>
+      </div>
+      {onChange && (
+        <button type="button" onClick={onChange} className="btn-secondary min-h-9 px-3 py-1 text-xs">
+          Change
+        </button>
+      )}
     </div>
   );
 }
 
 export default function NewAppointmentPage() {
   const siteId = useSiteId();
-
-  // Step tracking
-  const [step, setStep] = useState<Step>('customer');
-
-  // Search
+  const queryClient = useQueryClient();
+  const [state, dispatch] = useReducer(wizardReducer, INITIAL_WIZARD_STATE);
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedTerm, setDebouncedTerm] = useState('');
-
-  // Selections
-  const [selectedCustomer, setSelectedCustomer] = useState<CustomerResult | null>(null);
-  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
-  const [selectedServiceCodes, setSelectedServiceCodes] = useState<string[]>([]);
   const [serviceSearch, setServiceSearch] = useState('');
-  const [scheduledDate, setScheduledDate] = useState('');
-  const [scheduledTime, setScheduledTime] = useState('09:00');
-  const [notes, setNotes] = useState('');
+  const [fromKey, setFromKey] = useState<string>(todayKey());
+  const [capacityWarning, setCapacityWarning] = useState<{ message: string; capacity?: number; booked?: number } | null>(null);
+  const [latestStartWarning, setLatestStartWarning] = useState<string | null>(null);
+  const [preferredVehicleId, setPreferredVehicleId] = useState<string | null>(null);
 
-  // Success state
-  const [createdId, setCreatedId] = useState<string | null>(null);
-  // CR-2026-026 — when launched from a hold, convert it after booking
-  const [holdId, setHoldId] = useState<string | null>(null);
-
-  // Debounce search
-  useEffect(() => {
-    if (searchTerm.length < 2) { setDebouncedTerm(''); return; }
-    const timer = setTimeout(() => setDebouncedTerm(searchTerm), 300);
-    return () => clearTimeout(timer);
-  }, [searchTerm]);
-
-  // Default date = tomorrow, unless the schedule deep-linked a specific slot
-  // (/appointments/new?date=YYYY-MM-DD&time=HH:MM from an empty-block click).
-  useEffect(() => {
-    const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-    const qDate = params?.get('date');
-    const qTime = params?.get('time');
-    if (qDate) {
-      setScheduledDate(qDate);
-    } else {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      setScheduledDate(tomorrow.toISOString().split('T')[0]);
-    }
-    if (qTime) setScheduledTime(qTime);
-    const qHold = params?.get('holdId');
-    if (qHold) setHoldId(qHold);
-  }, []);
-
-  // Pre-select the customer when arriving from a customer page
-  // (/appointments/new?customerId=…) so we don't ask to pick a customer again.
-  // The by-id detail load below also works for sandbox customers (exempt from
-  // the operational-scope search filter).
+  // Deep links: ?customerId=&vehicleId=&date=&holdId= (from customer/vehicle pages and the schedule).
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const cid = new URLSearchParams(window.location.search).get('customerId');
-    if (cid) {
-      setSelectedCustomer((prev) => prev ?? { id: cid, customerNumber: '', firstName: '', lastName: '', phone: '' });
-    }
+    const p = new URLSearchParams(window.location.search);
+    const dateKey = p.get('date');
+    setPreferredVehicleId(p.get('vehicleId'));
+    if (dateKey) setFromKey(dateKey);
+    dispatch({ type: 'PREFILL', customerId: p.get('customerId'), vehicleId: p.get('vehicleId'), dateKey, holdId: p.get('holdId') });
   }, []);
 
-  // Queries
+  useEffect(() => {
+    if (searchTerm.trim().length < 2) {
+      setDebouncedTerm('');
+      return;
+    }
+    const t = setTimeout(() => setDebouncedTerm(searchTerm.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
   const customersQuery = useQuery({
     queryKey: ['customer-search', debouncedTerm],
-    queryFn: () => api.get<CustomerResult[]>(`/customers?q=${encodeURIComponent(debouncedTerm)}`),
+    queryFn: () => api.get<WizardCustomer[]>(`/customers?q=${encodeURIComponent(debouncedTerm)}`),
     enabled: debouncedTerm.length >= 2,
   });
 
   const customerDetailQuery = useQuery({
-    queryKey: ['customer-detail', selectedCustomer?.id],
-    queryFn: () => api.get<CustomerDetail>(`/customers/${selectedCustomer!.id}`),
-    enabled: !!selectedCustomer,
+    queryKey: ['customer-detail', state.customer?.id],
+    queryFn: () => api.get<CustomerDetail>(`/customers/${state.customer!.id}`),
+    enabled: !!state.customer,
   });
+
+  // The ONLY place detail data enters the wizard — the reducer decides what to do with it.
+  useEffect(() => {
+    const d = customerDetailQuery.data;
+    if (!d) return;
+    dispatch({
+      type: 'CUSTOMER_DETAIL_LOADED',
+      customer: { id: d.id, customerNumber: d.customerNumber, firstName: d.firstName, lastName: d.lastName, phone: d.phones?.[0] ?? d.phone ?? '' },
+      vehicles: d.vehicles ?? [],
+      preferredVehicleId,
+    });
+  }, [customerDetailQuery.data, preferredVehicleId]);
 
   const serviceTypesQuery = useQuery({
     queryKey: ['service-types'],
     queryFn: () => api.get<ServiceType[]>('/service-types'),
   });
 
-  // Auto-advance when customer detail loads
-  useEffect(() => {
-    if (customerDetailQuery.data && step === 'customer') {
-      const vehicles = customerDetailQuery.data.vehicles;
-      if (vehicles.length === 1) {
-        setSelectedVehicle(vehicles[0]);
-        setStep('services');
-      } else if (vehicles.length > 1) {
-        setStep('vehicle');
-      }
-    }
-  }, [customerDetailQuery.data, step]);
+  const availabilityQuery = useQuery<Availability>({
+    queryKey: ['staff-availability', siteId, state.serviceCodes.join(','), fromKey],
+    queryFn: () =>
+      api.get<Availability>(
+        `/appointments/availability?siteId=${encodeURIComponent(siteId)}&serviceCodes=${encodeURIComponent(state.serviceCodes.join(','))}&from=${fromKey}&days=14`,
+      ),
+    enabled: !!siteId && (state.step === 'date' || state.step === 'time' || state.step === 'review') && state.serviceCodes.length > 0,
+    staleTime: 15_000,
+  });
 
-  // Backfill a pre-selected customer's name once detail loads (so step headers show it).
-  useEffect(() => {
-    const d = customerDetailQuery.data;
-    if (!d) return;
-    setSelectedCustomer((prev) =>
-      prev && (!prev.firstName || !prev.lastName)
-        ? { ...prev, firstName: d.firstName, lastName: d.lastName, phone: d.phone }
-        : prev,
-    );
-  }, [customerDetailQuery.data]);
-
-  // Create mutation
   const createMutation = useMutation({
     mutationFn: (payload: {
       siteId: string;
@@ -212,69 +189,71 @@ export default function NewAppointmentPage() {
       serviceTypes: Array<{ serviceTypeCode: string }>;
       notes?: string;
       acknowledgeCapacity?: boolean;
+      overrideLatestStart?: boolean;
     }) => api.post<{ id: string }>('/appointments', payload),
-    // CR-2026-105c — warn-not-block: every service position is booked for this
-    // time. The advisor may continue knowingly; the override is audited server-side.
-    onError: (err, payload) => {
-      if (err instanceof ApiError && err.status === 409 && (err.body as { code?: string } | undefined)?.code === 'CAPACITY_FULL' && !payload.acknowledgeCapacity) {
-        const msg = (err.body as { message?: string }).message ?? 'All service positions are booked for this time.';
-        if (window.confirm(`${msg}\n\nBook anyway (this will be recorded)?`)) {
-          createMutation.mutate({ ...payload, acknowledgeCapacity: true });
-        }
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 409 && (err.body as { code?: string } | undefined)?.code === 'CAPACITY_FULL') {
+        const b = err.body as { message?: string; capacity?: number; booked?: number };
+        // CR-2026-105c warn-not-block: the advisor may continue knowingly; the override
+        // is audited server-side. Shown inline (no window.confirm) so the reason is read.
+        setCapacityWarning({ message: b.message ?? 'All service positions are booked for this time.', capacity: b.capacity, booked: b.booked });
+        return;
+      }
+      if (err instanceof ApiError && err.status === 400 && (err.body as { code?: string } | undefined)?.code === 'AFTER_LATEST_START') {
+        setLatestStartWarning((err.body as { message?: string }).message ?? 'That time is after the latest allowed start.');
+        return;
       }
     },
     onSuccess: async (data) => {
-      // If this booking came from a hold, convert it (non-fatal on failure — the
-      // appointment is booked regardless; the hold can be released manually).
-      if (holdId) {
-        try { await api.post(`/schedule-holds/${holdId}/convert`, { appointmentId: data.id }); } catch { /* ignore */ }
+      if (state.holdId) {
+        try {
+          await api.post(`/schedule-holds/${state.holdId}/convert`, { appointmentId: data.id });
+        } catch {
+          /* the appointment is booked regardless; the hold can be released manually */
+        }
       }
-      setCreatedId(data.id);
-      setStep('success');
+      queryClient.invalidateQueries({ queryKey: ['staff-availability'] });
+      queryClient.invalidateQueries({ queryKey: ['public-availability'] });
+      dispatch({ type: 'CREATED', id: data.id });
     },
   });
 
-  // Local "today" (YYYY-MM-DD) for the date picker, and a past-time guard so we
-  // never submit a slot earlier than now. Any later time today is allowed
-  // (CR-2026-041 — same-day booking permitted within business hours).
-  const todayStr = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
-  const selectedStartMs = scheduledDate && scheduledTime ? new Date(`${scheduledDate}T${scheduledTime}:00`).getTime() : null;
-  const isPastSelected = selectedStartMs !== null && selectedStartMs <= Date.now();
+  const selectedServices = useMemo(
+    () => (serviceTypesQuery.data ?? []).filter((st) => state.serviceCodes.includes(st.code)),
+    [serviceTypesQuery.data, state.serviceCodes],
+  );
+  const partsServices = selectedServices.filter((s) => s.partsPrepositionRequired);
+  const filteredServices = (serviceTypesQuery.data ?? []).filter((st) => {
+    const q = serviceSearch.trim().toLowerCase();
+    return !q || st.name.toLowerCase().includes(q) || (st.family ?? '').toLowerCase().includes(q) || st.code.toLowerCase().includes(q);
+  });
 
-  function handleSubmit() {
-    if (!selectedCustomer || !selectedVehicle || selectedServiceCodes.length === 0 || !scheduledDate || isPastSelected) return;
-    const scheduledStartAt = new Date(`${scheduledDate}T${scheduledTime}:00`).toISOString();
+  const tz = availabilityQuery.data?.timezone;
+  const customerName = state.customer ? `${state.customer.firstName} ${state.customer.lastName}`.trim() || 'Customer' : '';
+  const vehicleLabel = state.vehicle ? `${state.vehicle.plateNumber}${[state.vehicle.modelYear, state.vehicle.make, state.vehicle.model].filter(Boolean).length ? ` · ${[state.vehicle.modelYear, state.vehicle.make, state.vehicle.model].filter(Boolean).join(' ')}` : ''}` : '';
+
+  function submit(extra: { acknowledgeCapacity?: boolean; overrideLatestStart?: boolean } = {}) {
+    if (!state.customer || !state.vehicle || !state.slot || state.serviceCodes.length === 0) return;
     createMutation.mutate({
-      siteId: siteId,
-      customerId: selectedCustomer.id,
-      vehicleId: selectedVehicle.id,
-      scheduledStartAt,
-      serviceTypes: selectedServiceCodes.map((code) => ({ serviceTypeCode: code })),
-      notes: notes || undefined,
+      siteId,
+      customerId: state.customer.id,
+      vehicleId: state.vehicle.id,
+      scheduledStartAt: state.slot.startAt,
+      serviceTypes: state.serviceCodes.map((code) => ({ serviceTypeCode: code })),
+      notes: state.notes.trim() || undefined,
+      ...(extra.acknowledgeCapacity || state.acknowledgeCapacity ? { acknowledgeCapacity: true } : {}),
+      ...(extra.overrideLatestStart || state.overrideLatestStart ? { overrideLatestStart: true } : {}),
     });
   }
 
-  const totalDuration = serviceTypesQuery.data
-    ?.filter((st) => selectedServiceCodes.includes(st.code))
-    .reduce((sum, st) => sum + st.baseDurationMinutes, 0) ?? 0;
+  const go = (s: (typeof WIZARD_STEPS)[number]) => {
+    setCapacityWarning(null);
+    setLatestStartWarning(null);
+    dispatch({ type: 'GO_TO', step: s });
+  };
 
-  // CR-2026-063 — parts awareness: which selected services may need parts prepositioned.
-  const partsServices = (serviceTypesQuery.data ?? []).filter(
-    (st) => selectedServiceCodes.includes(st.code) && st.partsPrepositionRequired,
-  );
-
-  // Searchable services list — match name, family, or code (selections persist
-  // even when filtered out of view).
-  const serviceQuery = serviceSearch.trim().toLowerCase();
-  const filteredServices = (serviceTypesQuery.data ?? []).filter((st) =>
-    !serviceQuery ||
-    st.name.toLowerCase().includes(serviceQuery) ||
-    (st.family ?? '').toLowerCase().includes(serviceQuery) ||
-    st.code.toLowerCase().includes(serviceQuery),
-  );
-
-  // --- Success Screen ---
-  if (step === 'success') {
+  // --- Success ---
+  if (state.step === 'success') {
     return (
       <div className="page-container max-w-lg mx-auto mt-8">
         <div className="card">
@@ -286,15 +265,14 @@ export default function NewAppointmentPage() {
             </div>
             <h2 className="text-xl font-bold text-slate-900">Appointment Created</h2>
             <p className="text-sm text-slate-500 mt-2">
-              {scheduledDate} at {scheduledTime} for {selectedCustomer?.firstName} {selectedCustomer?.lastName}
+              {state.slot ? fmtWhen(state.slot.startAt, tz) : ''} for {customerName}
+              {state.vehicle ? ` · ${state.vehicle.plateNumber}` : ''}
             </p>
             <div className="mt-6 flex gap-3 justify-center">
-              <a href="/appointments" className="btn-secondary">
-                View Appointments
-              </a>
-              <a href="/appointments/new" className="btn-primary">
+              <a href="/appointments" className="btn-secondary">View Appointments</a>
+              <button type="button" onClick={() => { dispatch({ type: 'RESET' }); setSearchTerm(''); setFromKey(todayKey()); }} className="btn-primary">
                 Schedule Another
-              </a>
+              </button>
             </div>
           </div>
         </div>
@@ -302,259 +280,304 @@ export default function NewAppointmentPage() {
     );
   }
 
-  // --- Main Form ---
+  const days = availabilityQuery.data?.days ?? [];
+  const selectedDay = days.find((d) => d.date === state.dateKey) ?? null;
+
   return (
     <div className="page-container max-w-2xl">
-      <PageHeader
-        title="New Appointment"
-        breadcrumbs={[
-          { label: 'Appointments', href: '/appointments' },
-          { label: 'New' },
-        ]}
-      />
+      <PageHeader title="New Appointment" breadcrumbs={[{ label: 'Appointments', href: '/appointments' }, { label: 'New' }]} />
 
-      <StepIndicator currentStep={step} />
+      <StepIndicator current={state.step} state={state} onGo={go} />
 
-      {/* Step 1: Customer Search */}
-      {step === 'customer' && (
+      {/* Running summary with Change affordances (never plain text) */}
+      {(state.customer || state.vehicle || state.serviceCodes.length > 0) && state.step !== 'customer' && (
+        <div className="mb-4 grid gap-2 sm:grid-cols-2" data-testid="wizard-summary">
+          {state.customer && <Summary label="Customer" value={customerName || state.customer.customerNumber || 'Loading…'} onChange={() => go('customer')} />}
+          {state.vehicle && state.step !== 'vehicle' && <Summary label="Vehicle" value={vehicleLabel} onChange={() => go('vehicle')} />}
+          {state.serviceCodes.length > 0 && state.step !== 'services' && (
+            <Summary label="Service request" value={selectedServices.map((s) => s.name).join(', ') || `${state.serviceCodes.length} selected`} onChange={() => go('services')} />
+          )}
+          {state.dateKey && (state.step === 'time' || state.step === 'review') && <Summary label="Date" value={fmtDayLabel(state.dateKey)} onChange={() => go('date')} />}
+          {state.slot && state.step === 'review' && <Summary label="Time" value={fmtWhen(state.slot.startAt, tz)} onChange={() => go('time')} />}
+        </div>
+      )}
+
+      {/* 1. Customer */}
+      {state.step === 'customer' && (
         <div className="card">
-          <div className="card-header">
-            <h2 className="text-sm font-semibold text-slate-900">Step 1: Select Customer</h2>
-          </div>
+          <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Step 1: Customer</h2></div>
           <div className="card-body space-y-4">
+            {state.customer && (
+              <Summary label="Selected customer" value={customerName || state.customer.customerNumber || 'Loading…'} onChange={() => dispatch({ type: 'CLEAR_CUSTOMER' })} />
+            )}
             <div>
               <label className="input-label">Search</label>
-              <div className="relative">
-                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                <input
-                  type="text"
-                  placeholder="Search by phone, name, or plate..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="input-field pl-9"
-                />
-              </div>
+              <input
+                type="text"
+                placeholder="Phone, licence plate, or first and last name…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="input-field"
+                autoFocus
+              />
             </div>
-
             {customersQuery.data && customersQuery.data.length > 0 && (
               <div className="border border-slate-200 rounded-md overflow-hidden">
                 {customersQuery.data.map((c, idx) => (
                   <button
                     key={c.id}
-                    onClick={() => { setSelectedCustomer(c); }}
-                    className={`w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors ${
-                      idx > 0 ? 'border-t border-slate-100' : ''
-                    }`}
+                    type="button"
+                    onClick={() => dispatch({ type: 'SELECT_CUSTOMER', customer: c })}
+                    className={`w-full min-h-11 text-left px-4 py-3 hover:bg-blue-50 transition-colors ${idx > 0 ? 'border-t border-slate-100' : ''} ${state.customer?.id === c.id ? 'bg-blue-50' : ''}`}
                   >
                     <p className="text-sm font-medium text-slate-900">{c.firstName} {c.lastName}</p>
-                    <p className="text-xs text-slate-500">{c.phone} &middot; {c.customerNumber}</p>
+                    <p className="text-xs text-slate-500">{c.customerNumber}</p>
                   </button>
                 ))}
               </div>
             )}
-
             {debouncedTerm.length >= 2 && customersQuery.data?.length === 0 && (
-              <p className="text-sm text-slate-500 text-center py-4">No customers found</p>
+              <p className="text-sm text-slate-500 text-center py-4">No customers found — try a phone number, a licence plate, or first and last name.</p>
             )}
-
-            {/* Pre-selected customer with no vehicle yet — booking needs a vehicle. */}
-            {selectedCustomer && customerDetailQuery.data && customerDetailQuery.data.vehicles.length === 0 && (
-              <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                {selectedCustomer.firstName || 'This customer'} {selectedCustomer.lastName} has no vehicles on file.{' '}
-                <a href={`/customers/${selectedCustomer.id}`} className="underline font-medium">Add a vehicle</a> first, then book.
+            {state.customer && (
+              <div className="flex justify-end">
+                <button type="button" onClick={() => go('vehicle')} className="btn-primary" disabled={!canEnter(state, 'vehicle')}>Next: Vehicle</button>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Step 2: Vehicle Selection */}
-      {step === 'vehicle' && customerDetailQuery.data && (
+      {/* 2. Vehicle */}
+      {state.step === 'vehicle' && (
         <div className="card">
-          <div className="card-header">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-900">Step 2: Select Vehicle</h2>
-              <span className="text-xs text-slate-500">
-                {selectedCustomer?.firstName} {selectedCustomer?.lastName}
-              </span>
-            </div>
-          </div>
+          <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Step 2: Vehicle</h2></div>
           <div className="card-body space-y-3">
+            {customerDetailQuery.isLoading && <p className="text-sm text-slate-500">Loading vehicles…</p>}
+            {state.customerVehicles && state.customerVehicles.length === 0 && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {customerName || 'This customer'} has no vehicles on file.{' '}
+                <a href={`/customers/${state.customer?.id}`} className="underline font-medium">Add a vehicle</a> first, then book.
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {customerDetailQuery.data.vehicles.map((v) => (
+              {(state.customerVehicles ?? []).map((v) => (
                 <button
                   key={v.id}
-                  onClick={() => { setSelectedVehicle(v); setStep('services'); }}
-                  className="border border-slate-200 rounded-lg px-4 py-4 text-left hover:border-blue-400 hover:bg-blue-50/50 transition-colors"
+                  type="button"
+                  onClick={() => dispatch({ type: 'SELECT_VEHICLE', vehicle: v })}
+                  className={`min-h-11 border rounded-lg px-4 py-4 text-left transition-colors ${state.vehicle?.id === v.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-blue-400 hover:bg-blue-50/50'}`}
                 >
                   <p className="text-sm font-bold font-mono text-slate-900">{v.plateNumber}</p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {[v.modelYear, v.make, v.model].filter(Boolean).join(' ') || 'Unknown vehicle'}
-                  </p>
+                  <p className="text-xs text-slate-500 mt-1">{[v.modelYear, v.make, v.model].filter(Boolean).join(' ') || 'Unknown vehicle'}</p>
                 </button>
               ))}
+            </div>
+            <div className="flex items-center justify-between pt-2">
+              <button type="button" onClick={() => go('customer')} className="btn-secondary">Back</button>
+              <button type="button" onClick={() => go('services')} className="btn-primary" disabled={!canEnter(state, 'services')}>Next: Service request</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Step 3: Service Selection */}
-      {step === 'services' && (
+      {/* 3. Service request */}
+      {state.step === 'services' && (
         <div className="card">
-          <div className="card-header">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-900">Step 3: Choose Services</h2>
-              <span className="text-xs text-slate-500">
-                {selectedCustomer?.firstName} {selectedCustomer?.lastName} &middot; {selectedVehicle?.plateNumber}
-              </span>
-            </div>
-          </div>
+          <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Step 3: Service request</h2></div>
           <div className="card-body space-y-4">
-            <input
-              type="text"
-              value={serviceSearch}
-              onChange={(e) => setServiceSearch(e.target.value)}
-              placeholder="Search services by name, family, or code…"
-              className="input-field"
-              autoFocus
-            />
+            <input type="text" value={serviceSearch} onChange={(e) => setServiceSearch(e.target.value)} placeholder="Search services by name, family, or code…" className="input-field" autoFocus />
             {serviceTypesQuery.data && (
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {filteredServices.map((st) => {
-                  const isSelected = selectedServiceCodes.includes(st.code);
+                  const on = state.serviceCodes.includes(st.code);
                   return (
-                    <label
-                      key={st.code}
-                      className={`flex items-center gap-3 rounded-md border px-4 py-3 cursor-pointer transition-colors ${
-                        isSelected
-                          ? 'border-blue-500 bg-blue-50'
-                          : 'border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() =>
-                          setSelectedServiceCodes((prev) =>
-                            prev.includes(st.code) ? prev.filter((c) => c !== st.code) : [...prev, st.code]
-                          )
-                        }
-                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                      />
+                    <label key={st.code} className={`flex min-h-11 items-center gap-3 rounded-md border px-4 py-3 cursor-pointer transition-colors ${on ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                      <input type="checkbox" checked={on} onChange={() => dispatch({ type: 'TOGGLE_SERVICE', code: st.code })} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                       <div className="flex-1">
                         <p className="text-sm font-medium text-slate-900">{st.name}</p>
-                        <p className="text-xs text-slate-500">~{st.baseDurationMinutes} min &middot; {st.family}</p>
+                        <p className="text-xs text-slate-500">{st.family}</p>
                       </div>
                     </label>
                   );
                 })}
-                {filteredServices.length === 0 && (
-                  <p className="text-sm text-slate-500 text-center py-4">No services match &ldquo;{serviceSearch}&rdquo;.</p>
-                )}
+                {filteredServices.length === 0 && <p className="text-sm text-slate-500 text-center py-4">No services match &ldquo;{serviceSearch}&rdquo;.</p>}
               </div>
             )}
-
             {partsServices.length > 0 && (
-              <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
                 <p className="text-sm font-medium text-amber-800">⚠ May require parts</p>
-                <p className="text-xs text-amber-700 mt-0.5">
-                  {partsServices.map((s) => s.name).join(', ')} may need parts — arrange preposition in the parts system before service.
-                </p>
+                <p className="text-xs text-amber-700 mt-0.5">{partsServices.map((s) => s.name).join(', ')} may need parts — arrange preposition in the parts system before service.</p>
               </div>
             )}
-            {selectedServiceCodes.length > 0 && (
-              <div className="flex items-center justify-between border-t border-slate-100 pt-4">
-                <p className="text-sm text-slate-600">
-                  {selectedServiceCodes.length} service{selectedServiceCodes.length !== 1 ? 's' : ''} &middot; ~{totalDuration} min total
-                </p>
-                <button onClick={() => setStep('time')} className="btn-primary">
-                  Next: Pick Time
-                </button>
+            <div>
+              <label className="input-label">Customer&apos;s concern / notes (optional)</label>
+              <textarea value={state.notes} onChange={(e) => dispatch({ type: 'SET_NOTES', notes: e.target.value })} rows={2} placeholder="What the customer reported, special instructions…" className="input-field" />
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-100 pt-4">
+              <button type="button" onClick={() => go('vehicle')} className="btn-secondary">Back</button>
+              <div className="flex items-center gap-3">
+                <p className="text-sm text-slate-600">{state.serviceCodes.length} service{state.serviceCodes.length !== 1 ? 's' : ''}</p>
+                <button type="button" onClick={() => go('date')} className="btn-primary" disabled={!canEnter(state, 'date')}>Next: Date</button>
               </div>
-            )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Step 4: Date & Time */}
-      {step === 'time' && (
+      {/* 4. Date */}
+      {state.step === 'date' && (
+        <div className="card">
+          <div className="card-header">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-900">Step 4: Date</h2>
+              {availabilityQuery.data && <span className="text-xs text-slate-500">About {availabilityQuery.data.plannedMinutes} min per appointment</span>}
+            </div>
+          </div>
+          <div className="card-body space-y-3">
+            {availabilityQuery.isLoading && <p className="text-sm text-slate-500">Checking the schedule…</p>}
+            {availabilityQuery.isError && <p className="text-sm text-red-700">Could not load availability. {availabilityQuery.error instanceof Error ? availabilityQuery.error.message : ''}</p>}
+            {availabilityQuery.data && (
+              <>
+                {availabilityQuery.data.nextAvailable && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const key = availabilityQuery.data!.days.find((d) => d.slots.some((s) => s.startAt === availabilityQuery.data!.nextAvailable!.startAt))?.date;
+                      if (key) dispatch({ type: 'SET_DATE', dateKey: key });
+                      dispatch({ type: 'SELECT_SLOT', slot: availabilityQuery.data!.nextAvailable! });
+                    }}
+                    className="w-full rounded-xl border-2 border-blue-600 bg-blue-50 p-4 text-left hover:bg-blue-100"
+                  >
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-700">Next available</p>
+                    <p className="mt-1 text-lg font-bold text-slate-900">{fmtWhen(availabilityQuery.data.nextAvailable.startAt, tz)}</p>
+                  </button>
+                )}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" data-testid="wizard-days">
+                  {days.map((d) => (
+                    <button
+                      key={d.date}
+                      type="button"
+                      disabled={d.closed || d.availableCount === 0}
+                      onClick={() => dispatch({ type: 'SET_DATE', dateKey: d.date })}
+                      className={`min-h-11 rounded-lg border px-3 py-2 text-left transition-colors ${
+                        state.dateKey === d.date ? 'border-blue-500 bg-blue-50' : d.closed || d.availableCount === 0 ? 'border-slate-100 bg-slate-50 text-slate-400 cursor-not-allowed' : 'border-slate-200 hover:border-blue-400 hover:bg-blue-50/50'
+                      }`}
+                    >
+                      <p className="text-sm font-semibold">{fmtDayLabel(d.date)}</p>
+                      <p className="text-xs">{d.closed ? 'Closed' : d.availableCount === 0 ? 'Full' : `${d.availableCount} open`}</p>
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <button type="button" onClick={() => setFromKey(addDays(fromKey, -14) < todayKey() ? todayKey() : addDays(fromKey, -14))} className="btn-secondary min-h-9 px-3 py-1 text-xs" disabled={fromKey <= todayKey()}>← Earlier</button>
+                  <button type="button" onClick={() => setFromKey(addDays(fromKey, 14))} className="btn-secondary min-h-9 px-3 py-1 text-xs">Later dates →</button>
+                </div>
+              </>
+            )}
+            <div className="flex items-center justify-between border-t border-slate-100 pt-4">
+              <button type="button" onClick={() => go('services')} className="btn-secondary">Back</button>
+              <button type="button" onClick={() => go('time')} className="btn-primary" disabled={!canEnter(state, 'time')}>Next: Available time</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. Available time */}
+      {state.step === 'time' && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="text-sm font-semibold text-slate-900">Step 5: Available time — {state.dateKey ? fmtDayLabel(state.dateKey) : ''}</h2>
+          </div>
+          <div className="card-body space-y-3">
+            {availabilityQuery.isLoading && <p className="text-sm text-slate-500">Checking the schedule…</p>}
+            {availabilityQuery.data && (
+              <SlotPicker
+                data={availabilityQuery.data}
+                selected={state.slot}
+                onSelect={(slot) => dispatch({ type: 'SELECT_SLOT', slot })}
+                onlyDate={state.dateKey}
+                emptyText={selectedDay?.closed ? 'The service centre is closed on this day.' : 'Every position is booked on this day. Pick another date, or book past capacity from the review step if the manager agrees.'}
+              />
+            )}
+            <div className="flex items-center justify-between border-t border-slate-100 pt-4">
+              <button type="button" onClick={() => go('date')} className="btn-secondary">Back</button>
+              <button type="button" onClick={() => go('review')} className="btn-primary" disabled={!canEnter(state, 'review')}>Next: Review</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Review + Confirm */}
+      {state.step === 'review' && state.slot && (
         <div className="space-y-4">
           <div className="card">
-            <div className="card-header">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-900">Step 4: Pick Date & Time</h2>
-                <span className="text-xs text-slate-500">
-                  {selectedCustomer?.firstName} {selectedCustomer?.lastName} &middot; {selectedVehicle?.plateNumber} &middot; {selectedServiceCodes.length} service{selectedServiceCodes.length !== 1 ? 's' : ''}
-                </span>
-              </div>
-            </div>
-            <div className="card-body space-y-4">
-              <div>
-                <label className="input-label">Date</label>
-                <input
-                  type="date"
-                  value={scheduledDate}
-                  min={todayStr}
-                  onChange={(e) => setScheduledDate(e.target.value)}
-                  className="input-field"
-                />
-              </div>
-              <div>
-                <label className="input-label">Time</label>
-                <input
-                  type="time"
-                  value={scheduledTime}
-                  onChange={(e) => setScheduledTime(e.target.value)}
-                  min="08:00"
-                  max="17:00"
-                  step="900"
-                  className="input-field"
-                />
-              </div>
-              <div>
-                <label className="input-label">Notes (optional)</label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  placeholder="Any special instructions..."
-                  className="input-field"
-                />
-              </div>
+            <div className="card-header"><h2 className="text-sm font-semibold text-slate-900">Step 6: Review</h2></div>
+            <div className="card-body space-y-2 text-sm">
+              <div className="flex justify-between gap-4"><span className="text-slate-500">Customer</span><span className="font-medium text-slate-900">{customerName}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-slate-500">Vehicle</span><span className="font-medium text-slate-900">{vehicleLabel}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-slate-500">Service request</span><span className="text-right font-medium text-slate-900">{selectedServices.map((s) => s.name).join(', ')}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-slate-500">Date &amp; time</span><span className="font-bold text-slate-900">{fmtWhen(state.slot.startAt, tz)}</span></div>
+              <div className="flex justify-between gap-4"><span className="text-slate-500">Planned time</span><span className="text-slate-900">About {availabilityQuery.data?.plannedMinutes ?? '—'} minutes</span></div>
+              {state.notes.trim() && <div className="flex justify-between gap-4"><span className="text-slate-500">Notes</span><span className="text-right text-slate-900">{state.notes}</span></div>}
+              <p className="pt-2 text-xs text-slate-500">Nothing is reserved until you press Confirm. The slot is re-checked at that moment.</p>
             </div>
           </div>
 
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setStep('services')}
-              className="btn-secondary"
-            >
-              Back to Services
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={createMutation.isPending || !scheduledDate || isPastSelected}
-              className="btn-success px-8 py-2.5"
-            >
-              {createMutation.isPending ? 'Creating...' : 'Create Appointment'}
-            </button>
-          </div>
-
-          {isPastSelected && (
-            <p className="text-xs text-amber-600">That time has already passed. Pick a later time today or a future date.</p>
+          {capacityWarning && (
+            <div className="card border-amber-300 bg-amber-50" data-testid="capacity-warning">
+              <div className="card-body space-y-2">
+                <p className="text-sm font-semibold text-amber-900">Every service position is booked for this time</p>
+                <p className="text-xs text-amber-800">{capacityWarning.message}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => { setCapacityWarning(null); go('time'); }} className="btn-secondary min-h-9 text-xs">Pick another time</button>
+                  <button
+                    type="button"
+                    onClick={() => { dispatch({ type: 'ACKNOWLEDGE_CAPACITY', value: true }); setCapacityWarning(null); submit({ acknowledgeCapacity: true }); }}
+                    className="btn-primary min-h-9 text-xs"
+                    disabled={createMutation.isPending}
+                  >
+                    Book anyway (recorded)
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
-          {createMutation.isError && (
+          {latestStartWarning && (
+            <div className="card border-amber-300 bg-amber-50" data-testid="latest-start-warning">
+              <div className="card-body space-y-2">
+                <p className="text-sm font-semibold text-amber-900">After the latest allowed start</p>
+                <p className="text-xs text-amber-800">{latestStartWarning}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => { setLatestStartWarning(null); go('time'); }} className="btn-secondary min-h-9 text-xs">Pick an earlier time</button>
+                  <button
+                    type="button"
+                    onClick={() => { dispatch({ type: 'OVERRIDE_LATEST_START', value: true }); setLatestStartWarning(null); submit({ overrideLatestStart: true }); }}
+                    className="btn-primary min-h-9 text-xs"
+                    disabled={createMutation.isPending}
+                  >
+                    Book after the latest start anyway (recorded)
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {createMutation.isError && !capacityWarning && !latestStartWarning && (
             <div className="card border-red-200 bg-red-50">
               <div className="card-body">
-                <p className="text-sm text-red-700">
-                  {createMutation.error instanceof Error ? createMutation.error.message : 'Failed to create appointment'}
-                </p>
+                <p className="text-sm text-red-700">{createMutation.error instanceof Error ? createMutation.error.message : 'Failed to create appointment'}</p>
               </div>
             </div>
           )}
+
+          <div className="flex items-center justify-between">
+            <button type="button" onClick={() => go('time')} className="btn-secondary">Back</button>
+            <button type="button" onClick={() => submit()} disabled={createMutation.isPending || !!capacityWarning || !!latestStartWarning} className="btn-success px-8 py-2.5">
+              {createMutation.isPending ? 'Confirming…' : 'Confirm appointment'}
+            </button>
+          </div>
         </div>
       )}
     </div>

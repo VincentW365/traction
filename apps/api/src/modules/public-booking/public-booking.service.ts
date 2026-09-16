@@ -25,6 +25,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import * as jwt from 'jsonwebtoken';
@@ -33,23 +34,16 @@ import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { StatusHistoryService } from '../audit/status-history.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EtaService } from '../scheduling/eta/eta.service';
-import type { EtaRuleValues } from '../scheduling/eta/eta.config';
+import { localDayKey } from '../../common/helpers/operating-hours';
+import { phoneForStorage } from '../../common/helpers/search-terms';
+import type { BookingRules } from './booking.config';
+import { isSlotAvailable, type SlotRules } from './availability.engine';
 import {
-  addDaysToKey,
-  dayWindow,
-  isWindowWithinOperatingHours,
-  loadOperatingHours,
-  localDayKey,
-  type OperatingHoursConfig,
-} from '../../common/helpers/operating-hours';
-import { BOOKING_RULE_KEYS, bookingRulesFromRows, type BookingRules } from './booking.config';
-import {
-  computeAvailability,
-  isSlotAvailable,
-  type DayInput,
-  type ExistingBooking,
-  type SlotRules,
-} from './availability.engine';
+  BookingAvailabilityService,
+  formatLatestStartLabel,
+  type BookingRuleSet,
+} from '../scheduling/availability/booking-availability.service';
+import type { ServiceRequestDto } from './dto/public-booking.dto';
 import {
   allocateBookingReference,
   generateManageToken,
@@ -91,7 +85,17 @@ export class PublicBookingService {
     private readonly notifications: NotificationsService,
     private readonly audit: AuditService,
     private readonly statusHistory: StatusHistoryService,
+    // CR-2026-106 — the ONE availability/placement engine shared with staff. Optional
+    // so existing specs' five-argument construction keeps working (same logic either way).
+    @Optional() private readonly availabilityService?: BookingAvailabilityService,
   ) {}
+
+  private _avail?: BookingAvailabilityService;
+  private get avail(): BookingAvailabilityService {
+    if (this.availabilityService) return this.availabilityService;
+    if (!this._avail) this._avail = new BookingAvailabilityService(this.prisma, this.eta);
+    return this._avail;
+  }
 
   // ---------------------------------------------------------------------------
   // Context
@@ -107,16 +111,8 @@ export class PublicBookingService {
     return site;
   }
 
-  async loadRules(siteId: string): Promise<{ booking: BookingRules; eta: EtaRuleValues; hours: OperatingHoursConfig | null }> {
-    const [rows, eta, hours] = await Promise.all([
-      this.prisma.businessRuleConfig.findMany({
-        where: { ruleKey: { in: [...BOOKING_RULE_KEYS] }, effectiveTo: null, OR: [{ siteId }, { siteId: null }] },
-        select: { ruleKey: true, valueJson: true, siteId: true },
-      }),
-      this.eta.loadRules(siteId),
-      loadOperatingHours(this.prisma as never, siteId),
-    ]);
-    return { booking: bookingRulesFromRows(rows), eta, hours };
+  async loadRules(siteId: string): Promise<BookingRuleSet> {
+    return this.avail.loadRules(siteId);
   }
 
   /** Anonymous rate limit: `rateLimitPer10Min` hits per route per client key. */
@@ -143,6 +139,9 @@ export class PublicBookingService {
       cancelCutoffHours: booking.cancelCutoffHours,
       rescheduleCutoffHours: booking.rescheduleCutoffHours,
       advanceWindowDays: booking.advanceWindowDays,
+      // CR-2026-106 — customers are never offered a start after this (server-enforced).
+      latestStart: booking.customerLatestStart,
+      latestStartLabel: formatLatestStartLabel(booking.customerLatestStart),
     };
   }
 
@@ -156,40 +155,63 @@ export class PublicBookingService {
     this.assertEnabled(booking);
     this.enforceRateLimit('identify', clientKey, booking.rateLimitPer10Min);
 
-    const vehicle = await this.prisma.vehicle.findUnique({
-      where: { vehicleCode: vehicleCodeForPlate(dto.plateNumber) },
-      select: {
-        id: true,
-        customer: {
-          select: {
-            id: true,
-            firstName: true,
-            phone: true,
-            vehicles: { select: { id: true, plateNumber: true, make: true, model: true, modelYear: true }, orderBy: { createdAt: 'asc' } },
-          },
-        },
-      },
-    });
+    const customerSelect = {
+      id: true,
+      firstName: true,
+      phone: true,
+      vehicles: { select: { id: true, plateNumber: true, make: true, model: true, modelYear: true }, orderBy: { createdAt: 'asc' as const } },
+    };
+
+    // CR-2026-106 — two identification pairs, both needing the mobile number plus a
+    // second fact only the customer knows. Names are never an identity key.
+    let customer: { id: string; firstName: string; phone: string; vehicles: Array<{ id: string; plateNumber: string; make: string | null; model: string | null; modelYear: number | null }> } | null = null;
+    let matchedVehicleId: string | null = null;
+    let identifiedBy: 'PLATE' | 'EMAIL';
+    const plate = dto.plateNumber?.trim();
+    const email = dto.email?.trim();
+    if (plate) {
+      identifiedBy = 'PLATE';
+      const vehicle = await this.prisma.vehicle.findUnique({
+        where: { vehicleCode: vehicleCodeForPlate(plate) },
+        select: { id: true, customer: { select: customerSelect } },
+      });
+      if (vehicle) {
+        customer = vehicle.customer;
+        matchedVehicleId = vehicle.id;
+      }
+    } else if (email) {
+      identifiedBy = 'EMAIL';
+      const rows = await this.prisma.customer.findMany({
+        where: { email: { equals: email, mode: 'insensitive' }, testDataRunId: null },
+        select: customerSelect,
+        take: 2,
+      });
+      // Exactly one record may carry the email; two means we cannot be sure — say "not known".
+      customer = rows.length === 1 ? rows[0] : null;
+    } else {
+      throw new BadRequestException('Enter your licence plate, or the email address we have on file, together with your mobile number.');
+    }
 
     // Both facts must match. Anything else is "not known" — never a hint about
     // which half was wrong, and never a link to somebody else's record.
-    if (!vehicle || !phoneMatches(vehicle.customer.phone, dto.phone)) {
+    if (!customer || !phoneMatches(customer.phone, dto.phone)) {
       return { known: false as const };
     }
 
-    const sessionToken = jwt.sign({ sub: vehicle.customer.id, kind: SESSION_KIND }, this.secret(), { expiresIn: SESSION_TTL });
+    const sessionToken = jwt.sign({ sub: customer.id, kind: SESSION_KIND }, this.secret(), { expiresIn: SESSION_TTL });
     return {
       known: true as const,
+      identifiedBy,
       sessionToken,
-      firstName: vehicle.customer.firstName,
-      phoneMasked: maskPhone(vehicle.customer.phone),
-      vehicles: vehicle.customer.vehicles.map((v) => ({
+      firstName: customer.firstName,
+      phoneMasked: maskPhone(customer.phone),
+      vehicles: customer.vehicles.map((v) => ({
         id: v.id,
         plateMasked: maskPlate(v.plateNumber),
         make: v.make,
         model: v.model,
         modelYear: v.modelYear,
-        matched: v.id === vehicle.id,
+        matched: v.id === matchedVehicleId,
       })),
     };
   }
@@ -210,7 +232,7 @@ export class PublicBookingService {
       code: t.code,
       name: t.name,
       family: t.family,
-      plannedMinutes: this.plannedMinutes([t], booking, eta),
+      plannedMinutes: this.avail.plannedMinutes([t], { booking, eta, hours: null }),
     }));
   }
 
@@ -225,31 +247,9 @@ export class PublicBookingService {
     this.enforceRateLimit('availability', clientKey, rules.booking.rateLimitPer10Min * 3);
 
     const services = await this.resolveServices(serviceCodes, rules.booking);
-    const now = new Date();
-    const today = localDayKey(now, site.timezone);
-    const first = from && from >= today ? from : today;
-    const lastAllowed = addDaysToKey(today, rules.booking.advanceWindowDays);
-    const count = Math.min(days ?? 14, rules.booking.advanceWindowDays + 1);
-
-    const dayInputs: DayInput[] = [];
-    for (let i = 0; i < count; i++) {
-      const key = addDaysToKey(first, i);
-      if (key > lastAllowed) break;
-      dayInputs.push({
-        dateKey: key,
-        window: dayWindow(rules.hours, key, site.timezone),
-        isClosedDate: rules.booking.closedDates.includes(key),
-        isToday: key === today,
-      });
-    }
-    const existing = await this.existingBookings(site.id, dayInputs, this.prisma);
-    const slotRules = this.slotRules(services, rules);
-    const result = computeAvailability(now, dayInputs, existing, slotRules);
-    return {
-      plannedMinutes: slotRules.durationMinutes,
-      timezone: site.timezone,
-      ...result,
-    };
+    // CR-2026-106 — the SAME engine and rules the staff wizard uses, with the
+    // customer audience (min notice, advance window, closed dates, latest start).
+    return this.avail.availability(site, services, { from, days, audience: 'CUSTOMER', rules });
   }
 
   // ---------------------------------------------------------------------------
@@ -264,9 +264,10 @@ export class PublicBookingService {
 
     const services = await this.resolveServices(dto.serviceCodes, rules.booking);
     const start = this.parseSlot(dto.scheduledStartAt);
-    const slotRules = this.slotRules(services, rules);
+    const slotRules = this.avail.slotRules(services, rules, 'CUSTOMER');
     const end = new Date(start.getTime() + slotRules.durationMinutes * MS);
-    this.assertSlotAllowed(start, end, site, rules);
+    this.avail.assertSlotAllowed(start, end, site, rules, 'CUSTOMER');
+    const serviceRequest = normaliseServiceRequest(dto.serviceRequest);
 
     // Who is booking?
     const sessionCustomerId = dto.sessionToken ? this.verifySession(dto.sessionToken) : null;
@@ -283,11 +284,13 @@ export class PublicBookingService {
     const dayKey = localDayKey(start, site.timezone);
     const now = new Date();
 
+    let identityFlag: { customerId: string; possibleDuplicateOfId: string; matchedOn: string } | null = null;
     const created = await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`booking:${site.id}:${dayKey}`}))`;
+      // CR-2026-106 — the same per-site-per-day lock every writer (staff too) takes.
+      await this.avail.lockDay(tx, site.id, dayKey);
 
       // Re-check the slot with the lock held: this is the guarantee.
-      const existing = await this.existingBookings(
+      const existing = await this.avail.existingBookings(
         site.id,
         [{ dateKey: dayKey, window: { open: start, close: end }, isClosedDate: false, isToday: false }],
         tx,
@@ -304,20 +307,36 @@ export class PublicBookingService {
           SELECT COALESCE(MAX(CAST(SUBSTRING(customer_number FROM 6) AS INTEGER)), 0) + 1 AS next_val
           FROM customers WHERE customer_number ~ '^CUST-[0-9]+$'`;
         const customerNumber = `CUST-${String(numberRows[0].next_val).padStart(6, '0')}`;
+        const phone = phoneForStorage(c.phone);
+        // CR-2026-106 — pending identity: if this mobile number already belongs to a
+        // record, the new customer is FLAGGED for review (never silently merged, never
+        // linked to the other record's data).
+        const sameEmail = c.email?.trim();
+        const possibleDuplicate = await tx.customer.findFirst({
+          where: {
+            testDataRunId: null,
+            OR: [{ phone }, ...(sameEmail ? [{ email: { equals: sameEmail, mode: 'insensitive' as const } }] : [])],
+          },
+          select: { id: true, phone: true },
+        });
         const customer = await tx.customer.create({
           data: {
             customerNumber,
             firstName: c.firstName.trim(),
             lastName: c.lastName.trim(),
-            phone: c.phone.trim(),
-            email: c.email?.trim() || null,
+            phone,
+            email: sameEmail || null,
             notificationOptInSms: c.smsOptIn ?? true,
             notificationOptInEmail: c.emailOptIn ?? true,
             notes: 'Created by customer self-service booking (CR-2026-105c).',
+            ...(possibleDuplicate ? { identityReviewStatus: 'PENDING_REVIEW', possibleDuplicateOfId: possibleDuplicate.id } : {}),
           },
           select: { id: true },
         });
         customerId = customer.id;
+        if (possibleDuplicate) {
+          identityFlag = { customerId, possibleDuplicateOfId: possibleDuplicate.id, matchedOn: possibleDuplicate.phone === phone ? 'PHONE' : 'EMAIL' };
+        }
       }
 
       // Vehicle
@@ -372,7 +391,10 @@ export class PublicBookingService {
           appointmentNumber,
           manageTokenHash: token.hash,
           manageTokenExpiresAt: new Date(start.getTime() + rules.booking.manageTokenDaysAfter * DAY_MS),
-          services: { create: services.map((s) => ({ serviceTypeId: s.id, qty: 1 })) },
+          // CR-2026-106 — what the customer told us, for Job Sheet preparation.
+          notes: serviceRequest.notes,
+          customerReportedMileage: serviceRequest.mileage,
+          services: { create: services.map((s) => ({ serviceTypeId: s.id, qty: 1, requestedNotes: serviceRequest.requestedNotes })) },
         },
         include: this.appointmentInclude(),
       });
@@ -380,9 +402,19 @@ export class PublicBookingService {
     });
 
     await this.recordCreated(created.appt.id, created.appt.appointmentNumber!, 'CONFIRMED');
+    if (identityFlag) {
+      const flag = identityFlag as { customerId: string; possibleDuplicateOfId: string; matchedOn: string };
+      await this.audit.log({
+        actorUserId: null,
+        action: AUDIT_ACTIONS.CUSTOMER_IDENTITY_REVIEW_FLAGGED,
+        entityType: 'Customer',
+        entityId: flag.customerId,
+        afterJson: { possibleDuplicateOfId: flag.possibleDuplicateOfId, matchedOn: flag.matchedOn, appointmentId: created.appt.id, actorType: 'CUSTOMER' },
+      });
+    }
     await this.notify('CONFIRMED', created.appt, site, rules.booking, created.token);
 
-    return this.confirmationView(created.appt, site, rules.booking, created.token);
+    return { ...this.confirmationView(created.appt, site, rules.booking, created.token), serviceRequest: serviceRequest.view };
   }
 
   // ---------------------------------------------------------------------------
@@ -440,15 +472,15 @@ export class PublicBookingService {
     }
 
     const services = appt.services.map((s) => s.serviceType);
-    const slotRules = this.slotRules(services, rules);
+    const slotRules = this.avail.slotRules(services, rules, 'CUSTOMER');
     const start = this.parseSlot(dto.scheduledStartAt);
     const end = new Date(start.getTime() + slotRules.durationMinutes * MS);
-    this.assertSlotAllowed(start, end, site, rules);
+    this.avail.assertSlotAllowed(start, end, site, rules, 'CUSTOMER');
     const dayKey = localDayKey(start, site.timezone);
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`booking:${site.id}:${dayKey}`}))`;
-      const existing = await this.existingBookings(
+      await this.avail.lockDay(tx, site.id, dayKey);
+      const existing = await this.avail.existingBookings(
         site.id,
         [{ dateKey: dayKey, window: { open: start, close: end }, isClosedDate: false, isToday: false }],
         tx,
@@ -521,25 +553,6 @@ export class PublicBookingService {
     return d;
   }
 
-  /** Public-side placement rules (min notice, advance window, closed dates, hours). */
-  private assertSlotAllowed(start: Date, end: Date, site: SiteContext, rules: { booking: BookingRules; hours: OperatingHoursConfig | null }): void {
-    const now = new Date();
-    if (start.getTime() < now.getTime() + rules.booking.minNoticeMinutes * MS) {
-      throw new BadRequestException(`Appointments need at least ${rules.booking.minNoticeMinutes} minutes' notice.`);
-    }
-    if (start.getTime() > now.getTime() + (rules.booking.advanceWindowDays + 1) * DAY_MS) {
-      throw new BadRequestException(`Appointments can be booked up to ${rules.booking.advanceWindowDays} days ahead.`);
-    }
-    const dayKey = localDayKey(start, site.timezone);
-    if (rules.booking.closedDates.includes(dayKey)) throw new BadRequestException('The service centre is closed on that date.');
-    if (dayKey === localDayKey(now, site.timezone) && !rules.booking.sameDayAllowed) {
-      throw new BadRequestException('Same-day online booking is not available. Please call the service centre.');
-    }
-    if (!isWindowWithinOperatingHours(start, end, rules.hours, site.timezone)) {
-      throw new BadRequestException('That time is outside our opening hours.');
-    }
-  }
-
   private async resolveServices(codes: string[], rules: BookingRules) {
     const unique = [...new Set(codes.map((c) => c.trim()).filter(Boolean))];
     if (unique.length === 0) throw new BadRequestException('Choose at least one service.');
@@ -550,49 +563,6 @@ export class PublicBookingService {
     const missing = unique.filter((c) => !types.some((t) => t.code === c) || rules.excludedServiceCodes.includes(c));
     if (missing.length) throw new BadRequestException(`These services cannot be booked online: ${missing.join(', ')}`);
     return types;
-  }
-
-  /** Assumption 2: management's 80 minutes unless the catalogue is explicitly enabled. */
-  private plannedMinutes(services: Array<{ baseDurationMinutes: number | null }>, booking: BookingRules, eta: EtaRuleValues): number {
-    if (booking.durationSource === 'CATALOGUE') {
-      const sum = services.reduce((s, t) => s + (t.baseDurationMinutes && t.baseDurationMinutes > 0 ? t.baseDurationMinutes : 0), 0);
-      if (sum > 0) return sum;
-    }
-    return eta.defaultDurationMinutes;
-  }
-
-  private slotRules(services: Array<{ baseDurationMinutes: number | null }>, rules: { booking: BookingRules; eta: EtaRuleValues }): SlotRules {
-    return {
-      slotIntervalMinutes: rules.booking.slotIntervalMinutes,
-      minNoticeMinutes: rules.booking.minNoticeMinutes,
-      sameDayAllowed: rules.booking.sameDayAllowed,
-      capacity: rules.eta.capacity,
-      durationMinutes: this.plannedMinutes(services, rules.booking, rules.eta),
-      defaultDurationMinutes: rules.eta.defaultDurationMinutes,
-    };
-  }
-
-  /** Active appointments that could overlap any of the given days (± a day for safety). */
-  private async existingBookings(
-    siteId: string,
-    days: DayInput[],
-    client: Pick<Prisma.TransactionClient, 'appointment'> | PrismaService,
-    excludeAppointmentId: string | null = null,
-  ): Promise<ExistingBooking[]> {
-    const windows = days.map((d) => d.window).filter((w): w is { open: Date; close: Date } => !!w);
-    if (windows.length === 0) return [];
-    const from = new Date(Math.min(...windows.map((w) => w.open.getTime())) - DAY_MS);
-    const to = new Date(Math.max(...windows.map((w) => w.close.getTime())) + DAY_MS);
-    const rows = await client.appointment.findMany({
-      where: {
-        siteId,
-        status: { in: [...ACTIVE_APPOINTMENT_STATUSES] as never[] },
-        scheduledStartAt: { gte: from, lte: to },
-        ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
-      },
-      select: { scheduledStartAt: true, scheduledEndAt: true },
-    });
-    return rows.map((r) => ({ startAt: r.scheduledStartAt, endAt: r.scheduledEndAt }));
   }
 
   private async assertNoVehicleConflict(
@@ -693,6 +663,8 @@ export class PublicBookingService {
         reference: appt.appointmentNumber ?? '',
         manageUrl: this.manageUrl(token),
         instructions: booking.arrivalInstructions,
+        // CR-2026-106 — the customer must know WHICH car the confirmation is for.
+        vehicle: `${[appt.vehicle.make, appt.vehicle.model].filter(Boolean).join(' ') || 'Vehicle'} · plate ${maskPlate(appt.vehicle.plateNumber)}`,
       });
     } catch (err) {
       this.logger.error(`Booking notification (${kind}) failed for ${appt.id}: ${(err as Error).message}`);
@@ -763,6 +735,36 @@ export class PublicBookingService {
     (appt as AppointmentRow).reschedules = await this.rescheduleCount(appt.id);
     return this.manageView(appt, site, rules.booking);
   }
+}
+
+/**
+ * CR-2026-106 — fold the customer's service-request answers into what the
+ * appointment stores: `notes` (visible on the appointment and copied to the visit
+ * as the CUSTOMER_CONCERN note at check-in), `requestedNotes` per service, and the
+ * reported mileage. Pure; trims and drops empties.
+ */
+export function normaliseServiceRequest(sr: ServiceRequestDto | undefined | null): {
+  notes: string | null;
+  requestedNotes: string | undefined;
+  mileage: number | null;
+  view: { reasonForVisit: string | null; concern: string | null; description: string | null; mileage: number | null } | null;
+} {
+  const reason = sr?.reasonForVisit?.trim() || null;
+  const concern = sr?.concern?.trim() || null;
+  const description = sr?.description?.trim() || null;
+  const mileage = typeof sr?.mileage === 'number' && Number.isFinite(sr.mileage) && sr.mileage >= 0 ? Math.round(sr.mileage) : null;
+  if (!reason && !concern && !description && mileage === null) return { notes: null, requestedNotes: undefined, mileage: null, view: null };
+  const lines: string[] = [];
+  if (reason) lines.push(`Reason for visit: ${reason}`);
+  if (concern) lines.push(`Customer concern: ${concern}`);
+  if (description) lines.push(`Details: ${description}`);
+  if (mileage !== null) lines.push(`Reported mileage: ${mileage.toLocaleString('en-US')}`);
+  return {
+    notes: `[Customer booking] ${lines.join(' | ')}`,
+    requestedNotes: [reason, concern].filter(Boolean).join(' — ') || undefined,
+    mileage,
+    view: { reasonForVisit: reason, concern, description, mileage },
+  };
 }
 
 type AppointmentRow = Prisma.AppointmentGetPayload<{

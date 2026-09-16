@@ -77,9 +77,11 @@ export default function BookPage() {
   const [step, setStep] = useState<Step>('identify');
   const [error, setError] = useState<string | null>(null);
 
-  // Step 1
+  // Step 1 — CR-2026-106: mobile + plate, or mobile + email (never name only)
   const [phone, setPhone] = useState('');
   const [plate, setPlate] = useState('');
+  const [identifyBy, setIdentifyBy] = useState<'PLATE' | 'EMAIL'>('PLATE');
+  const [identifyEmail, setIdentifyEmail] = useState('');
   const [identified, setIdentified] = useState<Identified | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -99,14 +101,21 @@ export default function BookPage() {
   const [codes, setCodes] = useState<string[]>([]);
   const [slot, setSlot] = useState<Slot | null>(null);
   const [availabilityNonce, setAvailabilityNonce] = useState(0);
+  // CR-2026-106 — what the workshop needs to prepare the Job Sheet (customer words, not a mechanic form)
+  const [reasonForVisit, setReasonForVisit] = useState('');
+  const [concern, setConcern] = useState('');
+  const [description, setDescription] = useState('');
+  const [mileage, setMileage] = useState('');
+  // CR-2026-106 — "Later dates": the first day the availability window starts from
+  const [fromKey, setFromKey] = useState<string | null>(null);
   const [done, setDone] = useState<Confirmation | null>(null);
   const [copied, setCopied] = useState(false);
 
   const siteQ = useQuery<SiteInfo>({ queryKey: ['public-site'], queryFn: () => publicApi.get('/public/booking/site'), retry: 3, retryDelay: 3000 });
   const servicesQ = useQuery<ServiceOption[]>({ queryKey: ['public-services'], queryFn: () => publicApi.get('/public/booking/services'), enabled: step !== 'identify' });
   const availabilityQ = useQuery<Availability>({
-    queryKey: ['public-availability', codes.join(','), availabilityNonce],
-    queryFn: () => publicApi.get(`/public/booking/availability?serviceCodes=${encodeURIComponent(codes.join(','))}&days=14`),
+    queryKey: ['public-availability', codes.join(','), availabilityNonce, fromKey],
+    queryFn: () => publicApi.get(`/public/booking/availability?serviceCodes=${encodeURIComponent(codes.join(','))}&days=14${fromKey ? `&from=${fromKey}` : ''}`),
     enabled: (step === 'slot' || step === 'confirm') && codes.length > 0,
     staleTime: 20000,
   });
@@ -121,7 +130,10 @@ export default function BookPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await publicApi.post<Identified>('/public/booking/identify', { phone: phone.trim(), plateNumber: plate.trim() });
+      const res = await publicApi.post<Identified>(
+        '/public/booking/identify',
+        identifyBy === 'EMAIL' ? { phone: phone.trim(), email: identifyEmail.trim() } : { phone: phone.trim(), plateNumber: plate.trim() },
+      );
       setIdentified(res);
       if (res.known) {
         const matched = res.vehicles?.find((v) => v.matched) ?? res.vehicles?.[0];
@@ -162,6 +174,15 @@ export default function BookPage() {
           : undefined,
         serviceCodes: codes,
         scheduledStartAt: slot.startAt,
+        serviceRequest:
+          reasonForVisit.trim() || concern.trim() || description.trim() || mileage.trim()
+            ? {
+                reasonForVisit: reasonForVisit.trim() || undefined,
+                concern: concern.trim() || undefined,
+                description: description.trim() || undefined,
+                mileage: mileage.trim() ? Number(mileage.replace(/[^0-9]/g, '')) : undefined,
+              }
+            : undefined,
       };
       const res = await publicApi.post<Confirmation>('/public/booking/confirm', body);
       setDone(res);
@@ -172,6 +193,13 @@ export default function BookPage() {
         setAvailabilityNonce((n) => n + 1);
         setStep('slot');
         setError('Sorry — that time was just taken. Here are the current openings.');
+      } else if (e instanceof PublicApiError && e.code === 'AFTER_LATEST_START') {
+        // CR-2026-106 — the server enforces the latest start; a stale page could still
+        // submit one. Back to the (refreshed) slots with the reason.
+        setSlot(null);
+        setAvailabilityNonce((n) => n + 1);
+        setStep('slot');
+        setError(e.message);
       } else if (e instanceof PublicApiError && e.status === 403) {
         setIdentified(null);
         setStep('identify');
@@ -266,17 +294,28 @@ export default function BookPage() {
           <form onSubmit={(e) => { e.preventDefault(); void handleIdentify(); }} className="space-y-4">
             <div>
               <h1 className="text-lg font-bold text-slate-900">Let's find you</h1>
-              <p className="text-sm text-slate-500">Enter the mobile number and licence plate we have on file. New customer? Enter them anyway — we'll set you up.</p>
+              <p className="text-sm text-slate-500">Enter your mobile number plus the licence plate (or the email) we have on file. New customer? Enter your mobile and plate anyway — we'll set you up.</p>
             </div>
             <label className="block">
               <span className="input-label">Mobile number</span>
               <input value={phone} onChange={(e) => setPhone(e.target.value)} className="input-field" inputMode="tel" autoComplete="tel" placeholder="876-555-0100" required />
             </label>
-            <label className="block">
-              <span className="input-label">Licence plate</span>
-              <input value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase())} className="input-field uppercase" placeholder="ABC1234" required />
-            </label>
-            <button type="submit" disabled={busy || !phone.trim() || !plate.trim()} className="btn-primary w-full disabled:opacity-50">{busy ? 'Checking…' : 'Continue'}</button>
+            <div className="flex gap-2 text-xs" role="tablist" aria-label="Identify with">
+              <button type="button" role="tab" aria-selected={identifyBy === 'PLATE'} onClick={() => setIdentifyBy('PLATE')} className={`min-h-9 rounded-md px-3 py-1.5 font-semibold ${identifyBy === 'PLATE' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'}`}>Licence plate</button>
+              <button type="button" role="tab" aria-selected={identifyBy === 'EMAIL'} onClick={() => setIdentifyBy('EMAIL')} className={`min-h-9 rounded-md px-3 py-1.5 font-semibold ${identifyBy === 'EMAIL' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-700'}`}>Email on file</button>
+            </div>
+            {identifyBy === 'PLATE' ? (
+              <label className="block">
+                <span className="input-label">Licence plate</span>
+                <input value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase())} className="input-field uppercase" placeholder="ABC1234" required />
+              </label>
+            ) : (
+              <label className="block">
+                <span className="input-label">Email on file</span>
+                <input value={identifyEmail} onChange={(e) => setIdentifyEmail(e.target.value)} className="input-field" type="email" inputMode="email" autoComplete="email" placeholder="you@example.com" required />
+              </label>
+            )}
+            <button type="submit" disabled={busy || !phone.trim() || (identifyBy === 'PLATE' ? !plate.trim() : !identifyEmail.trim())} className="btn-primary min-h-11 w-full disabled:opacity-50">{busy ? 'Checking…' : 'Continue'}</button>
           </form>
         )}
 
@@ -362,9 +401,38 @@ export default function BookPage() {
                 );
               })}
             </div>
+            {/* CR-2026-106 — the facts the workshop needs to prepare the Job Sheet, in the customer's words */}
+            <div className="space-y-3 rounded-lg border border-slate-200 p-3" data-testid="service-request">
+              <p className="text-sm font-semibold text-slate-800">Tell us a little more <span className="font-normal text-slate-500">(optional, helps us prepare)</span></p>
+              <label className="block">
+                <span className="input-label">Reason for visit</span>
+                <select value={reasonForVisit} onChange={(e) => setReasonForVisit(e.target.value)} className="input-field min-h-11">
+                  <option value="">Choose…</option>
+                  <option>Routine service</option>
+                  <option>Warning light on</option>
+                  <option>Noise or vibration</option>
+                  <option>Brakes</option>
+                  <option>Leak</option>
+                  <option>Pre-purchase / inspection</option>
+                  <option>Something else</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="input-label">Main concern</span>
+                <input value={concern} onChange={(e) => setConcern(e.target.value.slice(0, 500))} className="input-field min-h-11" placeholder="e.g. squeal when braking at low speed" />
+              </label>
+              <label className="block">
+                <span className="input-label">Anything else we should know</span>
+                <textarea value={description} onChange={(e) => setDescription(e.target.value.slice(0, 1000))} className="input-field" rows={2} />
+              </label>
+              <label className="block">
+                <span className="input-label">Current mileage (km or miles as shown)</span>
+                <input value={mileage} onChange={(e) => setMileage(e.target.value.replace(/[^0-9]/g, '').slice(0, 7))} className="input-field min-h-11" inputMode="numeric" placeholder="e.g. 84500" />
+              </label>
+            </div>
             <div className="flex gap-2">
-              <button type="button" onClick={() => setStep('details')} className="btn-secondary">Back</button>
-              <button type="button" disabled={codes.length === 0} onClick={() => { setSlot(null); setStep('slot'); }} className="btn-primary flex-1 disabled:opacity-50">See available times</button>
+              <button type="button" onClick={() => setStep('details')} className="btn-secondary min-h-11">Back</button>
+              <button type="button" disabled={codes.length === 0} onClick={() => { setSlot(null); setStep('slot'); }} className="btn-primary min-h-11 flex-1 disabled:opacity-50">See available times</button>
             </div>
           </div>
         )}
@@ -378,9 +446,15 @@ export default function BookPage() {
             {availabilityQ.isLoading && <p className="text-sm text-slate-500">Checking the schedule…</p>}
             {availabilityQ.isError && <p className="text-sm text-red-700">We could not load available times. Please try again.</p>}
             {availabilityQ.data && <SlotPicker data={availabilityQ.data} selected={slot} onSelect={setSlot} />}
+            {availabilityQ.data?.range && (
+              <div className="flex items-center justify-between">
+                <button type="button" onClick={() => { setSlot(null); setFromKey(null); }} disabled={!fromKey} className="btn-secondary min-h-9 px-3 py-1 text-xs disabled:opacity-50">← From today</button>
+                <button type="button" onClick={() => { setSlot(null); setFromKey(nextDayKey(availabilityQ.data!.range!.to)); }} className="btn-secondary min-h-9 px-3 py-1 text-xs">Later dates →</button>
+              </div>
+            )}
             <div className="flex gap-2">
-              <button type="button" onClick={() => setStep('service')} className="btn-secondary">Back</button>
-              <button type="button" disabled={!slot} onClick={() => setStep('confirm')} className="btn-primary flex-1 disabled:opacity-50">Review booking</button>
+              <button type="button" onClick={() => setStep('service')} className="btn-secondary min-h-11">Back</button>
+              <button type="button" disabled={!slot} onClick={() => setStep('confirm')} className="btn-primary min-h-11 flex-1 disabled:opacity-50">Review booking</button>
             </div>
           </div>
         )}
@@ -395,6 +469,9 @@ export default function BookPage() {
               <Row label="Customer" value={identified?.known ? `${identified.firstName} · mobile ending ${identified.phoneMasked}` : `${firstName} ${lastName} · ${phone}`} />
               <Row label="Vehicle" value={needsVehicleForm ? `${[year, make, model].filter(Boolean).join(' ') || 'Vehicle'} · ${plate}` : `${describeVehicle(identified, vehicleId)}`} />
               <Row label="Service" value={(servicesQ.data ?? []).filter((s) => codes.includes(s.code)).map((s) => s.name).join(', ')} />
+              {reasonForVisit.trim() && <Row label="Reason" value={reasonForVisit.trim()} />}
+              {concern.trim() && <Row label="Your concern" value={concern.trim()} />}
+              {mileage.trim() && <Row label="Mileage" value={Number(mileage).toLocaleString('en-US')} />}
               <Row label="Date" value={fmtWhen(slot.startAt, tz).split(',').slice(0, 2).join(',')} />
               <Row label="Arrival time" value={fmtWhen(slot.startAt, tz).split(', ').pop() ?? ''} strong />
               <Row label="Expected service time" value={`About ${availabilityQ.data?.plannedMinutes ?? siteQ.data.plannedMinutes} minutes`} />
@@ -410,6 +487,13 @@ export default function BookPage() {
       </div>
     </Shell>
   );
+}
+
+/** The day after a YYYY-MM-DD key (calendar arithmetic). */
+function nextDayKey(key: string): string {
+  const [y, m, d] = key.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + 1));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
 }
 
 function describeVehicle(identified: Identified | null, vehicleId: string | null): string {

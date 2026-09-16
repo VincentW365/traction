@@ -410,7 +410,8 @@ export default function VehicleDetailPage() {
         <Link href="/check-in" className="btn-primary">
           Check In
         </Link>
-        <Link href="/appointments/new" className="btn-secondary">
+        {/* CR-2026-106 — deep link carries BOTH ids so the wizard opens on the service step for this car */}
+        <Link href={`/appointments/new?customerId=${vehicle.customer.id}&vehicleId=${vehicle.id}`} className="btn-secondary">
           Schedule Appointment
         </Link>
       </div>

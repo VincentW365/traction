@@ -3,6 +3,7 @@ import {
   IsString,
   IsOptional,
   IsArray,
+  IsBoolean,
   IsDateString,
   ValidateNested,
 } from 'class-validator';
@@ -33,4 +34,14 @@ export class UpdateAppointmentDto {
   @ValidateNested({ each: true })
   @Type(() => AppointmentServiceItemDto)
   serviceTypes?: AppointmentServiceItemDto[];
+
+  @ApiPropertyOptional({ description: 'CR-2026-106 — book past workshop capacity after the 409 CAPACITY_FULL warning (audited).' })
+  @IsOptional()
+  @IsBoolean()
+  acknowledgeCapacity?: boolean;
+
+  @ApiPropertyOptional({ description: 'CR-2026-106 — book after the latest-start rule when enforced for staff (audited).' })
+  @IsOptional()
+  @IsBoolean()
+  overrideLatestStart?: boolean;
 }

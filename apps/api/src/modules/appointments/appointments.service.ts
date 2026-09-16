@@ -11,7 +11,14 @@ import { StatusHistoryService } from '../audit/status-history.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { EtaService } from '../scheduling/eta/eta.service';
 import { BOOKING_RULE_KEYS, bookingRulesFromRows } from '../public-booking/booking.config';
-import { maxConcurrentOverlap } from '../public-booking/availability.engine';
+import { maxConcurrentOverlap, type SlotRules } from '../public-booking/availability.engine';
+import { BookingAvailabilityService, type BookingRuleSet } from '../scheduling/availability/booking-availability.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { localDayKey } from '../../common/helpers/operating-hours';
+import { publicUrl } from '../../common/helpers/public-url';
+import { normalizePhone } from '../../common/helpers/search-terms';
+import { maskPlate } from '../public-booking/booking-reference';
+import type { Prisma } from '@prisma/client';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { UpdateAppointmentDto } from './dto/update-appointment.dto';
 import { toZonedTime } from 'date-fns-tz';
@@ -53,7 +60,114 @@ export class AppointmentsService {
     // CR-2026-105c — workshop capacity for the warn-not-block check. Optional so the
     // existing specs' three-argument construction keeps working (check skipped).
     @Optional() private eta?: EtaService,
+    // CR-2026-106 — the ONE availability/placement engine shared with the public
+    // booking page (duration, capacity, day lock, latest start). Optional for the
+    // same reason; when present it replaces the pre-check below.
+    @Optional() private availability?: BookingAvailabilityService,
+    // CR-2026-106 — a staff cancel/reschedule of an ONLINE booking tells the customer.
+    @Optional() private notifications?: NotificationsService,
   ) {}
+
+  // ---------------------------------------------------------------------------
+  // CR-2026-106 — staff availability: the same slots a customer would see, with
+  // the STAFF audience (no minimum notice, any open day, latest start only when
+  // enforced for staff). Used by the appointment wizard's Date/Time steps.
+  // ---------------------------------------------------------------------------
+
+  async staffAvailability(siteId: string, serviceCodes: string[], from?: string, days?: number, excludeAppointmentId?: string) {
+    if (!this.availability) throw new BadRequestException('Availability engine is not configured.');
+    const site = await this.prisma.site.findUnique({ where: { id: siteId }, select: { id: true, timezone: true } });
+    if (!site) throw new NotFoundException(`Site ${siteId} not found`);
+    const codes = [...new Set(serviceCodes.map((c) => c.trim()).filter(Boolean))];
+    const services = codes.length ? [...(await this.resolveServiceTypeCodes(codes)).values()] : [];
+    return this.availability.availability(site, services, { from, days, audience: 'STAFF', excludeAppointmentId: excludeAppointmentId ?? null });
+  }
+
+  /**
+   * CR-2026-106 — the public booking link plus the message staff send with it
+   * (WhatsApp Phase 1 = a message containing the secure booking URL).
+   */
+  async bookingLink(siteId: string, phone?: string) {
+    const site = await this.prisma.site.findUnique({ where: { id: siteId }, select: { id: true, name: true } });
+    if (!site) throw new NotFoundException(`Site ${siteId} not found`);
+    const bookingUrl = publicUrl('/book');
+    const template = this.availability ? (await this.availability.loadRules(siteId)).booking.shareMessageTemplate : 'Book your next service online: {bookingUrl}';
+    const message = template.replace(/\{bookingUrl\}/g, bookingUrl).replace(/\{siteName\}/g, site.name);
+    const digits = phone ? normalizePhone(phone) : '';
+    // Jamaican numbers: 7 local digits → +1 876; 10 digits → +1; 11 starting with 1 → as is.
+    const e164 = digits.length === 7 ? `1876${digits}` : digits.length === 10 ? `1${digits}` : digits.length === 11 && digits.startsWith('1') ? digits : digits;
+    const text = encodeURIComponent(message);
+    return {
+      bookingUrl,
+      message,
+      whatsappUrl: e164 ? `https://wa.me/${e164}?text=${text}` : `https://wa.me/?text=${text}`,
+      smsUrl: e164 ? `sms:+${e164}?body=${text}` : `sms:?body=${text}`,
+    };
+  }
+
+  /** Loads the shared rule set + site context when the shared engine is wired; null otherwise. */
+  private async staffPlacementContext(siteId: string): Promise<{ rules: BookingRuleSet; site: { id: string; timezone: string } } | null> {
+    if (!this.availability) return null;
+    const site = await this.prisma.site.findUnique({ where: { id: siteId }, select: { id: true, timezone: true } });
+    if (!site) return null;
+    return { rules: await this.availability.loadRules(siteId), site };
+  }
+
+  /**
+   * CR-2026-106 — inside the writer's transaction: take the per-site-per-day lock and
+   * re-check capacity with it held (the same guarantee the public confirm has).
+   * Warn-not-block for staff: 409 CAPACITY_FULL unless acknowledged (then audited).
+   */
+  private async guardStaffSlot(
+    tx: Prisma.TransactionClient,
+    ctx: { rules: BookingRuleSet; site: { id: string; timezone: string } },
+    start: Date,
+    slotRules: SlotRules,
+    acknowledged: boolean,
+    excludeAppointmentId: string | null,
+  ): Promise<{ overbooked: boolean; capacity: number; booked: number }> {
+    await this.availability!.lockDay(tx, ctx.site.id, localDayKey(start, ctx.site.timezone));
+    const check = await this.availability!.slotStillAvailable(tx, ctx.site.id, start, slotRules, excludeAppointmentId);
+    if (check.available) return { overbooked: false, capacity: check.capacity, booked: check.booked };
+    if (ctx.rules.booking.staffCapacityWarning && !acknowledged) {
+      throw new ConflictException({
+        code: 'CAPACITY_FULL',
+        message: `All ${check.capacity} service position(s) are already booked for this time (${check.booked} appointment(s) overlap). Choose another time, or continue to book past capacity — this will be recorded.`,
+        capacity: check.capacity,
+        booked: check.booked,
+      });
+    }
+    return { overbooked: true, capacity: check.capacity, booked: check.booked };
+  }
+
+  /** CR-2026-106 — tell the customer when STAFF change an online booking. */
+  private async notifyOnlineBookingChange(kind: 'RESCHEDULED' | 'CANCELLED', appt: { id: string; sourceChannel: string | null; appointmentNumber: string | null; scheduledStartAt: Date; scheduledEndAt: Date | null; customer: { phone: string; email: string | null; notificationOptInSms: boolean; notificationOptInEmail: boolean }; vehicle: { plateNumber: string; make: string | null; model: string | null }; site: { name: string; timezone: string | null }; services: Array<{ serviceType: { name: string } }> }, userId: string) {
+    if (appt.sourceChannel !== 'CUSTOMER_SELF_SERVICE' || !this.notifications) return;
+    try {
+      await this.notifications.queueAppointmentMessage(kind, {
+        appointmentId: appt.id,
+        phone: appt.customer.notificationOptInSms ? appt.customer.phone : null,
+        email: appt.customer.notificationOptInEmail ? appt.customer.email : null,
+        scheduledStartAt: appt.scheduledStartAt,
+        durationMinutes: appt.scheduledEndAt ? Math.round((appt.scheduledEndAt.getTime() - appt.scheduledStartAt.getTime()) / 60_000) : 0,
+        services: appt.services.map((s) => s.serviceType.name),
+        siteName: appt.site.name,
+        timezone: appt.site.timezone ?? undefined,
+        reference: appt.appointmentNumber ?? '',
+        vehicle: `${[appt.vehicle.make, appt.vehicle.model].filter(Boolean).join(' ') || 'Vehicle'} · plate ${maskPlate(appt.vehicle.plateNumber)}`,
+        changeGuidance: kind === 'RESCHEDULED' ? 'This change was made by the service centre. If the new time does not suit you, please call us.' : undefined,
+      });
+      await this.auditService.log({
+        actorUserId: userId,
+        action: kind === 'RESCHEDULED' ? AUDIT_ACTIONS.APPOINTMENT_RESCHEDULED_BY_STAFF : AUDIT_ACTIONS.APPOINTMENT_CANCELLED_BY_STAFF,
+        entityType: 'Appointment',
+        entityId: appt.id,
+        afterJson: { appointmentNumber: appt.appointmentNumber, customerNotified: true, scheduledStartAt: appt.scheduledStartAt },
+      });
+    } catch (err) {
+      this.logger.error(`Online-booking ${kind} notification failed for ${appt.id}: ${(err as Error).message}`);
+    }
+  }
 
   /**
    * CR-2026-105c (Assumption 11) — staff bookings consume the same constrained
@@ -147,15 +261,29 @@ export class AppointmentsService {
       );
     }
 
-    // 5. Calculate estimated end time from service durations
-    const totalDurationMinutes = data.serviceTypes.reduce((sum, s) => {
-      const st = serviceTypeMap.get(s.serviceTypeCode);
-      return sum + (st?.baseDurationMinutes ?? 0) * (s.qty ?? 1);
-    }, 0);
+    // 5. Planned duration. CR-2026-106 — from the SAME rule the public engine uses
+    // (appointment_duration_source: DEFAULT = management's 80 minutes, CATALOGUE =
+    // catalogue sum); the legacy catalogue sum remains only when the shared engine
+    // is not wired (unit specs).
+    const ctx = await this.staffPlacementContext(data.siteId);
+    const selectedServices = data.serviceTypes.map((s) => serviceTypeMap.get(s.serviceTypeCode)!).filter(Boolean);
+    const totalDurationMinutes = ctx
+      ? this.availability!.plannedMinutes(selectedServices, ctx.rules)
+      : data.serviceTypes.reduce((sum, s) => {
+          const st = serviceTypeMap.get(s.serviceTypeCode);
+          return sum + (st?.baseDurationMinutes ?? 0) * (s.qty ?? 1);
+        }, 0);
 
     const scheduledEndAt = new Date(
       scheduledStartAt.getTime() + totalDurationMinutes * 60 * 1000,
     );
+
+    // 5a. CR-2026-106 — latest-start rule for STAFF (only when enforced; explicit,
+    // audited override).
+    const placement = ctx
+      ? this.availability!.assertSlotAllowed(scheduledStartAt, scheduledEndAt, ctx.site, ctx.rules, 'STAFF', { overrideLatestStart: data.overrideLatestStart === true })
+      : { latestStartOverridden: false };
+    const slotRules = ctx ? this.availability!.slotRules(selectedServices, ctx.rules, 'STAFF') : null;
 
     // 5b. P4(a): reject an overlapping active appointment for the SAME vehicle.
     await this.validateNoVehicleOverlap(
@@ -166,15 +294,23 @@ export class AppointmentsService {
     );
 
     // 5c. CR-2026-105c — workshop capacity (warn-not-block, audited when overridden).
-    const capacity = await this.checkStaffCapacity(
-      data.siteId,
-      scheduledStartAt,
-      scheduledEndAt,
-      data.acknowledgeCapacity === true,
-    );
+    // CR-2026-106 — with the shared engine wired, the check moves INSIDE the
+    // transaction under the day lock (see 6) so two writers cannot both take the
+    // last position; the pre-check remains for the legacy (unwired) path.
+    let capacity = ctx
+      ? { overbooked: false, capacity: 0, booked: 0 }
+      : await this.checkStaffCapacity(
+          data.siteId,
+          scheduledStartAt,
+          scheduledEndAt,
+          data.acknowledgeCapacity === true,
+        );
 
     // 6. Create appointment + appointment_services in a transaction
     const appointment = await this.prisma.$transaction(async (tx) => {
+      if (ctx && slotRules) {
+        capacity = await this.guardStaffSlot(tx, ctx, scheduledStartAt, slotRules, data.acknowledgeCapacity === true, null);
+      }
       const appt = await tx.appointment.create({
         data: {
           siteId: data.siteId,
@@ -222,6 +358,17 @@ export class AppointmentsService {
         entityId: appointment.id,
         afterJson: { capacity: capacity.capacity, booked: capacity.booked, scheduledStartAt },
         reasonCode: 'CAPACITY_FULL',
+      });
+    }
+    // 7c. CR-2026-106 — booking after the latest-start rule is an auditable decision.
+    if (placement.latestStartOverridden) {
+      await this.auditService.log({
+        actorUserId: userId,
+        action: AUDIT_ACTIONS.APPOINTMENT_LATEST_START_OVERRIDDEN,
+        entityType: 'Appointment',
+        entityId: appointment.id,
+        afterJson: { scheduledStartAt, latestStart: ctx?.rules.booking.customerLatestStart ?? null },
+        reasonCode: 'AFTER_LATEST_START',
       });
     }
 
@@ -309,6 +456,9 @@ export class AppointmentsService {
     }
 
     const updateData: Record<string, unknown> = {};
+    // CR-2026-106 — shared placement context for reschedules (null when unwired).
+    const rescheduleCtx = data.scheduledStartAt ? await this.staffPlacementContext(existing.siteId) : null;
+    let latestStartOverridden = false;
 
     // Handle reschedule
     if (data.scheduledStartAt) {
@@ -326,10 +476,10 @@ export class AppointmentsService {
       // Recalculate end time if service types not changing
       if (!data.serviceTypes) {
         const services = existing.services;
-        const totalDuration = services.reduce(
-          (sum, s) => sum + s.serviceType.baseDurationMinutes * s.qty,
-          0,
-        );
+        // CR-2026-106 — same duration rule as create/public when the engine is wired.
+        const totalDuration = rescheduleCtx
+          ? this.availability!.plannedMinutes(services.map((s) => s.serviceType), rescheduleCtx.rules)
+          : services.reduce((sum, s) => sum + s.serviceType.baseDurationMinutes * s.qty, 0);
         updateData.scheduledEndAt = new Date(
           newStart.getTime() + totalDuration * 60 * 1000,
         );
@@ -368,8 +518,18 @@ export class AppointmentsService {
         id,
       );
 
+      // CR-2026-106 — latest-start rule + day lock/capacity when the time moved.
+      const newServices = data.serviceTypes.map((s) => serviceTypeMap.get(s.serviceTypeCode)!).filter(Boolean);
+      if (rescheduleCtx && data.scheduledStartAt) {
+        latestStartOverridden = this.availability!.assertSlotAllowed(baseStart, updateData.scheduledEndAt as Date, rescheduleCtx.site, rescheduleCtx.rules, 'STAFF', { overrideLatestStart: data.overrideLatestStart === true }).latestStartOverridden;
+      }
+      let capacityOutcome: { overbooked: boolean; capacity: number; booked: number } | null = null;
+
       // Delete existing services and create new ones inside transaction
       const appointment = await this.prisma.$transaction(async (tx) => {
+        if (rescheduleCtx && data.scheduledStartAt) {
+          capacityOutcome = await this.guardStaffSlot(tx, rescheduleCtx, baseStart, this.availability!.slotRules(newServices, rescheduleCtx.rules, 'STAFF'), data.acknowledgeCapacity === true, id);
+        }
         await tx.appointmentService.deleteMany({
           where: { appointmentId: id },
         });
@@ -403,12 +563,15 @@ export class AppointmentsService {
         toStatus: 'RESCHEDULED',
         changedByUserId: userId,
       });
+      await this.auditStaffPlacement(id, userId, capacityOutcome, latestStartOverridden, baseStart, rescheduleCtx);
+      if (data.scheduledStartAt) await this.notifyOnlineBookingChange('RESCHEDULED', appointment as never, userId);
 
       return appointment;
     }
 
     // Simple update (no service type changes)
     const wasRescheduled = !!data.scheduledStartAt;
+    let simpleCapacity: { overbooked: boolean; capacity: number; booked: number } | null = null;
     if (wasRescheduled) {
       updateData.status = 'RESCHEDULED';
       // P4(a): rescheduled — re-check same-vehicle overlap (exclude self).
@@ -419,20 +582,44 @@ export class AppointmentsService {
         (updateData.scheduledEndAt as Date) ?? existing.scheduledEndAt ?? (updateData.scheduledStartAt as Date),
         id,
       );
+      if (rescheduleCtx) {
+        latestStartOverridden = this.availability!.assertSlotAllowed(
+          updateData.scheduledStartAt as Date,
+          (updateData.scheduledEndAt as Date) ?? (updateData.scheduledStartAt as Date),
+          rescheduleCtx.site,
+          rescheduleCtx.rules,
+          'STAFF',
+          { overrideLatestStart: data.overrideLatestStart === true },
+        ).latestStartOverridden;
+      }
     }
 
-    const appointment = await this.prisma.appointment.update({
-      where: { id },
-      data: updateData,
-      include: {
-        services: { include: { serviceType: true } },
-        customer: true,
-        vehicle: true,
-        site: true,
-      },
-    });
+    const include = {
+      services: { include: { serviceType: true } },
+      customer: true,
+      vehicle: true,
+      site: true,
+    };
+    // CR-2026-106 — a moved time is written under the day lock with the capacity
+    // re-checked (same guarantee as the public confirm); other edits stay simple.
+    const appointment =
+      wasRescheduled && rescheduleCtx
+        ? await this.prisma.$transaction(async (tx) => {
+            simpleCapacity = await this.guardStaffSlot(
+              tx,
+              rescheduleCtx,
+              updateData.scheduledStartAt as Date,
+              this.availability!.slotRules(existing.services.map((s) => s.serviceType), rescheduleCtx.rules, 'STAFF'),
+              data.acknowledgeCapacity === true,
+              id,
+            );
+            return tx.appointment.update({ where: { id }, data: updateData, include });
+          })
+        : await this.prisma.appointment.update({ where: { id }, data: updateData, include });
 
     if (wasRescheduled) {
+      await this.auditStaffPlacement(id, userId, simpleCapacity, latestStartOverridden, updateData.scheduledStartAt as Date, rescheduleCtx);
+      await this.notifyOnlineBookingChange('RESCHEDULED', appointment as never, userId);
       await this.statusHistory.record({
         entityType: 'Appointment',
         entityId: id,
@@ -502,7 +689,11 @@ export class AppointmentsService {
 
     const appointment = await this.prisma.appointment.update({
       where: { id },
-      data: { status: 'CANCELLED' },
+      data: {
+        status: 'CANCELLED',
+        // CR-2026-106 — a cancelled online booking's manage link stops working at once.
+        ...(existing.manageTokenHash ? { manageTokenExpiresAt: new Date() } : {}),
+      },
       include: {
         services: { include: { serviceType: true } },
         customer: true,
@@ -520,6 +711,7 @@ export class AppointmentsService {
       reasonCode: 'APPOINTMENT_CANCEL',
       notes: reason,
     });
+    await this.notifyOnlineBookingChange('CANCELLED', appointment as never, userId);
 
     await this.auditService.log({
       actorUserId: userId,
@@ -542,6 +734,37 @@ export class AppointmentsService {
   // ---------------------------------------------------------------------------
   // PRIVATE HELPERS
   // ---------------------------------------------------------------------------
+
+  /** CR-2026-106 — audit an acknowledged overbooking and/or latest-start override on a reschedule. */
+  private async auditStaffPlacement(
+    appointmentId: string,
+    userId: string,
+    capacity: { overbooked: boolean; capacity: number; booked: number } | null,
+    latestStartOverridden: boolean,
+    scheduledStartAt: Date,
+    ctx: { rules: BookingRuleSet } | null,
+  ): Promise<void> {
+    if (capacity?.overbooked) {
+      await this.auditService.log({
+        actorUserId: userId,
+        action: AUDIT_ACTIONS.APPOINTMENT_CAPACITY_ACKNOWLEDGED,
+        entityType: 'Appointment',
+        entityId: appointmentId,
+        afterJson: { capacity: capacity.capacity, booked: capacity.booked, scheduledStartAt, onReschedule: true },
+        reasonCode: 'CAPACITY_FULL',
+      });
+    }
+    if (latestStartOverridden) {
+      await this.auditService.log({
+        actorUserId: userId,
+        action: AUDIT_ACTIONS.APPOINTMENT_LATEST_START_OVERRIDDEN,
+        entityType: 'Appointment',
+        entityId: appointmentId,
+        afterJson: { scheduledStartAt, latestStart: ctx?.rules.booking.customerLatestStart ?? null, onReschedule: true },
+        reasonCode: 'AFTER_LATEST_START',
+      });
+    }
+  }
 
   /**
    * DMAIC Rule 1 — Same-day scheduling cutoff.

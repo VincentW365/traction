@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma, ServiceVisitStatus } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { CustomerDirectoryDto } from './dto/customer-directory.dto';
@@ -27,7 +28,89 @@ const RECENT_VISITS = 10;
 
 @Injectable()
 export class CustomersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // CR-2026-106 — identity-review decisions are audited. Optional so the existing
+    // one-argument spec construction keeps working.
+    @Optional() private readonly audit?: AuditService,
+  ) {}
+
+  // ---------------------------------------------------------------------------
+  // CR-2026-106 — pending identity review (docs/121 §D "Identity"). A customer
+  // created by self-service booking whose phone/email already belongs to another
+  // record is listed here for a PERSON to decide; nothing is merged automatically.
+  // ---------------------------------------------------------------------------
+
+  async identityReview() {
+    const rows = await this.prisma.customer.findMany({
+      where: { identityReviewStatus: 'PENDING_REVIEW', testDataRunId: null },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: {
+        id: true,
+        customerNumber: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        email: true,
+        createdAt: true,
+        possibleDuplicateOfId: true,
+        vehicles: { select: { id: true, plateNumber: true, make: true, model: true }, take: 3 },
+      },
+    });
+    const otherIds = rows.map((r) => r.possibleDuplicateOfId).filter((x): x is string => !!x);
+    const others = otherIds.length
+      ? await this.prisma.customer.findMany({
+          where: { id: { in: otherIds } },
+          select: { id: true, customerNumber: true, firstName: true, lastName: true, phone: true, email: true, vehicles: { select: { id: true, plateNumber: true, make: true, model: true }, take: 3 } },
+        })
+      : [];
+    const byId = new Map(others.map((o) => [o.id, o]));
+    return rows.map((r) => {
+      const other = r.possibleDuplicateOfId ? byId.get(r.possibleDuplicateOfId) ?? null : null;
+      return {
+        customer: { id: r.id, customerNumber: r.customerNumber, firstName: r.firstName, lastName: r.lastName, phone: r.phone, email: r.email, createdAt: r.createdAt, vehicles: r.vehicles },
+        possibleDuplicate: other,
+        matchedOn: other ? (other.phone === r.phone ? 'PHONE' : other.email && r.email && other.email.toLowerCase() === r.email.toLowerCase() ? 'EMAIL' : 'UNKNOWN') : 'UNKNOWN',
+      };
+    });
+  }
+
+  /**
+   * A person decides: DISTINCT (keep both, clear the flag) or MERGE_INTO_EXISTING
+   * (move the new record's vehicles + appointments to the existing customer and
+   * retire the new record's flag with a pointer). Both are audited; nothing here
+   * runs without an explicit decision.
+   */
+  async resolveIdentityReview(id: string, decision: 'DISTINCT' | 'MERGE_INTO_EXISTING', userId: string) {
+    const row = await this.prisma.customer.findUnique({ where: { id }, select: { id: true, identityReviewStatus: true, possibleDuplicateOfId: true, customerNumber: true } });
+    if (!row) throw new NotFoundException(`Customer ${id} not found`);
+    if (row.identityReviewStatus !== 'PENDING_REVIEW') throw new BadRequestException('This customer is not awaiting identity review.');
+    if (decision === 'DISTINCT') {
+      await this.prisma.customer.update({ where: { id }, data: { identityReviewStatus: 'CONFIRMED_DISTINCT' } });
+    } else {
+      const targetId = row.possibleDuplicateOfId;
+      if (!targetId) throw new BadRequestException('No existing record is linked to merge into.');
+      await this.prisma.$transaction(async (tx) => {
+        await tx.vehicle.updateMany({ where: { customerId: id }, data: { customerId: targetId } });
+        await tx.appointment.updateMany({ where: { customerId: id }, data: { customerId: targetId } });
+        await tx.serviceVisit.updateMany({ where: { customerId: id }, data: { customerId: targetId } });
+        await tx.customer.update({
+          where: { id },
+          data: { identityReviewStatus: 'MERGED', notes: `Merged into ${targetId} by identity review (CR-2026-106). Record retained for audit.` },
+        });
+      });
+    }
+    await this.audit?.log({
+      actorUserId: userId,
+      action: AUDIT_ACTIONS.CUSTOMER_IDENTITY_REVIEW_RESOLVED,
+      entityType: 'Customer',
+      entityId: id,
+      beforeJson: { identityReviewStatus: 'PENDING_REVIEW', possibleDuplicateOfId: row.possibleDuplicateOfId },
+      afterJson: { decision, customerNumber: row.customerNumber },
+    });
+    return { id, decision };
+  }
 
   /**
    * Search customers (front-desk/advisor). Search-first; returns the privacy-safe

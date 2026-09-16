@@ -37,6 +37,11 @@ export interface DayInput {
   isClosedDate: boolean;
   /** Is this the site's current local day. */
   isToday: boolean;
+  /**
+   * CR-2026-106 — no start time AFTER this instant is offered (e.g. 15:00 local for
+   * customers). Null = no cutoff. Enforced again server-side on confirm.
+   */
+  latestStart?: Date | null;
 }
 
 export interface Slot {
@@ -97,6 +102,7 @@ export function computeDayAvailability(now: Date, day: DayInput, existing: Exist
   const slots: Slot[] = [];
   for (let t = day.window.open.getTime(); t + duration <= day.window.close.getTime(); t += step) {
     if (t < earliest) continue;
+    if (day.latestStart && t > day.latestStart.getTime()) break;
     const start = new Date(t);
     slots.push({
       startAt: start.toISOString(),

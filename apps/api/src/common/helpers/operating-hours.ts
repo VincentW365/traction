@@ -58,6 +58,16 @@ export function dayWindow(cfg: OperatingHoursConfig | null | undefined, dayKey: 
   return { open, close };
 }
 
+/**
+ * CR-2026-106 — the instant of a site-local wall-clock time ("15:00") on a calendar
+ * day, or null when the time is malformed. Used for the latest-start cutoff.
+ */
+export function dayInstant(dayKey: string, hhmm: string, timeZone: string): Date | null {
+  if (!HHMM.test(hhmm)) return null;
+  const d = fromZonedTime(`${dayKey}T${pad(hhmm)}:00`, timeZone);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 function pad(hhmm: string): string {
   const [h, m] = hhmm.split(':');
   return `${h.padStart(2, '0')}:${m}`;

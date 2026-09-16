@@ -76,4 +76,12 @@ export class CreateAppointmentDto {
   @IsOptional()
   @IsBoolean()
   acknowledgeCapacity?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'CR-2026-106 — set true to book after the latest-start rule when staff_latest_start_enforced is on (audited).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  overrideLatestStart?: boolean;
 }

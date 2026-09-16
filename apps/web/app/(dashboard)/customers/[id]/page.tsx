@@ -13,6 +13,7 @@ import { StatusBadge } from '../../../../components/status-badge';
 import { CustomerNotificationComposer } from '../../../../components/notification-composer';
 import { CommunicationHistory } from '../../../../components/communication-history';
 import { VisitHistory } from '../../../../components/visit-history';
+import { SendBookingLink } from '../../../../components/send-booking-link';
 
 interface Vehicle {
   id: string;
@@ -784,8 +785,10 @@ export default function CustomerDetailPage() {
 
       {/* Quick Actions — booking always available; check-in only when there is a
           CONFIRMED appointment for this customer today (check-in is per-appointment). */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Link href={`/appointments/new?customerId=${customer.id}`} className="btn-primary">Schedule Appointment</Link>
+        {/* CR-2026-106 — hand the customer the secure public booking link (WhatsApp / SMS / copy) */}
+        <SendBookingLink phone={customer.phoneRaw ?? customer.phones?.[0] ?? null} />
         {hasCheckinableToday && (
           <Link href="/check-in" className="btn-secondary">Check In Today&apos;s Appointment</Link>
         )}

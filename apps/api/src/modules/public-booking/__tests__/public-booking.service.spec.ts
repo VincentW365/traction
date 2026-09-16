@@ -37,6 +37,8 @@ interface Opts {
   identifyVehicle?: unknown;
   manageAppt?: unknown;
   rescheduleCount?: number;
+  /** CR-2026-106 — an existing customer sharing the new customer's phone/email. */
+  duplicateCustomer?: { id: string; phone: string } | null;
 }
 
 function build(o: Opts = {}) {
@@ -64,7 +66,7 @@ function build(o: Opts = {}) {
       }),
       update: vi.fn(async ({ data }: any) => ({ ...(o.manageAppt as object), ...data })),
     },
-    customer: { create: vi.fn(async () => ({ id: 'cust-new' })) },
+    customer: { create: vi.fn(async () => ({ id: 'cust-new' })), findFirst: vi.fn(async () => o.duplicateCustomer ?? null) },
     vehicle: {
       findUnique: vi.fn(async () => null),
       findFirst: vi.fn(async () => ({ id: 'veh-1' })),
@@ -279,5 +281,91 @@ describe('manage link — cancel / reschedule rules', () => {
     const v = await h.service.manageWithHistory('t');
     expect(v.canCancel).toBe(false);
     expect(v.canReschedule).toBe(false);
+  });
+});
+
+/**
+ * CR-2026-106 — identification pairs, service-request capture, pending identity,
+ * and the server-enforced latest start (docs/121 §D).
+ */
+describe('CR-2026-106 — identify by mobile + email', () => {
+  it('email pair: exactly one customer with that email AND matching mobile → known', async () => {
+    const h = build();
+    h.prisma.customer = {
+      findMany: vi.fn(async () => [{ id: 'c1', firstName: 'Jane', phone: '8765550100', vehicles: [{ id: 'v1', plateNumber: 'ABC1234', make: 'Toyota', model: 'Corolla', modelYear: 2019 }] }]),
+    };
+    const res = await h.service.identify({ phone: '(876) 555-0100', email: 'Jane@Example.com' }, 'ip1');
+    expect(res.known).toBe(true);
+    if (!res.known) return;
+    expect(res.identifiedBy).toBe('EMAIL');
+    expect(res.vehicles?.every((v) => v.matched === false)).toBe(true);
+    expect(JSON.stringify(res)).not.toContain('ABC1234');
+  });
+
+  it('email pair with a different mobile, or an ambiguous email → not known; no pair at all → 400', async () => {
+    const h = build();
+    h.prisma.customer = { findMany: vi.fn(async () => [{ id: 'c1', firstName: 'Jane', phone: '8765559999', vehicles: [] }]) };
+    expect(await h.service.identify({ phone: '8765550100', email: 'jane@example.com' }, 'ip1')).toEqual({ known: false });
+    h.prisma.customer = { findMany: vi.fn(async () => [{ id: 'c1', firstName: 'A', phone: '8765550100', vehicles: [] }, { id: 'c2', firstName: 'B', phone: '8765550100', vehicles: [] }]) };
+    expect(await h.service.identify({ phone: '8765550100', email: 'shared@example.com' }, 'ip1')).toEqual({ known: false });
+    await expect(h.service.identify({ phone: '8765550100' }, 'ip1')).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe('CR-2026-106 — service request capture + pending identity + latest start', () => {
+  it('stores reason/concern/description/mileage on the appointment and per service; phone stored digits-only', async () => {
+    const h = build();
+    const start = tomorrowAt15Z();
+    const res = await h.service.confirm(
+      { ...newBooking(start), serviceRequest: { reasonForVisit: 'Warning light on', concern: 'Engine light since Monday', description: 'Also a squeak', mileage: 84500 } } as never,
+      'ip1',
+    );
+    const created = h.tx.appointment.create.mock.calls[0][0].data;
+    expect(created.notes).toContain('Reason for visit: Warning light on');
+    expect(created.notes).toContain('Customer concern: Engine light since Monday');
+    expect(created.notes).toContain('Reported mileage: 84,500');
+    expect(created.customerReportedMileage).toBe(84500);
+    expect(created.services.create[0].requestedNotes).toContain('Warning light on');
+    expect((res as { serviceRequest?: { mileage: number } }).serviceRequest?.mileage).toBe(84500);
+    expect(h.tx.customer.create.mock.calls[0][0].data.phone).toBe('8765550100');
+    expect(h.tx.customer.create.mock.calls[0][0].data.identityReviewStatus).toBeUndefined();
+  });
+
+  it('a new customer whose mobile already belongs to a record is FLAGGED for review, never merged', async () => {
+    const h = build({ duplicateCustomer: { id: 'existing-1', phone: '8765550100' } });
+    await h.service.confirm(newBooking(tomorrowAt15Z()) as never, 'ip1');
+    const data = h.tx.customer.create.mock.calls[0][0].data;
+    expect(data.identityReviewStatus).toBe('PENDING_REVIEW');
+    expect(data.possibleDuplicateOfId).toBe('existing-1');
+    // the booking is on the NEW record (cust-new), not silently attached to the existing one
+    expect(h.tx.appointment.create.mock.calls[0][0].data.customerId).toBe('cust-new');
+    expect(h.audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'CUSTOMER_IDENTITY_REVIEW_FLAGGED', entityId: 'cust-new', actorUserId: null }));
+  });
+
+  it('rejects a start after customer_booking_latest_start with AFTER_LATEST_START (server-side), and never offers such a slot', async () => {
+    const h = build({ bookingRules: [{ ruleKey: 'customer_booking_latest_start', valueJson: '15:00', siteId: 'site-1' }] });
+    // Tomorrow 15:20 Jamaica = 20:20Z
+    const late = tomorrowAt15Z();
+    late.setUTCHours(20, 20, 0, 0);
+    await expect(h.service.confirm(newBooking(late) as never, 'ip1')).rejects.toMatchObject({ response: { code: 'AFTER_LATEST_START', latestStart: '15:00', latestStartLabel: '3:00 PM' } });
+    expect(h.tx.appointment.create).not.toHaveBeenCalled();
+    const avail = await h.service.availability(['OIL-01'], undefined, 3, 'ip1');
+    expect(avail.latestStartLabel).toBe('3:00 PM');
+    for (const d of avail.days) for (const s of d.slots) {
+      const local = new Date(s.startAt).getUTCHours() * 60 + new Date(s.startAt).getUTCMinutes(); // Jamaica = UTC-5, no DST
+      expect(local).toBeLessThanOrEqual(20 * 60);
+    }
+    // 15:00 exactly is still allowed
+    const onTime = tomorrowAt15Z();
+    onTime.setUTCHours(20, 0, 0, 0);
+    await h.service.confirm(newBooking(onTime) as never, 'ip1');
+    expect(h.tx.appointment.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('site info exposes the latest start for the page', async () => {
+    const h = build();
+    const info = await h.service.getSiteInfo();
+    expect(info.latestStart).toBe('15:00');
+    expect(info.latestStartLabel).toBe('3:00 PM');
   });
 });

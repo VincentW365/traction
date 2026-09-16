@@ -23,6 +23,11 @@ import { Type } from 'class-transformer';
  * CR-2026-105c — public booking DTOs. Every public body/query is validated by the
  * global ValidationPipe (whitelist + forbidNonWhitelisted), so nothing beyond
  * these fields reaches the service.
+ *
+ * CR-2026-106 — identification accepts a second pair (mobile + email) so a
+ * customer without the plate to hand can still be recognised; names are never an
+ * identity key. The confirm body carries the service-request facts the Job Sheet
+ * needs (reason, concern, description, mileage).
  */
 
 export class IdentifyDto {
@@ -30,9 +35,13 @@ export class IdentifyDto {
   @IsString() @IsNotEmpty() @MaxLength(30)
   phone!: string;
 
-  @ApiProperty({ description: 'Licence plate' })
-  @IsString() @IsNotEmpty() @MaxLength(20)
-  plateNumber!: string;
+  @ApiPropertyOptional({ description: 'Licence plate (pair 1: mobile + plate)' })
+  @IsOptional() @IsString() @MaxLength(20)
+  plateNumber?: string;
+
+  @ApiPropertyOptional({ description: 'Email on file (pair 2: mobile + email)' })
+  @IsOptional() @IsEmail() @MaxLength(120)
+  email?: string;
 }
 
 export class AvailabilityQueryDto {
@@ -83,6 +92,25 @@ export class NewVehicleDto {
   modelYear?: number;
 }
 
+/** CR-2026-106 — what the customer tells us about the visit (Job Sheet preparation). */
+export class ServiceRequestDto {
+  @ApiPropertyOptional({ description: 'Why they are coming in (e.g. routine service, warning light, noise)' })
+  @IsOptional() @IsString() @MaxLength(120)
+  reasonForVisit?: string;
+
+  @ApiPropertyOptional({ description: 'Main concern in their words' })
+  @IsOptional() @IsString() @MaxLength(500)
+  concern?: string;
+
+  @ApiPropertyOptional({ description: 'Anything else the workshop should know' })
+  @IsOptional() @IsString() @MaxLength(1000)
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Current odometer reading as the customer reads it' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(9_999_999)
+  mileage?: number;
+}
+
 export class ConfirmBookingDto {
   @ApiPropertyOptional({ description: 'Session token from /identify (existing customer)' })
   @IsOptional() @IsString() @MaxLength(2000)
@@ -92,7 +120,7 @@ export class ConfirmBookingDto {
   @IsOptional() @ValidateNested() @Type(() => NewCustomerDto)
   customer?: NewCustomerDto;
 
-  @ApiPropertyOptional({ format: 'uuid', description: 'One of the identified customer\'s vehicles' })
+  @ApiPropertyOptional({ format: 'uuid', description: "One of the identified customer's vehicles" })
   @IsOptional() @IsUUID()
   vehicleId?: string;
 
@@ -107,6 +135,10 @@ export class ConfirmBookingDto {
   @ApiProperty({ description: 'Chosen slot start (ISO 8601)' })
   @IsDateString()
   scheduledStartAt!: string;
+
+  @ApiPropertyOptional({ type: ServiceRequestDto, description: 'CR-2026-106 — reason / concern / description / mileage' })
+  @IsOptional() @ValidateNested() @Type(() => ServiceRequestDto)
+  serviceRequest?: ServiceRequestDto;
 }
 
 export class CancelBookingDto {

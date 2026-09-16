@@ -806,7 +806,14 @@ model Customer {
   testDataRunId String?      @map("test_data_run_id") @db.Uuid
   testDataRun   TestDataRun? @relation(fields: [testDataRunId], references: [id], onDelete: Restrict)
 
+  // CR-2026-106 — pending identity (docs/121 §D "Identity"): a customer created
+  // online whose phone/plate/email also belongs to another record is FLAGGED for
+  // review, never merged automatically. Nullable, additive.
+  identityReviewStatus  String? @map("identity_review_status") // PENDING_REVIEW | CONFIRMED_DISTINCT
+  possibleDuplicateOfId String? @map("possible_duplicate_of_id") @db.Uuid
+
   @@index([testDataRunId])
+  @@index([identityReviewStatus])
   // CR-2026-106 — search ordering/filters (docs/121 §C1)
   @@index([lastName])
   @@index([firstName])
@@ -940,6 +947,10 @@ model Appointment {
   appointmentNumber    String?   @unique @map("appointment_number")
   manageTokenHash      String?   @unique @map("manage_token_hash")
   manageTokenExpiresAt DateTime? @map("manage_token_expires_at") @db.Timestamptz
+  // CR-2026-106 — what the customer told us when booking (Job Sheet preparation):
+  // the odometer reading they reported; reason/concern/description live in `notes`
+  // and `AppointmentService.requestedNotes`. Nullable, additive.
+  customerReportedMileage Int? @map("customer_reported_mileage")
   createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz
 

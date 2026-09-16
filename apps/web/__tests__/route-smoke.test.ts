@@ -30,6 +30,7 @@ const ROUTE_INVENTORY = [
   { route: '/appointments/new', file: '(dashboard)/appointments/new/page.tsx', access: 'auth', description: 'New appointment wizard' },
   { route: '/customers', file: '(dashboard)/customers/page.tsx', access: 'auth', description: 'Customer search' },
   { route: '/customers/[id]', file: '(dashboard)/customers/[id]/page.tsx', access: 'auth', description: 'Customer detail' },
+  { route: '/customers/identity-review', file: '(dashboard)/customers/identity-review/page.tsx', access: 'auth', description: 'CR-2026-106 pending identity review (self-service duplicates)' },
   { route: '/vehicles/[id]', file: '(dashboard)/vehicles/[id]/page.tsx', access: 'auth', description: 'Vehicle detail' },
   { route: '/technician', file: '(dashboard)/technician/page.tsx', access: 'auth', description: 'Technician work view' },
   { route: '/technician/jobs/[orderId]', file: '(dashboard)/technician/jobs/[orderId]/page.tsx', access: 'auth', description: 'Technician job workspace (CR-2026-101)' },

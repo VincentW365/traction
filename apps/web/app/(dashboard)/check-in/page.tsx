@@ -38,6 +38,10 @@ interface AppointmentResult {
   scheduledStartAt: string;
   status: string;
   services: Array<{ serviceType: { name: string; code: string } }>;
+  /** CR-2026-106 — what the customer told us when booking online. */
+  notes?: string | null;
+  customerReportedMileage?: number | null;
+  sourceChannel?: string | null;
 }
 
 interface ServiceType {
@@ -454,6 +458,14 @@ export default function CheckInPage() {
                         {appt.services.map((s) => s.serviceType.name).join(', ')}
                       </p>
                       <div className="mt-1"><StatusBadge status={appt.status} /></div>
+                      {appt.notes?.startsWith('[Customer booking]') && (
+                        <p className="mt-1 max-w-md text-xs text-slate-600" data-testid="booking-notes">Customer said: {appt.notes.replace(/^\[Customer booking\]\s*/, '')}</p>
+                      )}
+                      {appt.customerReportedMileage != null && !mileageIn && (
+                        <button type="button" onClick={() => setMileageIn(String(appt.customerReportedMileage))} className="mt-1 text-xs font-medium text-blue-700 underline">
+                          Use reported mileage ({appt.customerReportedMileage.toLocaleString()})
+                        </button>
+                      )}
                     </div>
                     {['CONFIRMED', 'DRAFT', 'RESCHEDULED'].includes(appt.status) && (
                       <button onClick={() => checkInMutation.mutate(appt.id)}

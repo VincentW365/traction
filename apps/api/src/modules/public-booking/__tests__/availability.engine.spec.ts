@@ -117,3 +117,38 @@ describe('bookingRulesFromRows', () => {
     expect(r.slotIntervalMinutes).toBe(BOOKING_DEFAULTS.slotIntervalMinutes);
   });
 });
+
+/**
+ * CR-2026-106 — the latest-start cutoff (customer_booking_latest_start, e.g. 15:00)
+ * is applied by the ENGINE, not hidden in the browser: no start after the instant
+ * is produced at all, and the rule parses/validates HH:mm.
+ */
+describe('CR-2026-106 — latest start', () => {
+  it('produces no start time after latestStart (15:00 local = 20:00Z for America/Jamaica)', () => {
+    const cutoff = T('2026-09-14T20:00:00Z');
+    const r = computeDayAvailability(now, { ...day, latestStart: cutoff }, [], rules);
+    expect(r.slots.length).toBeGreaterThan(0);
+    for (const s of r.slots) expect(new Date(s.startAt).getTime()).toBeLessThanOrEqual(cutoff.getTime());
+    // 15:00 itself is still offered ("after 3 PM" is excluded, 3 PM is not)
+    expect(r.slots.some((s) => s.startAt === cutoff.toISOString())).toBe(true);
+    // without the rule the day runs until close − duration
+    const all = computeDayAvailability(now, day, [], rules);
+    expect(all.slots.length).toBeGreaterThan(r.slots.length);
+  });
+
+  it('bookingRulesFromRows parses HH:mm, rejects junk, allows clearing, and reads the staff/share rules', () => {
+    const r = bookingRulesFromRows([
+      { ruleKey: 'customer_booking_latest_start', valueJson: '15:00', siteId: 's' },
+      { ruleKey: 'staff_latest_start_enforced', valueJson: true, siteId: 's' },
+      { ruleKey: 'booking_share_message_template', valueJson: 'Book here: {bookingUrl}', siteId: 's' },
+    ]);
+    expect(r.customerLatestStart).toBe('15:00');
+    expect(r.staffLatestStartEnforced).toBe(true);
+    expect(r.shareMessageTemplate).toBe('Book here: {bookingUrl}');
+    expect(bookingRulesFromRows([{ ruleKey: 'customer_booking_latest_start', valueJson: '3pm', siteId: 's' }]).customerLatestStart).toBe(BOOKING_DEFAULTS.customerLatestStart);
+    expect(bookingRulesFromRows([{ ruleKey: 'customer_booking_latest_start', valueJson: '', siteId: 's' }]).customerLatestStart).toBeNull();
+    expect(bookingRulesFromRows([{ ruleKey: 'customer_booking_latest_start', valueJson: '9:30', siteId: 's' }]).customerLatestStart).toBe('09:30');
+    expect(BOOKING_DEFAULTS.customerLatestStart).toBe('15:00');
+    expect(BOOKING_DEFAULTS.staffLatestStartEnforced).toBe(false);
+  });
+});

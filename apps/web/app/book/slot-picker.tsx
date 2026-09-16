@@ -24,22 +24,34 @@ export interface Availability {
   timezone: string;
   nextAvailable: Slot | null;
   days: DayAvailability[];
+  /** CR-2026-106 — "3:00 PM" when a latest-start rule applies to the viewer. */
+  latestStartLabel?: string | null;
+  range?: { from: string; to: string };
 }
 
 export function SlotPicker({
   data,
   selected,
   onSelect,
+  emptyText,
+  onlyDate,
+  hideNext,
 }: {
   data: Availability;
   selected: Slot | null;
   onSelect: (slot: Slot) => void;
+  /** CR-2026-106 — wording when nothing is open (staff and customers differ). */
+  emptyText?: string;
+  /** CR-2026-106 — show one day only (the staff wizard's Time step). */
+  onlyDate?: string | null;
+  hideNext?: boolean;
 }) {
   const tz = data.timezone;
-  const openDays = data.days.filter((d) => !d.closed && d.slots.length > 0);
+  const openDays = data.days.filter((d) => !d.closed && d.slots.length > 0 && (!onlyDate || d.date === onlyDate));
+  const showNext = !hideNext && !onlyDate;
   return (
     <div className="space-y-5">
-      {data.nextAvailable ? (
+      {showNext && data.nextAvailable ? (
         <div className="rounded-xl border-2 border-blue-600 bg-blue-50 p-4">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-blue-700">Next available appointment</p>
           <p className="mt-1 text-xl font-bold text-slate-900">{fmtWhen(data.nextAvailable.startAt, tz)}</p>
@@ -47,22 +59,26 @@ export function SlotPicker({
           <button
             type="button"
             onClick={() => onSelect(data.nextAvailable!)}
-            className={`mt-3 w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
+            className={`mt-3 w-full min-h-11 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
               selected?.startAt === data.nextAvailable.startAt ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'
             }`}
           >
             {selected?.startAt === data.nextAvailable.startAt ? '✓ Selected' : 'Choose this time'}
           </button>
         </div>
-      ) : (
+      ) : openDays.length === 0 ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          No online appointments are available in this period. Please try a later date or call the service centre.
+          {emptyText ?? 'No online appointments are available in this period. Please try a later date or call the service centre.'}
         </div>
+      ) : null}
+
+      {data.latestStartLabel && openDays.length > 0 && (
+        <p className="text-xs text-slate-500">Appointments start no later than {data.latestStartLabel}.</p>
       )}
 
       {openDays.length > 0 && (
         <div>
-          <p className="mb-2 text-sm font-semibold text-slate-800">Or pick another time</p>
+          <p className="mb-2 text-sm font-semibold text-slate-800">{showNext ? 'Or pick another time' : 'Available times'}</p>
           <div className="space-y-3">
             {openDays.map((d) => (
               <div key={d.date} className="rounded-lg border border-slate-200 bg-white p-3">
@@ -79,7 +95,7 @@ export function SlotPicker({
                         type="button"
                         disabled={!s.available}
                         onClick={() => onSelect(s)}
-                        className={`rounded-md px-2.5 py-1.5 text-xs font-medium tabular-nums transition-colors ${
+                        className={`min-h-11 min-w-[4.5rem] rounded-md px-2.5 py-1.5 text-sm font-medium tabular-nums transition-colors ${
                           isSel
                             ? 'bg-emerald-600 text-white'
                             : s.available

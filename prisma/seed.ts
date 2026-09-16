@@ -451,6 +451,10 @@ async function main() {
     { ruleKey: 'staff_capacity_warning_enabled', valueJson: true, notes: 'CR-2026-105c: staff creating an appointment past workshop capacity get a warning they must acknowledge (audited).' },
     { ruleKey: 'appointment_auto_missed_enabled', valueJson: false, notes: 'CR-2026-105c: hourly sweep marks un-checked-in appointments MISSED after missed_threshold_min. OFF by default — enabling classifies the whole backlog on the first run.' },
     { ruleKey: 'appointment_duration_source', valueJson: 'DEFAULT', notes: 'CR-2026-105c: DEFAULT = every online booking is planned at default_appointment_duration_minutes (management standard 80); CATALOGUE = use ServiceType.baseDurationMinutes when set.' },
+    // CR-2026-106 — scheduling rules shared by the public page and the staff wizard.
+    { ruleKey: 'customer_booking_latest_start', valueJson: '15:00', notes: 'CR-2026-106: latest start time (site-local HH:mm) a CUSTOMER may book online — later slots are never offered and are rejected on confirm (AFTER_LATEST_START). Empty = no cutoff.' },
+    { ruleKey: 'staff_latest_start_enforced', valueJson: false, notes: 'CR-2026-106: when true, staff bookings are held to customer_booking_latest_start too; an explicit, audited override is then required to book later.' },
+    { ruleKey: 'booking_share_message_template', valueJson: 'Hi! You can book your next service at {siteName} online here: {bookingUrl} — pick your vehicle, the service you need, and a time that suits you.', notes: 'CR-2026-106: text staff send (WhatsApp/SMS) with the public booking link; {bookingUrl} and {siteName} are replaced.' },
   ];
 
   for (const r of cr105cRules) {
