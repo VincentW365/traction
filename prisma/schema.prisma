@@ -897,6 +897,21 @@ model ServiceType {
   standPreferred           Boolean  @default(false) @map("stand_preferred")
   mobileJackAllowed        Boolean  @default(true) @map("mobile_jack_allowed")
   isActive                 Boolean  @default(true) @map("is_active")
+
+  // --- CR-2026-108 Stage 4 — self-service booking configuration ---
+  /// May a CUSTOMER book this online? Defaults FALSE so nothing becomes publicly
+  /// bookable merely by existing: a diagnostic or highly variable repair must be
+  /// enabled deliberately, not inherited from `isActive`. Only enforced once the
+  /// `booking_enforce_online_bookable` rule is switched on (two-phase rollout), so
+  /// this migration changes nothing a customer sees.
+  bookableOnline           Boolean  @default(false) @map("bookable_online")
+  /// What a customer is shown, when internal terminology would not help them.
+  /// Null = use `name`.
+  customerFacingName       String?  @map("customer_facing_name")
+  /// Operational turnaround added to the SCHEDULING occupancy only — never to the
+  /// duration quoted to the customer. A 60-minute service with a 15-minute buffer
+  /// occupies 75 minutes of capacity while the customer is still told 60.
+  bookingBufferMinutes     Int      @default(0) @map("booking_buffer_minutes")
   createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                DateTime @updatedAt @map("updated_at") @db.Timestamptz
 

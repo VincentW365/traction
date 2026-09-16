@@ -454,6 +454,11 @@ async function main() {
     // CR-2026-106 — scheduling rules shared by the public page and the staff wizard.
     { ruleKey: 'customer_booking_latest_start', valueJson: '15:00', notes: 'CR-2026-106: latest start time (site-local HH:mm) a CUSTOMER may book online — later slots are never offered and are rejected on confirm (AFTER_LATEST_START). Empty = no cutoff.' },
     { ruleKey: 'staff_latest_start_enforced', valueJson: false, notes: 'CR-2026-106: when true, staff bookings are held to customer_booking_latest_start too; an explicit, audited override is then required to book later.' },
+    // CR-2026-108 Stage 4A — the activation switch for catalogue-driven online
+    // service selection. Seeded FALSE so the schema and the admin controls can
+    // deploy without /book suddenly offering nothing; management turns it on from
+    // Settings once the readiness audit and preflight pass. Never a redeploy.
+    { ruleKey: 'booking_enforce_online_bookable', valueJson: false, notes: 'CR-2026-108: when true, /book offers ONLY services with bookableOnline=true. False preserves the pre-CR behaviour (every active, non-external, non-excluded service). Activation is gated by a preflight — see docs/122 §E.' },
     { ruleKey: 'booking_share_message_template', valueJson: 'Hi! You can book your next service at {siteName} online here: {bookingUrl} — pick your vehicle, the service you need, and a time that suits you.', notes: 'CR-2026-106: text staff send (WhatsApp/SMS) with the public booking link; {bookingUrl} and {siteName} are replaced.' },
   ];
 

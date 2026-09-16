@@ -14,7 +14,8 @@ Delivered in stages, each with tests:
 | 1 | Safe notification / UAT handling (§B) | complete |
 | 2 | Internal availability decision + reason model (§C) | complete |
 | 3 | Admin Booking Simulator + UAT session (§D) | complete |
-| 4 | Catalogue / self-service service configuration | not started |
+| 4A | Catalogue capability, enforcement OFF (§E) | complete |
+| 4B–4F | Readiness audit, configuration, preflight, preview, activation | not started |
 | 5 | Resource-aware capacity engine (SHADOW only) | not started |
 | 6 | Reservation semantics + end-to-end validation | not started |
 
@@ -559,3 +560,78 @@ they are in a session is exactly how a real customer gets contacted.
 cross-origin hop between the booking page and the API. Pinned by test.)
 
 24 token tests including the mandated replay test. Full API suite: **1308 passed**.
+
+---
+
+## §E. Stage 4A — catalogue capability, with enforcement OFF
+
+### E1. The trap this avoids
+
+`bookableOnline` has to default to **false**: a diagnostic or highly variable
+repair must be enabled deliberately, never inherited from `isActive`. But that
+same default would empty the public service list the instant the migration landed
+— online booking silently offering nothing, with no error anywhere.
+
+So the column and the behaviour are separated. Stage 4A ships the capability; a
+configuration key decides when it bites.
+
+### E2. What shipped
+
+**Schema** (additive, no backfill, nothing a customer sees changes):
+
+| Column | Default | Meaning |
+| --- | --- | --- |
+| `bookable_online` | `false` | may a CUSTOMER book this online |
+| `customer_facing_name` | `null` | what a customer is shown; null = use `name` |
+| `booking_buffer_minutes` | `0` | workshop turnaround, added to SCHEDULING occupancy only |
+
+**Activation key** `booking_enforce_online_bookable`, seeded **false**. While
+false, `listServices` applies exactly the pre-CR filter (`isActive`, not external,
+not excluded). When true it additionally requires `bookableOnline`. The switch is
+configuration — flipped from Settings, never by a redeploy.
+
+**Admin controls** on Setup → Services: an Online column, the customer-facing name,
+and the buffer, all editable inline and audited through the existing
+`SERVICE_TYPE_UPDATE` path.
+
+**Customer-facing name** is used by `/book` when set, falling back to the internal
+name — and a blank/whitespace value counts as unset, so a half-filled field can
+never render an empty service name to a customer.
+
+### E3. Duration vs occupancy — kept separate (§9)
+
+`bookingBufferMinutes` is workshop turnaround, not repair time. A 60-minute
+service with a 15-minute buffer will occupy **75 minutes of capacity** while the
+customer is still told **60**. Telling a customer their oil change takes 75
+minutes because the bay needs cleaning afterwards would simply be untrue.
+
+Stage 4A stores the value and shows it to administrators; nothing consumes it yet.
+It is wired into the availability calculation in 4F, alongside the DEFAULT →
+CATALOGUE duration switch, so that the two concepts —
+`plannedServiceMinutes` (quoted) and `schedulingOccupancyMinutes` (reserved) —
+are introduced together rather than half-applied.
+
+### E4. Evidence
+
+Live, after migrating and seeding, with **zero** services marked bookable and
+enforcement off:
+
+```
+booking_enforce_online_bookable : false
+bookable_online services        : 0  (of 31 active)
+/book services offered          : 30   ← unchanged
+```
+
+10 tests: the rule is registered and defaults off; junk falls back to off; legacy
+mode adds no `bookableOnline` filter at all; enforced mode adds it and still
+honours the existing exclusions rather than replacing them; customer-facing name
+used, falls back, and treats blank as unset. Full API suite: **1318 passed**.
+
+### E5. Still to come (4B–4F)
+
+4B readiness audit · 4C explicit configuration of approved services · 4D
+activation preflight + public-catalogue preview · 4E enable enforcement · 4F
+DEFAULT vs CATALOGUE duration preview, then the duration switch.
+
+No service has been made bookable, and no starting set has been seeded — that is
+management's decision after the readiness audit, not a default.

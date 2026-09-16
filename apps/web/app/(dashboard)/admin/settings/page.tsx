@@ -85,6 +85,10 @@ const RULE_CATEGORIES: Record<string, { label: string; keys: string[] }> = {
       'customer_booking_latest_start',
       'staff_latest_start_enforced',
       'booking_share_message_template',
+      // CR-2026-108 Stage 4A — activation switch for catalogue-driven service
+      // selection. Off preserves today's behaviour; run the readiness audit and
+      // preflight before switching it on.
+      'booking_enforce_online_bookable',
       'appointment_auto_missed_enabled',
     ],
   },

@@ -27,6 +27,8 @@ export const BOOKING_RULE_KEYS = [
   'customer_booking_latest_start',
   'staff_latest_start_enforced',
   'booking_share_message_template',
+  // CR-2026-108 Stage 4A — activation switch for catalogue-driven service selection.
+  'booking_enforce_online_bookable',
 ] as const;
 
 export interface BookingRules {
@@ -52,6 +54,12 @@ export interface BookingRules {
   staffLatestStartEnforced: boolean;
   /** CR-2026-106 — message staff send with the booking link; {bookingUrl} and {siteName} are replaced. */
   shareMessageTemplate: string;
+  /**
+   * CR-2026-108 Stage 4A — when true, /book offers ONLY services explicitly marked
+   * bookableOnline. FALSE preserves the pre-CR behaviour exactly, which is what lets
+   * the schema and admin controls ship without the public page going blank.
+   */
+  enforceOnlineBookable: boolean;
 }
 
 export const BOOKING_DEFAULTS: BookingRules = {
@@ -75,6 +83,7 @@ export const BOOKING_DEFAULTS: BookingRules = {
   customerLatestStart: '15:00',
   staffLatestStartEnforced: false,
   shareMessageTemplate: 'Hi! You can book your next service at {siteName} online here: {bookingUrl} — pick your vehicle, the service you need, and a time that suits you.',
+  enforceOnlineBookable: false,
 };
 
 const HHMM = /^([01]?\d|2[0-3]):[0-5]\d$/;
@@ -121,6 +130,7 @@ export function bookingRulesFromRows(rows: Array<{ ruleKey: string; valueJson: u
         break;
       case 'staff_latest_start_enforced': r.staffLatestStartEnforced = bool(v, r.staffLatestStartEnforced); break;
       case 'booking_share_message_template': if (typeof v === 'string' && v.trim()) r.shareMessageTemplate = v; break;
+      case 'booking_enforce_online_bookable': r.enforceOnlineBookable = bool(v, r.enforceOnlineBookable); break;
       default: break;
     }
   }

@@ -42,6 +42,10 @@ export class ServiceTypesController {
         requiresPowerWash: true,
         standPreferred: true,
         mobileJackAllowed: true,
+        // CR-2026-108 Stage 4A — self-service booking configuration.
+        bookableOnline: true,
+        customerFacingName: true,
+        bookingBufferMinutes: true,
       },
     });
   }

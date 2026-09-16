@@ -224,15 +224,30 @@ export class PublicBookingService {
   async listServices() {
     const site = await this.resolveSite();
     const { booking, eta } = await this.loadRules(site.id);
+    // CR-2026-108 Stage 4A — the catalogue filter is CONFIGURATION, not code. While
+    // `booking_enforce_online_bookable` is false the selection is exactly what it
+    // was before this CR; when management switches it on (after the readiness audit
+    // and preflight) only explicitly approved services are offered. That ordering
+    // is what stops `bookableOnline` defaulting to false from emptying /book the
+    // moment the migration lands.
     const types = await this.prisma.serviceType.findMany({
-      where: { isActive: true, isExternal: false, code: { notIn: booking.excludedServiceCodes } },
-      select: { code: true, name: true, family: true, baseDurationMinutes: true },
+      where: {
+        isActive: true,
+        isExternal: false,
+        code: { notIn: booking.excludedServiceCodes },
+        ...(booking.enforceOnlineBookable ? { bookableOnline: true } : {}),
+      },
+      select: { code: true, name: true, customerFacingName: true, family: true, baseDurationMinutes: true },
       orderBy: [{ family: 'asc' }, { name: 'asc' }],
     });
     return types.map((t) => ({
       code: t.code,
-      name: t.name,
+      // CR-2026-108 — internal terminology stays internal where a customer-facing
+      // name has been given; otherwise nothing changes.
+      name: t.customerFacingName?.trim() || t.name,
       family: t.family,
+      // The duration a CUSTOMER is quoted: the service itself, never the workshop
+      // turnaround buffer, which is scheduling occupancy and not repair time.
       plannedMinutes: this.avail.plannedMinutes([t], { booking, eta, hours: null }),
     }));
   }

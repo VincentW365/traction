@@ -19,6 +19,10 @@ interface ServiceType {
   requiredBayType: string | null;
   partsPrepositionRequired?: boolean;
   isActive?: boolean;
+  // CR-2026-108 Stage 4A — self-service booking configuration.
+  bookableOnline?: boolean;
+  customerFacingName?: string | null;
+  bookingBufferMinutes?: number;
 }
 
 export default function ServiceCataloguePage() {
@@ -27,6 +31,10 @@ export default function ServiceCataloguePage() {
   const [editingCode, setEditingCode] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editDuration, setEditDuration] = useState('');
+  // CR-2026-108 Stage 4A
+  const [editCustomerName, setEditCustomerName] = useState('');
+  const [editBuffer, setEditBuffer] = useState('');
+  const [editBookable, setEditBookable] = useState(false);
 
   const stQuery = useQuery<ServiceType[]>({
     queryKey: ['service-types-admin'],
@@ -50,6 +58,10 @@ export default function ServiceCataloguePage() {
     setEditingCode(st.code);
     setEditName(st.name);
     setEditDuration(String(st.baseDurationMinutes));
+    // CR-2026-108 Stage 4A
+    setEditCustomerName(st.customerFacingName ?? '');
+    setEditBuffer(String(st.bookingBufferMinutes ?? 0));
+    setEditBookable(!!st.bookableOnline);
   }
 
   return (
@@ -85,6 +97,9 @@ export default function ServiceCataloguePage() {
                 <th>Skill</th>
                 <th>Bay</th>
                 <th>Parts</th>
+                <th>Online</th>
+                <th>Shown to customer</th>
+                <th>Buffer</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -111,9 +126,34 @@ export default function ServiceCataloguePage() {
                   <td>{st.partsPrepositionRequired ? <span className="badge bg-amber-50 text-amber-700 text-[10px]">Parts</span> : '--'}</td>
                   <td>
                     {editingCode === st.code ? (
+                      <input type="checkbox" checked={editBookable} onChange={(e) => setEditBookable(e.target.checked)} />
+                    ) : st.bookableOnline ? (
+                      <span className="badge bg-blue-50 text-blue-700 text-[10px]">Bookable</span>
+                    ) : (
+                      <span className="text-[10px] text-slate-400">Not offered</span>
+                    )}
+                  </td>
+                  <td className="text-xs text-slate-600">
+                    {editingCode === st.code ? (
+                      <input type="text" value={editCustomerName} placeholder={st.name} onChange={(e) => setEditCustomerName(e.target.value)} className="input-field text-xs w-40" />
+                    ) : (st.customerFacingName || <span className="text-slate-400">same as name</span>)}
+                  </td>
+                  <td className="text-xs text-slate-600">
+                    {editingCode === st.code ? (
+                      <input type="number" min={0} value={editBuffer} onChange={(e) => setEditBuffer(e.target.value)} className="input-field text-xs w-16" />
+                    ) : st.bookingBufferMinutes ? `+${st.bookingBufferMinutes}m` : '--'}
+                  </td>
+                  <td>
+                    {editingCode === st.code ? (
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => updateMutation.mutate({ code: st.code, data: { name: editName, baseDurationMinutes: parseInt(editDuration, 10) } })}
+                          onClick={() => updateMutation.mutate({ code: st.code, data: {
+                              name: editName,
+                              baseDurationMinutes: parseInt(editDuration, 10),
+                              bookableOnline: editBookable,
+                              customerFacingName: editCustomerName.trim() || null,
+                              bookingBufferMinutes: parseInt(editBuffer, 10) || 0,
+                            } })}
                           disabled={updateMutation.isPending}
                           className="text-xs text-blue-600 hover:underline font-medium"
                         >Save</button>
