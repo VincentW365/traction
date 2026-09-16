@@ -214,3 +214,75 @@ DATABASE_URL=<External URL> pnpm customers:reconcile:master -- --file /secure/Cu
 If the first table shows "would be created" > 0, run `pnpm customers:import:commit -- --file …` and read the **post-commit** table it prints; Admin → Deployment then shows the run under "Last customer import". Imported records are searchable at once (F1 uses the same normalised keys).
 
 **Verification.** `reconcile.spec.ts` (7: empty DB, tiers, name-only never matches, shared mobile = review, vehicle tiers, source check failure visible, PII only in the CSV), `import-tooling.spec.ts` (static: `--reconcile`, dropped-row counting, customer refs, ImportRun, "complete" only after re-check, master list groups/keys, package scripts), `health.spec.ts` green with the new lookup. Live: the two runs above recorded `import_runs` rows (`SHAREPOINT_CONTACT_DB RECONCILE reconciles=true exceptions=579`, `PEACHTREE_CUSTOMER_LIST RECONCILE reconciles=true exceptions=1667`).
+
+## G. End-to-end validation on a fresh clone (the environment the Manager will deploy)
+
+Procedure (docs/119 §G; nothing reused — no existing `node_modules`, build, database, or environment):
+
+1. `git clone <repository> C:\Users\vwilson\bsop-fresh-106` at tip `16ad1e3` (re-verified at `04e3533` after §F7 below) — identical to what `origin/master` receives on push.
+2. Empty database `bsop_golive_final` (Postgres 17). `.env` per `.env.example` with **production mode**, isolated ports (API 3002, web 3010), a generated secret, `ALLOW_DEV_LOGIN=false`, `PUBLIC_APP_URL=https://bsop-web.onrender.com`, `EMAIL_PROVIDER=smtp` pointed at a local server speaking the real SMTP protocol, `NOTIFICATION_MODE=LIVE`, `NEXT_PUBLIC_API_URL` set as Render sets it.
+3. `pnpm install --frozen-lockfile` → 25 s, clean. `prisma generate`.
+4. `pnpm run db:migrate` → **46 migrations applied** on the empty database (the full chain including the three CR-2026-106 migrations). `pnpm run db:seed` → 17 users, 19 booking rules (incl. `customer_booking_latest_start=15:00`), 12 notification templates, **`Required forms — Job Sheet: PASS · Pre-Job Inspection: PASS · Service Inspection: PASS`**. `pnpm run deploy:check` (production) → **PASS — 23 ok, 2 warnings (customers/vehicles empty — correct on a fresh deployment), 0 failures**; with `PUBLIC_APP_URL` unset or `http://localhost` it FAILS (F3).
+5. `pnpm build` → API + web production builds, 1 m 21 s, zero cache. The web build was then repeated with `NEXT_PUBLIC_API_URL` exported (as Render does) so public pages call the right host.
+6. Booted the API from `dist/` (production) and the web from `.next/` bound to **all interfaces**, and drove everything from a script against the API and against the web on the **LAN address (192.168.100.66), not localhost**.
+
+Scripted smoke on the clean fresh database — **42/42 PASS** after §F7 (41/42 before it; the one failure became F7):
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `/health` ok, last migration = `20260915140000_cr_2026_106_import_runs` | PASS |
+| 2 | Manager login (seeded roster) | PASS |
+| 3 | `/health/deployment`: forms PASS ×3 · Public app URL PASS · email smtp + LIVE · last customer import = none (honest) | PASS |
+| 4 | Customer created with `(876) 555-0189` stored as `8765550189`; vehicle `" fp-0189 z "` stored as `FP0189Z` | PASS |
+| 5 | Search finds exactly that customer for: full name, reversed name, LAST NAME upper-case, `555-0189`, `(876) 555-0189`, `fp 0189 z`, `FP-0189-Z`, email; nonsense → 0 hits | PASS (9 checks) |
+| 6 | Walk-in registered → `customerStatusUrl = https://bsop-web.onrender.com/status/<token>` (absolute, from PUBLIC_APP_URL, not the serving host) | PASS |
+| 7 | `GET /status/<token>` without login → 200; **public status page served on the LAN host** → 200; **public booking page on the LAN host** → 200; ticket detail carries the same absolute link | PASS (4) |
+| 8 | **`POST /inspections` PRE_INSPECTION → 201 and VEHICLE_INSPECTION → 201** on the fresh deployment (the reported defect) | PASS (2) |
+| 9 | Public site: latest start 15:00 / "3:00 PM", 80 minutes; **0 slots after 3 PM offered in 7 days**; confirm at 15:20 → `400 AFTER_LATEST_START`; confirm at 15:00 with reason/concern/mileage → `201 BK-B01-260915-001` with absolute manage URL | PASS (4) |
+| 10 | Staff availability (STAFF audience) shows the customer's booking, 15:00 still open (1 of 2), planned 80; **two concurrent staff creates for the last position → 201 + 409 CAPACITY_FULL**; customer page then sees 15:00 taken | PASS (3) |
+| 11 | Check-in of the online booking → visit created; **CUSTOMER_CONCERN note** = "From the online booking: Reason for visit: Brakes \| Customer concern: Squeal \| Reported mileage: 65,000" | PASS (2) |
+| 12 | `POST /notifications/verify` → transport OK, real send accepted `250 2.0.0 OK`; the SMTP server received the **booking confirmation** and the **verification** message | PASS (3) |
+| 13 | Customer's communication history carries `displayState` (SENT) for the booking email | PASS after F7 |
+| 14 | Booking link from `PUBLIC_APP_URL` with `wa.me/18765550189?text=…`; identity review reachable (0 pending) | PASS (2) |
+| 15 | Web `/login`, `/book`, `/book/manage/<token>` → 200 on the LAN host | PASS (3) |
+
+Teardown: processes stopped, `bsop_golive_final` dropped, clone deleted.
+
+### F7. Found by §G: booking messages missing from Communication History (CR-2026-106f)
+
+The confirmation/rescheduled/cancelled messages were logged by appointment only, so the customer page's history (filtered by customer) never listed them. `QueueNotificationInput` and `AppointmentMessageInput` now carry `customerId`/`vehicleId`, persisted on the log; the public booking notify and the staff change notify pass them. Re-verified on the fresh clone after `git pull` + rebuild (check 13 → PASS).
+
+**What §G could not prove from this machine** (assumption E5): that a link opens from a phone **outside** Bert's network. The generated links use the configured public base and the public pages are served to a non-localhost host; the owner's phone-on-mobile-data test (DEPLOYMENT_HANDOFF.md, CR-2026-106 step 6) remains the last mile.
+
+## H. Approval gates touched (docs/21)
+
+| Gate | What | Disposition |
+|---|---|---|
+| AG-02 schema | `Appointment.customerReportedMileage`; `Customer.identityReviewStatus` + `possibleDuplicateOfId` (+index); `ImportRun` table; enum value `PEACHTREE_CUSTOMER_LIST`; four search indexes | All additive/nullable, three migrations, no backfill of business data (phone/plate normalisation backfill is a format change on the same values) — recorded here for review |
+| AG-01/AG-03 business rules / scheduling | `customer_booking_latest_start` (15:00), `staff_latest_start_enforced` (false), `booking_share_message_template`; staff bookings now planned at the shared default duration and checked under the same day lock | Rules are BusinessRuleConfig rows, seeded create-if-missing, editable in Settings; staff override explicit + audited |
+| AG-07 customer-facing exposure | No new public endpoint beyond `GET /public/booking/site` fields; tokens unchanged; public pages unchanged in access | Links now come from one configured public base |
+| Auth model | Unchanged. New staff endpoints reuse existing permissions (`APPOINTMENT_CREATE`, `CUSTOMER_UPDATE`, `CONFIG_EDIT`) | — |
+
+## I. Completion report (CR §36)
+
+**A. Root causes** — §C1–C6 above, each with file:line evidence: search matched whole strings per column with two phone formats; the deployed database was never seeded by the current build and the check ran only at build time and summed items across template versions; four email flows sent no body so SMTP refused them while the screen said Sent; no public base URL existed so links took the staff PC's origin; the wizard had one backward path and an effect that bounced "back" forward; the master list's 1,693 Peachtree customers were never imported and the import printed unproven totals.
+
+**B. Search** — one parser + where-builder for pickers, directory and global search; names tokenised either order, phones digits-only both sides, plates/VIN stripped; storage normalised + backfilled; indexes; deterministic order; DB-backed tests on the imported dataset; verified on the fresh clone (9 inputs).
+
+**C. Forms** — seed asserts the runtime predicate; API requires items for the service inspection; deploy-check "Required Form Configuration" FAILS (not warns) at build **and at API start**; `/health` + Admin → Deployment per-form PASS/FAIL; both kinds start on the fresh clone (201/201).
+
+**D. Notifications** — rendered subject/body for every legacy key; provider verdict honoured (rejected = FAILED); timeouts; one display-state mapping (Queued/Sending/Sent/Delivered/Failed/Test Redirected/Simulated/Manual) on history, composer and pickup-ready (real log status, no hard-coded SENT); maintenance reminder SENT only when accepted; `POST /notifications/verify` + Admin card proving the transport with the server's own reply; verified against a real SMTP dialogue (accepted / 550 rejected / no server) and on the fresh clone.
+
+**E. Appointment wizard** — pure reducer with explicit reset rules; Customer → Vehicle → Service request → Date → Available time → Review → Confirm; clickable steps + Change; slots from the shared engine (`GET /appointments/availability`); inline recorded overrides; deep links with both ids.
+
+**F. Customer booking** — identify by mobile+plate or mobile+email (never name); reason/concern/description/mileage captured → appointment notes/requestedNotes/reportedMileage → CUSTOMER_CONCERN note at check-in; real Appointment on the shared engine, slot reserved under the day lock, appears in staff availability at once, confirmation email with reference/when/vehicle/service/instructions/manage link; staff cancel revokes the link and notifies; WhatsApp Phase 1 = "Send booking link" (wa.me with the secure URL); pending-identity flag + review page; absolute manage URL from `PUBLIC_APP_URL`.
+
+**G. Scheduling rules** — one `BookingAvailabilityService` for customers and staff (audience-aware), 80-minute default from one rule, capacity re-checked inside the writing transaction under the per-site-per-day lock for both; **customers never offered nor allowed a start after 3:00 PM** (`customer_booking_latest_start`, server-enforced `AFTER_LATEST_START`); staff exempt unless `staff_latest_start_enforced` (then explicit, audited override); proven by the concurrent-create race (201/409) on the probe and on the fresh clone.
+
+**H. SharePoint migration** — formal reconciliation: 7,157 source rows = 7,157 parsed + 0 dropped; 6,856/6,856 customers and 7,157/7,157 vehicles present by exact key on the imported database (579 flagged data-quality rows listed); never-imported database → "would be created" for all; master list: Existing 7,158/7,158 present, **Peachtree (new) 26/1,693 present, 1,653 not present, 14 without a usable key** (owner decision); stable-key provenance at customer level; `ImportRun` records; "Import complete" only after re-checking the database; the deployed database must be reconciled by the owner with the documented commands.
+
+**I. Deployment validation** — §G above: fresh clone, empty database, full migration chain, production-safe seed, deploy-check PASS, production builds, API + web booted, 42/42 scripted checks including public pages on a non-localhost host, inspections of both kinds, the 3 PM rule, the double-booking race, real SMTP delivery, and the check-in note. No misleading success state remains in the paths exercised: "Email Sent" only on provider acceptance, "Appointment Confirmed" only on a created row, "Form Available" only when the runtime predicate holds, "Import Complete" only after re-checking the database.
+
+**J. Git** — commits on `master` (pushed to `origin/master` with this report): `c8525d8` 106a search · `2905db2` 106b forms · `64237c5` 106c notifications+links · `d4d26e9` 106d engine/wizard/booking/identity · `16ad1e3` 106e import reconciliation · `04e3533` 106f history linkage · docs commit (see `git log`). Tests: API 1,235 passed / 6 DB-backed skipped without `RUN_DB_TESTS`; web 225 passed; typechecks clean; production builds clean.
+
+**Not done / owner steps (stated, not hidden):** Render settings `PUBLIC_APP_URL`, `NOTIFICATION_MODE=LIVE`, SMTP values; Admin → Deployment "Prove outbound email works" with a real mailbox; reconcile/import the customer data against the deployed database; decide on the 1,653 Peachtree-only customers; open a status link and a booking link from a phone on mobile data. Part 1 of the earlier CR (accounting close-out) remains deferred at the owner's request.
