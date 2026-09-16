@@ -7,6 +7,45 @@ import {
   NotificationProvider,
 } from './providers/notification-provider.interface';
 import { NotificationChannel, NotificationDeliveryStatus } from '@prisma/client';
+import { renderEmailContent } from './templates/email-templates';
+
+/**
+ * CR-2026-106 — the ONE mapping from a NotificationLog row to what a person is
+ * told (docs/121 §C3). "Sent" means the provider accepted the message; it is never
+ * shown for a simulated or test-redirected row, and never means "delivered".
+ */
+export type DeliveryDisplayState =
+  | 'QUEUED'
+  | 'SENDING'
+  | 'SENT'
+  | 'DELIVERED'
+  | 'FAILED'
+  | 'TEST_REDIRECTED'
+  | 'SIMULATED'
+  | 'MANUAL'
+  | 'CANCELLED';
+
+export function deliveryDisplayState(row: { status: string; simulated?: boolean | null; testRouted?: boolean | null }): DeliveryDisplayState {
+  switch (row.status) {
+    case 'PENDING':
+    case 'SCHEDULED':
+      return 'QUEUED';
+    case 'DELIVERED':
+      return 'DELIVERED';
+    case 'FAILED':
+      return 'FAILED';
+    case 'MANUAL':
+      return 'MANUAL';
+    case 'CANCELLED':
+      return 'CANCELLED';
+    case 'SENT':
+      if (row.simulated) return 'SIMULATED';
+      if (row.testRouted) return 'TEST_REDIRECTED';
+      return 'SENT';
+    default:
+      return 'QUEUED';
+  }
+}
 
 /** CR-2026-105c — "Fri, Sep 11, 2:40 PM" in the site's zone (falls back to the server zone). */
 export function formatAppointmentWhen(at: Date, timeZone?: string): string {
@@ -127,15 +166,24 @@ export class NotificationsService {
     input: QueueNotificationInput,
   ) {
     try {
+      // CR-2026-106 — EVERY email carries a rendered subject + body (docs/121 §C3).
+      // The legacy flows (pickup-ready, reminder sweep, midday follow-up, maintenance
+      // reminders) passed only a template key, which the SMTP provider refuses.
+      let subject = input.subject;
+      let body = input.body;
+      if (input.channel === 'EMAIL' && !(body ?? '').trim()) {
+        const rendered = renderEmailContent(input.templateKey, input.templateData);
+        subject = subject ?? rendered.subject;
+        body = rendered.body;
+      }
+
       const result = await this.provider.send({
         channel: input.channel,
         recipient: input.recipient,
         templateKey: input.templateKey,
         templateData: input.templateData,
-        // CR-2026-105c — pre-rendered content travels with the send; without a body
-        // the SMTP provider refuses an email ("Empty email body").
-        ...(input.subject ? { subject: input.subject } : {}),
-        ...(input.body ? { body: input.body } : {}),
+        ...(subject ? { subject } : {}),
+        ...(body ? { body } : {}),
       });
 
       await this.prisma.notificationLog.update({
@@ -147,6 +195,10 @@ export class NotificationsService {
           providerReference: result.providerReference,
           sentAt: result.success ? new Date() : undefined,
           failureReason: result.failureReason,
+          // What was actually sent, so history can show it (SMS bodies come from the
+          // provider's renderer; emails are rendered here).
+          ...(input.channel === 'EMAIL' && subject ? { subject } : {}),
+          ...(body ? { body } : {}),
         },
       });
     } catch (error) {
@@ -469,11 +521,93 @@ export class NotificationsService {
    * Supports SMS, EMAIL, and MANUAL_CALL (staff calls customer directly).
    * Every attempt is logged in NotificationLog including manual calls.
    */
+  /** CR-2026-106 — the honest delivery outcome of one log row, for screens. */
+  private outcomeDetail(log: { status: string; simulated?: boolean; testRouted?: boolean; failureReason?: string | null; intendedRecipient?: string | null }) {
+    return {
+      displayState: deliveryDisplayState(log),
+      simulated: !!log.simulated,
+      testRouted: !!log.testRouted,
+      failureReason: log.failureReason ?? null,
+      intendedRecipient: log.intendedRecipient ?? null,
+    };
+  }
+
+  /**
+   * CR-2026-106 — prove the outbound email path end to end: transport verification
+   * (connection + authentication) followed by a REAL send to the given address,
+   * recorded in NotificationLog with the provider's own response. Sends to exactly
+   * the address a CONFIG_EDIT user typed — this is a system test message, not a
+   * customer message, so TEST-mode redirection does not apply.
+   */
+  async verifyEmail(to: string, userId: string) {
+    const stamp = new Date().toISOString();
+    const transport = this.caps.emailTransport ?? null;
+    if (!this.caps.emailConfigured) {
+      return {
+        verified: false,
+        configured: false,
+        mode: this.caps.mode,
+        transport,
+        transportCheck: { ok: false, detail: 'EMAIL_PROVIDER is "stub" — no real mail can be sent from this deployment' },
+        send: null,
+      };
+    }
+    const transportCheck = this.provider.verify ? await this.provider.verify('EMAIL') : { ok: true, detail: 'not checked' };
+
+    const content = renderEmailContent('smtp_verification', { stamp, siteName: "Bert's Auto Parts Service Centre" });
+    const log = await this.prisma.notificationLog.create({
+      data: {
+        entityType: 'System',
+        entityId: '00000000-0000-0000-0000-000000000000',
+        channel: 'EMAIL',
+        templateKey: 'smtp_verification',
+        templateVersion: 1,
+        recipient: to,
+        status: 'PENDING',
+        initiatedByUserId: userId,
+        subject: content.subject,
+        body: content.body,
+      },
+    });
+    let result: { success: boolean; providerReference?: string; failureReason?: string; accepted?: string[]; rejected?: string[]; response?: string };
+    try {
+      result = await this.provider.send({ channel: 'EMAIL', recipient: to, templateKey: 'smtp_verification', templateData: { stamp }, ...content });
+    } catch (error) {
+      result = { success: false, failureReason: error instanceof Error ? error.message : 'Provider send failed' };
+    }
+    await this.prisma.notificationLog.update({
+      where: { id: log.id },
+      data: {
+        status: result.success ? 'SENT' : 'FAILED',
+        providerReference: result.providerReference,
+        failureReason: result.failureReason,
+        sentAt: result.success ? new Date() : undefined,
+      },
+    });
+    return {
+      verified: transportCheck.ok && result.success,
+      configured: true,
+      mode: this.caps.mode,
+      transport,
+      transportCheck,
+      send: {
+        logId: log.id,
+        to,
+        success: result.success,
+        providerReference: result.providerReference ?? null,
+        accepted: result.accepted ?? [],
+        rejected: result.rejected ?? [],
+        response: result.response ?? null,
+        failureReason: result.failureReason ?? null,
+      },
+    };
+  }
+
   async sendPickupReady(
     serviceVisitId: string,
     channels: string[],
     userId: string,
-  ): Promise<{ sent: Array<{ channel: string; status: string; recipient: string }> }> {
+  ): Promise<{ sent: Array<{ channel: string; status: string; recipient: string; displayState?: string; simulated?: boolean; testRouted?: boolean; failureReason?: string | null; intendedRecipient?: string | null }> }> {
     const visit = await this.prisma.serviceVisit.findUnique({
       where: { id: serviceVisitId },
       include: {
@@ -487,7 +621,7 @@ export class NotificationsService {
       throw new NotFoundException(`ServiceVisit ${serviceVisitId} not found`);
     }
 
-    const results: Array<{ channel: string; status: string; recipient: string }> = [];
+    const results: Array<{ channel: string; status: string; recipient: string; displayState?: string; simulated?: boolean; testRouted?: boolean; failureReason?: string | null; intendedRecipient?: string | null }> = [];
 
     for (const channel of channels) {
       if (channel === 'SMS') {
@@ -503,12 +637,13 @@ export class NotificationsService {
             siteName: visit.site.name,
           },
         });
-        // Update with initiatedByUserId
-        await this.prisma.notificationLog.update({
+        // Update with initiatedByUserId; CR-2026-106 — report the REAL outcome from
+        // the log (status was hard-coded 'SENT' before, docs/121 §C3).
+        const smsLog = await this.prisma.notificationLog.update({
           where: { id: logId },
           data: { initiatedByUserId: userId, templateVersion: 1 },
         });
-        results.push({ channel: 'SMS', status: 'SENT', recipient: visit.customer.phone });
+        results.push({ channel: 'SMS', status: smsLog.status, recipient: visit.customer.phone, ...this.outcomeDetail(smsLog) });
 
       } else if (channel === 'EMAIL' && visit.customer.email) {
         const logId = await this.queue({
@@ -523,11 +658,11 @@ export class NotificationsService {
             siteName: visit.site.name,
           },
         });
-        await this.prisma.notificationLog.update({
+        const emailLog = await this.prisma.notificationLog.update({
           where: { id: logId },
           data: { initiatedByUserId: userId, templateVersion: 1 },
         });
-        results.push({ channel: 'EMAIL', status: 'SENT', recipient: visit.customer.email });
+        results.push({ channel: 'EMAIL', status: emailLog.status, recipient: visit.customer.email, ...this.outcomeDetail(emailLog) });
 
       } else if (channel === 'MANUAL_CALL') {
         // Log that staff chose to call manually — no actual send

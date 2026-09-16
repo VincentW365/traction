@@ -7,6 +7,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { SchedulingService } from '../scheduling/scheduling.service';
+import { publicUrl } from '../../common/helpers/public-url';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
@@ -422,7 +423,9 @@ export class WalkInsService {
       queueTicket: result.queueTicket,
       priorityClass: 'PENDING' as const,
       etaStartAt,
-      customerStatusUrl: `/status/${result.statusToken}`,
+      // CR-2026-106 — ABSOLUTE, from the ONE public base (docs/121 §C4).
+      customerStatusUrl: publicUrl(`/status/${result.statusToken}`),
+      customerStatusPath: `/status/${result.statusToken}`,
     };
   }
 }

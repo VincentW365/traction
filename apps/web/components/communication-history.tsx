@@ -35,20 +35,38 @@ interface HistoryRow {
   subject: string | null;
   preview: string | null;
   status: string;
+  /** CR-2026-106 — what to SHOW (the API maps status + simulated + testRouted into one state). */
+  displayState?: string;
   failureReason: string | null;
   sentBy: string | null;
   vehicle: { plateNumber: string; make: string | null; model: string | null } | null;
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  SENT: 'bg-blue-50 text-blue-700',
-  DELIVERED: 'bg-emerald-50 text-emerald-700',
-  FAILED: 'bg-red-50 text-red-700',
-  MANUAL: 'bg-slate-100 text-slate-600',
-  PENDING: 'bg-amber-50 text-amber-700',
-  SCHEDULED: 'bg-amber-50 text-amber-700',
-  CANCELLED: 'bg-slate-100 text-slate-500',
+/**
+ * CR-2026-106 — the states a person is told (docs/121 §C3). "Sent" = the provider
+ * accepted the message; it never means delivered, and it is never shown for a row
+ * that was only simulated or redirected to the test recipient.
+ */
+const STATE_META: Record<string, { label: string; cls: string }> = {
+  QUEUED: { label: 'Queued', cls: 'bg-amber-50 text-amber-700' },
+  SENDING: { label: 'Sending', cls: 'bg-amber-50 text-amber-700' },
+  SENT: { label: 'Sent', cls: 'bg-blue-50 text-blue-700' },
+  DELIVERED: { label: 'Delivered', cls: 'bg-emerald-50 text-emerald-700' },
+  FAILED: { label: 'Failed', cls: 'bg-red-50 text-red-700' },
+  TEST_REDIRECTED: { label: 'Test redirected', cls: 'bg-amber-50 text-amber-800' },
+  SIMULATED: { label: 'Simulated — not delivered', cls: 'bg-slate-100 text-slate-600' },
+  MANUAL: { label: 'Logged (manual)', cls: 'bg-slate-100 text-slate-600' },
+  CANCELLED: { label: 'Cancelled', cls: 'bg-slate-100 text-slate-500' },
 };
+
+/** Older API responses carry only `status`; map it the same way the server does. */
+function displayStateOf(row: HistoryRow): string {
+  if (row.displayState) return row.displayState;
+  if (row.status === 'SENT' && row.simulated) return 'SIMULATED';
+  if (row.status === 'SENT' && row.testRouted) return 'TEST_REDIRECTED';
+  if (row.status === 'PENDING' || row.status === 'SCHEDULED') return 'QUEUED';
+  return row.status;
+}
 
 function reasonLabel(row: HistoryRow): string {
   if (row.reason && REASON_LABELS[row.reason]) return REASON_LABELS[row.reason];
@@ -102,13 +120,19 @@ export function CommunicationHistory(props: {
                       </td>
                       <td className="text-slate-700">
                         {reasonLabel(n)}
-                        {n.testRouted && <span className="ml-1.5 badge bg-amber-50 text-amber-700 text-[10px]">test</span>}
-                        {n.simulated && <span className="ml-1.5 badge bg-slate-100 text-slate-500 text-[10px]">not delivered</span>}
                       </td>
                       <td className="text-xs text-slate-500">{n.channel.replace(/_/g, ' ')}</td>
                       <td className="text-xs text-slate-500 break-all">{n.recipient}</td>
                       <td>
-                        <span className={`badge text-[10px] ${STATUS_STYLES[n.status] ?? 'bg-slate-100 text-slate-600'}`}>{n.status}</span>
+                        <span
+                          className={`badge text-[10px] ${(STATE_META[displayStateOf(n)] ?? { cls: 'bg-slate-100 text-slate-600' }).cls}`}
+                          title={n.failureReason ?? undefined}
+                        >
+                          {(STATE_META[displayStateOf(n)] ?? { label: n.status }).label}
+                        </span>
+                        {displayStateOf(n) === 'FAILED' && n.failureReason && (
+                          <p className="mt-0.5 text-[10px] text-red-600 max-w-[16rem] truncate" title={n.failureReason}>{n.failureReason}</p>
+                        )}
                       </td>
                       <td className="text-xs text-slate-500">{n.sentBy ?? '—'}</td>
                     </tr>

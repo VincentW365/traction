@@ -98,6 +98,29 @@ function smsSegments(body: string): { chars: number; segments: number } {
   return { chars, segments: chars === 0 ? 0 : chars <= single ? 1 : Math.ceil(chars / multi) };
 }
 
+/** CR-2026-106 — one send result per channel, with the state a person should read. */
+interface SentEntry {
+  channel: string;
+  status: string;
+  displayState?: string;
+  failureReason?: string | null;
+  recipient: string;
+  testRouted: boolean;
+  simulated: boolean;
+}
+
+const DISPLAY_STATE_LABELS: Record<string, string> = {
+  QUEUED: 'Queued',
+  SENDING: 'Sending',
+  SENT: 'Sent',
+  DELIVERED: 'Delivered',
+  FAILED: 'Failed',
+  TEST_REDIRECTED: 'Test redirected',
+  SIMULATED: 'Simulated — not delivered',
+  MANUAL: 'Logged (manual)',
+  CANCELLED: 'Cancelled',
+};
+
 function fmtWhen(v: string | null | undefined): string {
   if (!v) return '—';
   return new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -120,6 +143,9 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
   const [step, setStep] = useState<'edit' | 'preview'>('edit');
   const [confirmDuplicate, setConfirmDuplicate] = useState(false);
   const [overrideOptOut, setOverrideOptOut] = useState(false);
+  // CR-2026-106 — the per-channel outcome of the last send; the dialog stays open
+  // when any channel FAILED so the reason is read, never a silent "sent".
+  const [outcome, setOutcome] = useState<SentEntry[] | null>(null);
   const requestIdRef = useRef<string>('');
 
   const canEditCustomer = user?.roleCode === 'ADMIN' || user?.roleCode === 'SERVICE_ADVISOR';
@@ -141,6 +167,7 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
       setStep('edit');
       setConfirmDuplicate(false);
       setOverrideOptOut(false);
+      setOutcome(null);
     },
     onError: (e) => setLoadError(e instanceof Error ? e.message : 'Failed to load'),
   });
@@ -161,7 +188,7 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
   };
 
   const sendMutation = useMutation<
-    { duplicate: boolean; sent: Array<{ channel: string; status: string; recipient: string; testRouted: boolean; simulated: boolean }> },
+    { duplicate: boolean; sent: SentEntry[] },
     unknown,
     void
   >({
@@ -176,10 +203,16 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
         overrideOptOut,
         clientRequestId: requestIdRef.current,
       }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['notification-history'] });
       queryClient.invalidateQueries({ queryKey: ['due-vehicles'] });
       queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      const failed = (res.sent ?? []).some((s) => (s.displayState ?? s.status) === 'FAILED');
+      if (failed) {
+        setOutcome(res.sent);
+        requestIdRef.current = crypto.randomUUID();
+        return;
+      }
       onSent?.();
       onClose();
     },
@@ -441,6 +474,21 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
                   <input type="checkbox" checked={overrideOptOut} onChange={(e) => setOverrideOptOut(e.target.checked)} />
                   The customer opted out of {useSms && smsOptedOut ? 'SMS' : ''}{useSms && smsOptedOut && useEmail && emailOptedOut ? ' and ' : ''}{useEmail && emailOptedOut ? 'email' : ''} messages. I confirm this operational message should still be sent.
                 </label>
+              )}
+
+              {outcome && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 mb-2 text-xs" data-testid="send-outcome">
+                  <p className="font-semibold text-red-800 mb-1">Not every channel got through</p>
+                  <ul className="space-y-0.5">
+                    {outcome.map((s) => (
+                      <li key={s.channel} className={(s.displayState ?? s.status) === 'FAILED' ? 'text-red-700' : 'text-slate-700'}>
+                        <span className="font-medium">{s.channel}</span> → {DISPLAY_STATE_LABELS[s.displayState ?? s.status] ?? s.status}
+                        {s.failureReason ? ` — ${s.failureReason}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1 text-slate-600">The failed message is recorded in history as Failed. Fix the address or the email setup, then send again.</p>
+                </div>
               )}
 
               {sendErrorInfo && (

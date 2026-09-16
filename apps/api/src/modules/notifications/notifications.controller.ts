@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, Query, UseGuards, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import {
@@ -32,6 +32,19 @@ export class NotificationsController {
   @ApiOperation({ summary: 'What this deployment can deliver (SMS/email configured, test mode)' })
   capabilities() {
     return this.customerNotifications.capabilities();
+  }
+
+  // CR-2026-106 — prove outbound email works: transport verification + a real test
+  // send to the given address, recorded with the provider's response.
+  @Post('verify')
+  @RequirePermission(PERMISSIONS.CONFIG_EDIT)
+  @ApiOperation({ summary: 'Verify the email transport and send a real test message (manager)' })
+  verify(@Body() body: { to?: string }, @CurrentUser() user: JwtPayload) {
+    const to = (body?.to ?? '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      throw new BadRequestException('Provide a valid email address to send the verification message to.');
+    }
+    return this.notificationsService.verifyEmail(to, user.sub);
   }
 
   @Post('compose')

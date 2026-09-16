@@ -5,6 +5,11 @@ import type { NextConfig } from 'next';
 // the page's own host (the LAN behaviour), which is wrong on split-host platforms
 // like Render. Warn loudly at build rather than fail: the documented Render
 // bootstrap intentionally builds once BEFORE these URLs exist, then redeploys.
+// CR-2026-106 — on Render (split hosts) a build without the API URL produces public
+// pages that call the wrong host; that is a hard failure there, a warning elsewhere.
+if (process.env.RENDER && process.env.NODE_ENV === 'production' && !process.env.NEXT_PUBLIC_API_URL) {
+  throw new Error('[bsop-web build] NEXT_PUBLIC_API_URL is not set. On Render the public pages (status, booking) would call the wrong host. Set NEXT_PUBLIC_API_URL (and NEXT_PUBLIC_WS_URL) on bsop-web and rebuild.');
+}
 if (process.env.NODE_ENV === 'production' && !process.env.NEXT_PUBLIC_API_URL) {
   console.warn(
     '\n[bsop-web build] WARNING: NEXT_PUBLIC_API_URL is not set. The browser will ' +

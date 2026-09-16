@@ -44,6 +44,7 @@ interface Confirmation {
   site: { name: string; timezone: string };
   arrivalInstructions: string;
   managePath: string;
+  manageUrl?: string;
 }
 
 type Step = 'identify' | 'details' | 'service' | 'slot' | 'confirm' | 'done';
@@ -206,7 +207,8 @@ export default function BookPage() {
   }
 
   if (step === 'done' && done) {
-    const manageUrl = typeof window !== 'undefined' ? `${window.location.origin}${done.managePath}` : done.managePath;
+    // CR-2026-106 — the API builds this from PUBLIC_APP_URL; the browser origin is only a fallback.
+    const manageUrl = done.manageUrl ?? (typeof window !== 'undefined' ? `${window.location.origin}${done.managePath}` : done.managePath);
     return (
       <Shell site={siteQ.data}>
         <div className="card overflow-hidden">

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { assessPublicAppUrl } from '../../common/helpers/public-url';
 
 /**
  * CR-2026-094 — can the deployed site be verified against the pushed commit?
@@ -198,6 +199,8 @@ export class HealthService {
         vinDecodeProvider: process.env.VIN_DECODE_PROVIDER === 'LIVE' ? 'LIVE' : 'STUB',
         inspectionPhotoDriver: process.env.INSPECTION_PHOTO_DRIVER ?? 'local',
         corsConfigured: !!process.env.API_CORS_ORIGIN,
+        // CR-2026-106 — is the base every customer link is built from publicly reachable?
+        publicAppUrl: assessPublicAppUrl(),
         jwtSecretConfigured: !!process.env.JWT_SECRET,
       },
     };

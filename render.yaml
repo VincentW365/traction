@@ -48,6 +48,8 @@ services:
         value: "false"                 # dev-login stays off in the cloud
       - key: API_CORS_ORIGIN
         sync: false                    # set to the bsop-web URL after first deploy
+      - key: PUBLIC_APP_URL
+        sync: false                    # CR-2026-106: the public bsop-web URL (https), used for every customer-facing link
 
   - type: web
     name: bsop-web

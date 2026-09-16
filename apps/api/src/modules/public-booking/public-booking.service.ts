@@ -60,6 +60,7 @@ import {
   vehicleCodeForPlate,
 } from './booking-reference';
 import type { ConfirmBookingDto, IdentifyDto, RescheduleBookingDto } from './dto/public-booking.dto';
+import { publicUrl } from '../../common/helpers/public-url';
 
 /** Appointment statuses that still hold a service position. */
 export const ACTIVE_APPOINTMENT_STATUSES = ['DRAFT', 'CONFIRMED', 'RESCHEDULED', 'CHECKED_IN', 'IN_PROGRESS'] as const;
@@ -667,8 +668,8 @@ export class PublicBookingService {
 
   private manageUrl(token: string | null): string | undefined {
     if (!token) return undefined;
-    const base = (process.env.API_CORS_ORIGIN ?? 'http://localhost:3000').split(',')[0].trim().replace(/\/$/, '');
-    return `${base}/book/manage/${token}`;
+    // CR-2026-106 — from the ONE public base (docs/121 §C4), never a CORS stand-in.
+    return publicUrl(`/book/manage/${token}`);
   }
 
   /** NOT-001: confirmation on create and reschedule; cancellation notice too. Opt-in gated. */
@@ -724,7 +725,7 @@ export class PublicBookingService {
   }
 
   private confirmationView(appt: AppointmentRow, site: SiteContext, booking: BookingRules, token: string) {
-    return { ...this.baseView(appt, site, booking), manageToken: token, managePath: `/book/manage/${token}` };
+    return { ...this.baseView(appt, site, booking), manageToken: token, managePath: `/book/manage/${token}`, manageUrl: this.manageUrl(token) };
   }
 
   private manageView(appt: AppointmentRow, site: SiteContext, booking: BookingRules) {

@@ -3,6 +3,7 @@ import {
   NotificationProvider,
   SendNotificationInput,
   SendNotificationResult,
+  VerifyProviderResult,
 } from './notification-provider.interface';
 
 /**
@@ -12,6 +13,10 @@ import {
  * relay, an ISP) — a delivery service, not a platform dependency. The transport
  * is INJECTED (created in the module factory, same isolation pattern as the
  * Twilio client) so this class stays pure and unit-testable.
+ *
+ * CR-2026-106 — honours the server's own verdict: a recipient the server REJECTED
+ * is a failure even when a message id came back; `verify()` proves the transport
+ * (connection + authentication) so a wrong port or password is found in seconds.
  */
 
 export interface SmtpSendConfig {
@@ -26,7 +31,8 @@ export interface MailTransport {
     to: string;
     subject: string;
     text: string;
-  }): Promise<{ messageId?: string }>;
+  }): Promise<{ messageId?: string; accepted?: unknown[]; rejected?: unknown[]; response?: string }>;
+  verify?(): Promise<unknown>;
 }
 
 export class SmtpNotificationProvider implements NotificationProvider {
@@ -52,12 +58,35 @@ export class SmtpNotificationProvider implements NotificationProvider {
         subject: input.subject ?? "Message from Bert's Service Centre",
         text: body,
       });
-      return { success: true, providerReference: info.messageId };
+      const accepted = (info.accepted ?? []).map(String);
+      const rejected = (info.rejected ?? []).map(String);
+      if (rejected.length > 0 && accepted.length === 0) {
+        return {
+          success: false,
+          providerReference: info.messageId,
+          accepted,
+          rejected,
+          response: info.response,
+          failureReason: `Recipient rejected by the mail server${info.response ? `: ${info.response}` : ''}`,
+        };
+      }
+      return { success: true, providerReference: info.messageId, accepted, rejected, response: info.response };
     } catch (error) {
       const failureReason = error instanceof Error ? error.message : 'SMTP send failed';
       // Never log message content or full recipient at error level.
       this.logger.error(`SMTP send failed (${input.templateKey}): ${failureReason}`);
       return { success: false, failureReason };
+    }
+  }
+
+  async verify(channel: 'SMS' | 'EMAIL'): Promise<VerifyProviderResult> {
+    if (channel !== 'EMAIL') return { ok: false, detail: 'SMTP provider handles EMAIL only' };
+    if (!this.transport.verify) return { ok: true, detail: 'transport does not support verification; a test send will prove it' };
+    try {
+      await this.transport.verify();
+      return { ok: true, detail: 'connected and authenticated' };
+    } catch (error) {
+      return { ok: false, detail: error instanceof Error ? error.message : 'SMTP verification failed' };
     }
   }
 }
@@ -74,5 +103,11 @@ export class ChannelRouterProvider implements NotificationProvider {
 
   async send(input: SendNotificationInput): Promise<SendNotificationResult> {
     return input.channel === 'EMAIL' ? this.email.send(input) : this.sms.send(input);
+  }
+
+  async verify(channel: 'SMS' | 'EMAIL'): Promise<VerifyProviderResult> {
+    const target = channel === 'EMAIL' ? this.email : this.sms;
+    if (!target.verify) return { ok: false, detail: 'provider cannot verify its transport' };
+    return target.verify(channel);
   }
 }

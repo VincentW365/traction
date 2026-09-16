@@ -57,6 +57,34 @@ for (const name of prodOnly) {
   });
 }
 
+// CR-2026-106 — customer-facing links (status page, booking manage link, booking
+// link) are built from PUBLIC_APP_URL. In production it must be set, https, and a
+// host a customer's phone can reach; otherwise every link handed to a customer
+// points inside Bert's network (docs/121 §C4).
+{
+  const raw = (process.env.PUBLIC_APP_URL ?? '').trim();
+  let ok = false;
+  let detail = 'not set — customer links would fall back to the CORS origin (LAN/localhost)';
+  if (raw) {
+    try {
+      const u = new URL(raw);
+      const h = u.hostname.toLowerCase();
+      const priv =
+        h === 'localhost' || h.endsWith('.localhost') || h === '0.0.0.0' || h === '::1' || h.endsWith('.local') || h.endsWith('.lan') ||
+        /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(h);
+      if (u.protocol !== 'https:') detail = `${raw} — must be https:// (customers open these links on phones)`;
+      else if (priv) detail = `${raw} — host is not reachable outside the local network`;
+      else {
+        ok = true;
+        detail = raw;
+      }
+    } catch {
+      detail = `${raw} — not a valid absolute URL`;
+    }
+  }
+  check('PUBLIC_APP_URL', ok, detail, { warnOnly: process.env.NODE_ENV !== 'production' });
+}
+
 if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_LOGIN === 'true') {
   check('ALLOW_DEV_LOGIN', false, 'is "true" in production — must be "false"');
 } else {

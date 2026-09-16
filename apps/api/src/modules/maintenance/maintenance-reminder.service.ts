@@ -212,8 +212,10 @@ export class MaintenanceReminderService {
         message: messageBody,
       };
 
-      // Send via opted-in channels
+      // Send via opted-in channels. CR-2026-106 — keep EVERY log id so the outcome
+      // below reflects all channels, not just the last one queued.
       let lastLogId: string | null = null;
+      const logIds: string[] = [];
 
       if (customer.notificationOptInSms && customer.phone) {
         lastLogId = await this.notifications.queue({
@@ -224,6 +226,7 @@ export class MaintenanceReminderService {
           recipient: customer.phone,
           templateData,
         });
+        logIds.push(lastLogId);
       }
 
       if (customer.notificationOptInEmail && customer.email) {
@@ -235,13 +238,28 @@ export class MaintenanceReminderService {
           recipient: customer.email,
           templateData,
         });
+        logIds.push(lastLogId);
       }
 
-      // Update reminder status
+      // Update reminder status — CR-2026-106: from the logs' REAL outcome, never
+      // assumed (a failed email used to be recorded as a sent reminder, docs/121 §C3).
+      // SENT only when at least one channel's provider accepted the message; otherwise
+      // the reminder stays SCHEDULED (so the next sweep retries) with the failed log
+      // attached so the reason is visible.
+      const logs = logIds.length
+        ? await this.prisma.notificationLog.findMany({ where: { id: { in: logIds } }, select: { id: true, status: true, failureReason: true } })
+        : [];
+      const anySent = logs.some((l) => l.status === 'SENT');
+      const outcome = logIds.length === 0 ? 'NO_CHANNEL' : anySent ? 'SENT' : 'FAILED';
+      if (outcome === 'FAILED') {
+        this.logger.warn(
+          `Maintenance reminder ${reminder.id}: no channel was accepted by a provider (${logs.map((l) => l.failureReason ?? 'unknown').join('; ')}) — left SCHEDULED for retry`,
+        );
+      }
       await this.prisma.maintenanceReminder.update({
         where: { id: reminder.id },
         data: {
-          status: 'SENT',
+          ...(anySent ? { status: 'SENT' } : {}),
           notificationLogId: lastLogId,
         },
       });

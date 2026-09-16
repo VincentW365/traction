@@ -26,6 +26,8 @@ import { CommunicationHistory } from '../../../../components/communication-histo
 /* ---------- Types ---------- */
 
 interface TicketDetail {
+  /** CR-2026-106 — absolute customer status link from the public base URL. */
+  customerStatusUrl?: string | null;
   id: string;
   ticketNumber: string;
   checkinSequence: number;
@@ -642,10 +644,9 @@ export default function QueueTicketDetailPage() {
   const isManager = ['ADMIN'].includes(user?.roleCode ?? '');
   // CR-2026-085 — the customer's own status link, available for every visit rather
   // than only on the walk-in confirmation screen.
-  const statusLink =
-    sv.customerStatusToken && typeof window !== 'undefined'
-      ? `${window.location.origin}/status/${sv.customerStatusToken}`
-      : null;
+  // CR-2026-106 — built server-side from PUBLIC_APP_URL (docs/121 §C4); the staff
+  // PC's own origin is never a customer-reachable address.
+  const statusLink = ticket.customerStatusUrl ?? null;
   const statusLinkExpired =
     !!sv.tokenExpiresAt && new Date(sv.tokenExpiresAt).getTime() < Date.now();
   // CR-2026-085 — GOV-005 withdrawn: payment lives in the external POS and no longer

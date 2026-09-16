@@ -39,3 +39,23 @@ describe('deploy-check — Required Form Configuration', () => {
     expect(formsBlock).not.toContain('warnOnly: true');
   });
 });
+
+/**
+ * CR-2026-106 — customer-facing links are built from PUBLIC_APP_URL; in production
+ * the preflight must FAIL when it is unset, not https, or an internal host
+ * (docs/121 §C4), and the Blueprint must declare the variable.
+ */
+describe('deploy-check — PUBLIC_APP_URL', () => {
+  it('checks PUBLIC_APP_URL and rejects localhost / private hosts / non-https', () => {
+    expect(deployCheck).toContain("check('PUBLIC_APP_URL'");
+    expect(deployCheck).toMatch(/must be https/);
+    expect(deployCheck).toMatch(/not reachable outside the local network/);
+    expect(deployCheck).toMatch(/192\\.168\\./);
+  });
+
+  it('render.yaml declares PUBLIC_APP_URL on the API service and .env.example documents it', () => {
+    expect(renderYaml).toContain('key: PUBLIC_APP_URL');
+    const envExample = fs.readFileSync(path.join(root, '.env.example'), 'utf8');
+    expect(envExample).toContain('PUBLIC_APP_URL');
+  });
+});

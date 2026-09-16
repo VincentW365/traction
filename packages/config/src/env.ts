@@ -10,6 +10,13 @@ export const envSchema = z.object({
   JWT_REFRESH_EXPIRY: z.string().default('7d'),
   API_PORT: z.coerce.number().default(3001),
   API_CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  // CR-2026-106 — the ONE browser-reachable base URL of the web app (e.g.
+  // https://bsop-web.onrender.com, no trailing slash). Every customer-facing link
+  // (status page, booking manage link, booking link) is built from it — never from
+  // whichever internal host received the request. Falls back to the first CORS
+  // origin for local development; deploy-check FAILS in production when it is
+  // unset, localhost, or a private address.
+  PUBLIC_APP_URL: z.string().url().optional(),
   NOTIFICATION_PROVIDER: z
     .enum(['stub', 'twilio', 'sendgrid'])
     .default('stub'),

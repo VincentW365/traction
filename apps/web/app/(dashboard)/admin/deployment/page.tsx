@@ -5,6 +5,7 @@ import { api } from '../../../../lib/api-client';
 import { useAuth } from '../../../../hooks/use-auth';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
+import { EmailVerificationCard } from '../../../../components/email-verification-card';
 
 /**
  * CR-2026-094 — Admin → Deployment.
@@ -51,6 +52,8 @@ interface DeploymentStatus {
     inspectionPhotoDriver: string;
     corsConfigured: boolean;
     jwtSecretConfigured: boolean;
+    /** CR-2026-106 — is the base every customer link is built from publicly reachable? */
+    publicAppUrl?: { ok: boolean; reason: string; value: string | null };
   };
 }
 
@@ -163,6 +166,11 @@ export default function DeploymentStatusPage() {
             <Row label="JWT secret" value={d.configuration.jwtSecretConfigured ? 'configured' : 'MISSING'} tone={d.configuration.jwtSecretConfigured ? 'ok' : 'bad'} />
             <Row label="CORS origin" value={d.configuration.corsConfigured ? 'configured' : 'not set'} tone={d.configuration.corsConfigured ? 'ok' : 'warn'} />
             <Row
+              label="Public app URL (customer links)"
+              value={d.configuration.publicAppUrl ? (d.configuration.publicAppUrl.ok ? d.configuration.publicAppUrl.value ?? 'configured' : `FAIL — ${d.configuration.publicAppUrl.reason}`) : 'unknown (older API)'}
+              tone={d.configuration.publicAppUrl ? (d.configuration.publicAppUrl.ok ? 'ok' : 'bad') : 'warn'}
+            />
+            <Row
               label="Dev login"
               value={d.configuration.devLoginEnabled ? 'ENABLED (non-production only)' : 'off'}
               tone={d.configuration.devLoginEnabled ? 'warn' : 'ok'}
@@ -177,6 +185,8 @@ export default function DeploymentStatusPage() {
             <Row label="VIN decode" value={d.configuration.vinDecodeProvider} />
             <Row label="Inspection photo storage" value={d.configuration.inspectionPhotoDriver} />
           </div>
+
+          <EmailVerificationCard />
         </div>
       )}
     </div>

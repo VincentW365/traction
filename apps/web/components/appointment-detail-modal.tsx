@@ -185,7 +185,7 @@ export function AppointmentDetailModal({
                 <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-left">
                   <p className="text-[11px] uppercase tracking-wider text-blue-600 mb-1">Customer Status Link</p>
                   <code className="block text-xs text-slate-700 break-all">
-                    {typeof window !== 'undefined' ? window.location.origin : ''}{result.customerStatusUrl}
+                    {result.customerStatusUrl}
                   </code>
                   <p className="text-[11px] text-blue-700 mt-1.5">
                     Also available any time from the ticket, if the customer loses it.

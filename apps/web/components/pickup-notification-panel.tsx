@@ -35,18 +35,50 @@ export function PickupNotificationPanel({ readyVisits }: PickupNotificationPanel
   );
 }
 
+/** CR-2026-106 — the API's per-channel outcome (docs/121 §C3); never assumed from a 2xx. */
+interface PickupSendResult {
+  channel: string;
+  status: string;
+  displayState?: string;
+  failureReason?: string | null;
+  recipient: string;
+}
+
+const OUTCOME_LABEL: Record<string, string> = {
+  SENT: 'Sent',
+  DELIVERED: 'Delivered',
+  FAILED: 'Failed',
+  TEST_REDIRECTED: 'Test redirected',
+  SIMULATED: 'Not delivered (no provider)',
+  QUEUED: 'Queued',
+  MANUAL: 'Logged',
+};
+
+function outcomeOf(r: PickupSendResult): string {
+  return r.displayState ?? r.status;
+}
+
 function PickupCard({ visit }: { visit: ReadyVisit }) {
-  const [sent, setSent] = useState<string[]>([]);
+  const [outcomes, setOutcomes] = useState<Record<string, PickupSendResult>>({});
   const queryClient = useQueryClient();
 
-  const notifyMutation = useMutation({
+  const notifyMutation = useMutation<{ sent: PickupSendResult[] }, unknown, string[]>({
     mutationFn: (channels: string[]) =>
       api.post('/notifications/send-pickup-ready', {
         serviceVisitId: visit.serviceVisitId,
         channels,
       }),
-    onSuccess: (_, channels) => {
-      setSent((prev) => [...prev, ...channels]);
+    onSuccess: (res, channels) => {
+      setOutcomes((prev) => {
+        const next = { ...prev };
+        for (const ch of channels) {
+          const r = (res?.sent ?? []).find((s) => s.channel === ch);
+          // Nothing came back for the channel (e.g. the customer has no email on file):
+          // say so instead of claiming a send.
+          next[ch] = r ?? { channel: ch, status: 'FAILED', displayState: 'FAILED', failureReason: 'No message was sent for this channel', recipient: '' };
+        }
+        return next;
+      });
     },
   });
 
@@ -60,10 +92,16 @@ function PickupCard({ visit }: { visit: ReadyVisit }) {
     },
   });
 
-  const smsSent = sent.includes('SMS');
-  const emailSent = sent.includes('EMAIL');
-  const callLogged = sent.includes('MANUAL_CALL');
-  const notified = sent.length > 0;
+  const smsOutcome = outcomes.SMS ? outcomeOf(outcomes.SMS) : null;
+  const emailOutcome = outcomes.EMAIL ? outcomeOf(outcomes.EMAIL) : null;
+  const good = (o: string | null) => o === 'SENT' || o === 'DELIVERED' || o === 'TEST_REDIRECTED';
+  const smsSent = good(smsOutcome);
+  const emailSent = good(emailOutcome);
+  const callLogged = !!outcomes.MANUAL_CALL && outcomeOf(outcomes.MANUAL_CALL) !== 'FAILED';
+  const notified = smsSent || emailSent || callLogged;
+  const failures = Object.values(outcomes).filter((o) => outcomeOf(o) === 'FAILED' || outcomeOf(o) === 'SIMULATED');
+  const btnTone = (o: string | null, active: string) =>
+    good(o) ? 'bg-green-100 text-green-700 cursor-default' : o === 'FAILED' || o === 'SIMULATED' ? 'bg-red-100 text-red-700 hover:bg-red-200' : active;
 
   return (
     <div className="bg-white rounded-lg border border-green-200 p-3 flex items-center gap-4">
@@ -85,27 +123,20 @@ function PickupCard({ visit }: { visit: ReadyVisit }) {
         <button
           onClick={() => notifyMutation.mutate(['SMS'])}
           disabled={smsSent || notifyMutation.isPending}
-          className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-            smsSent
-              ? 'bg-green-100 text-green-700 cursor-default'
-              : 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50'
-          }`}
-          title={visit.customerPhone}
+          className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${btnTone(smsOutcome, 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50')}`}
+          title={outcomes.SMS?.failureReason ?? visit.customerPhone}
         >
-          {smsSent ? 'SMS Sent' : 'SMS'}
+          {smsOutcome ? `SMS ${OUTCOME_LABEL[smsOutcome] ?? smsOutcome}${smsOutcome === 'FAILED' ? ' — retry' : ''}` : 'SMS'}
         </button>
 
         {visit.customerEmail && (
           <button
             onClick={() => notifyMutation.mutate(['EMAIL'])}
             disabled={emailSent || notifyMutation.isPending}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-              emailSent
-                ? 'bg-green-100 text-green-700 cursor-default'
-                : 'bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50'
-            }`}
+            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${btnTone(emailOutcome, 'bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50')}`}
+            title={outcomes.EMAIL?.failureReason ?? visit.customerEmail ?? undefined}
           >
-            {emailSent ? 'Email Sent' : 'Email'}
+            {emailOutcome ? `Email ${OUTCOME_LABEL[emailOutcome] ?? emailOutcome}${emailOutcome === 'FAILED' ? ' — retry' : ''}` : 'Email'}
           </button>
         )}
 
@@ -137,6 +168,11 @@ function PickupCard({ visit }: { visit: ReadyVisit }) {
         </button>
       </div>
 
+      {failures.length > 0 && (
+        <p className="basis-full text-xs text-red-700" data-testid="pickup-send-failure">
+          {failures.map((f) => `${f.channel}: ${OUTCOME_LABEL[outcomeOf(f)] ?? outcomeOf(f)}${f.failureReason ? ` — ${f.failureReason}` : ''}`).join(' · ')}
+        </p>
+      )}
       {(notifyMutation.isError || pickedUpMutation.isError) && (
         <span className="text-xs text-red-600">Failed - try again</span>
       )}

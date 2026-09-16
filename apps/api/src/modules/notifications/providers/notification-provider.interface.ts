@@ -14,10 +14,24 @@ export interface SendNotificationResult {
   success: boolean;
   providerReference?: string;
   failureReason?: string;
+  // CR-2026-106 — the provider's own account of what happened, so "accepted by
+  // the mail server" can be told apart from "delivered" and a rejected recipient
+  // is a FAILURE, not a success with a message id.
+  accepted?: string[];
+  rejected?: string[];
+  response?: string;
+}
+
+/** CR-2026-106 — result of asking the provider to prove its transport works. */
+export interface VerifyProviderResult {
+  ok: boolean;
+  detail: string;
 }
 
 export interface NotificationProvider {
   send(input: SendNotificationInput): Promise<SendNotificationResult>;
+  /** Optional: prove the outbound transport (connection + authentication) works. */
+  verify?(channel: 'SMS' | 'EMAIL'): Promise<VerifyProviderResult>;
 }
 
 export const NOTIFICATION_PROVIDER = 'NOTIFICATION_PROVIDER';
@@ -33,6 +47,8 @@ export interface NotificationCapabilities {
   mode: 'TEST' | 'LIVE';
   testSmsTo?: string;
   testEmailTo?: string;
+  /** CR-2026-106 — presence-safe transport facts for the verification screen (never the password). */
+  emailTransport?: { host: string; port: number; secure: boolean; from: string; user: string | null };
 }
 
 export const NOTIFICATION_CAPABILITIES = 'NOTIFICATION_CAPABILITIES';

@@ -327,7 +327,7 @@ export default function CheckInPage() {
             <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
               <p className="text-xs text-blue-600 uppercase tracking-wider mb-1">Customer Status Link</p>
               <p className="text-sm font-mono text-blue-800 break-all">
-                {window.location.origin}{successResult.customerStatusUrl}
+                {successResult.customerStatusUrl}
               </p>
               <p className="text-xs text-blue-500 mt-1">Share this link with the customer to track their visit status.</p>
             </div>

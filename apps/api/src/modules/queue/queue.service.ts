@@ -14,6 +14,7 @@ import { SchedulingService } from '../scheduling/scheduling.service';
 import { EtaService } from '../scheduling/eta/eta.service';
 import { ETA_PRESENTATION_DEFAULTS, type EtaPresentationConfig } from '../scheduling/eta/eta.config';
 import { presentEta, toPublicEta } from '../../common/helpers/eta-presentation';
+import { publicUrl } from '../../common/helpers/public-url';
 import { liveVisitSql } from '../../common/helpers/operational-scope';
 import {
   describeVisitServices,
@@ -214,6 +215,9 @@ export class QueueService {
       ...ticket,
       serviceDescription: describeVisitServices(ticket.serviceVisit, ', '),
       eta: etaView,
+      // CR-2026-106 — the customer status link, ABSOLUTE from the public base
+      // (docs/121 §C4); the page used to build it from the staff PC's origin.
+      customerStatusUrl: sv.customerStatusToken ? publicUrl(`/status/${sv.customerStatusToken}`) : null,
     };
   }
 

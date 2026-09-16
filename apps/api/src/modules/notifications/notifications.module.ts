@@ -57,6 +57,11 @@ function notificationProviderFactory(): NotificationProvider {
       port: SMTP_PORT ?? (SMTP_SECURE ? 465 : 587),
       secure: SMTP_SECURE,
       ...(SMTP_USER ? { auth: { user: SMTP_USER, pass: SMTP_PASS } } : {}),
+      // CR-2026-106 — a wrong port/host must fail in seconds, not hold the request
+      // for the library defaults (up to two minutes) while the screen says "sending".
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 30_000,
     }) as unknown as MailTransport;
     emailProvider = new SmtpNotificationProvider({ from: SMTP_FROM }, transport);
   }
@@ -77,6 +82,18 @@ function notificationCapabilitiesFactory(): NotificationCapabilities {
     mode: env.NOTIFICATION_MODE,
     testSmsTo: env.NOTIFICATION_TEST_SMS_TO,
     testEmailTo: env.NOTIFICATION_TEST_EMAIL_TO,
+    // CR-2026-106 — presence-safe transport facts for the verification screen.
+    ...(env.EMAIL_PROVIDER === 'smtp' && env.SMTP_HOST && env.SMTP_FROM
+      ? {
+          emailTransport: {
+            host: env.SMTP_HOST,
+            port: env.SMTP_PORT ?? (env.SMTP_SECURE ? 465 : 587),
+            secure: env.SMTP_SECURE,
+            from: env.SMTP_FROM,
+            user: env.SMTP_USER ? env.SMTP_USER.replace(/^(.{2}).*(@.*)$/, '$1…$2') : null,
+          },
+        }
+      : {}),
   };
 }
 

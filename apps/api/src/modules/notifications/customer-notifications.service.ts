@@ -19,6 +19,7 @@ import {
   NotificationProvider,
 } from './providers/notification-provider.interface';
 import { toE164Jamaica } from './providers/twilio.provider';
+import { deliveryDisplayState } from './notifications.service';
 import { DEFAULT_TEMPLATES } from './templates/default-templates';
 import {
   buildVehicleDescription,
@@ -333,6 +334,8 @@ export class CustomerNotificationsService {
     const results: Array<{
       channel: string;
       status: string;
+      displayState: string;
+      failureReason: string | null;
       recipient: string;
       logId: string;
       testRouted: boolean;
@@ -466,6 +469,10 @@ export class CustomerNotificationsService {
       results.push({
         channel,
         status,
+        // CR-2026-106 — the honest outcome for the screen: never 'Sent' when the
+        // row was simulated or redirected, and the provider's reason on failure.
+        displayState: deliveryDisplayState({ status, simulated: routing.simulated, testRouted: routing.testRouted }),
+        failureReason: failureReason ?? null,
         recipient: routing.to,
         logId: log.id,
         testRouted: routing.testRouted,
@@ -586,6 +593,9 @@ export class CustomerNotificationsService {
       subject: n.subject,
       preview: n.body ? (n.body.length > 140 ? `${n.body.slice(0, 140)}…` : n.body) : null,
       status: n.status,
+      // CR-2026-106 — what the screen must say (never "Sent" for a simulated or
+      // test-redirected row; "Sent" = accepted by the provider, not delivered).
+      displayState: deliveryDisplayState(n),
       failureReason: n.failureReason,
       sentBy: n.initiatedBy?.fullName ?? null,
       vehicle: n.vehicle ? { plateNumber: n.vehicle.plateNumber, make: n.vehicle.make, model: n.vehicle.model } : null,
