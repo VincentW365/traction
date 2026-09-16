@@ -1404,6 +1404,27 @@ model WorkResourceCapability {
   @@map("work_resource_capabilities")
 }
 
+/// CR-2026-108 — how the physical walk resolved a legacy bay that has no current
+/// WorkResource. Deliberately NOT a status: `WorkBay.status` says whether the bay
+/// is active for scheduling, which is a different question from how reconciliation
+/// accounted for it, and folding the two together would make one overwrite the other.
+///
+/// This exists so nobody has to invent a link to finish the reconciliation. A bay
+/// that was demolished during the expansion is resolved by saying so, not by being
+/// pointed at whichever new bay happens to stand nearest to where it used to be.
+enum LegacyBayDisposition {
+  /// Nobody has said anything about it yet. Blocks readiness.
+  UNRESOLVED
+  /// The bay is gone or absorbed; its jobs are real history and stay exactly where
+  /// they are. Nothing standing today corresponds to it.
+  HISTORICAL_ONLY
+  /// Superseded by the expansion, but not by any ONE resource — the floor was
+  /// reorganised, so a 1:1 link would be a fiction.
+  REPLACED
+  /// Formally taken out of service. Kept for its history.
+  RETIRED
+}
+
 model WorkBay {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   siteId    String   @map("site_id") @db.Uuid
@@ -1412,6 +1433,14 @@ model WorkBay {
   status    String   @default("ACTIVE")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  /// CR-2026-108 — set only when there is no link. A linked bay is already
+  /// resolved, and carrying both would be two answers to one question.
+  reconciliationDisposition LegacyBayDisposition @default(UNRESOLVED) @map("reconciliation_disposition")
+  /// Why, in the words of whoever walked the shop. Required when dispositioning.
+  dispositionNote           String?              @map("disposition_note")
+  dispositionedAt           DateTime?            @map("dispositioned_at") @db.Timestamptz
+  dispositionedByUserId     String?              @map("dispositioned_by_user_id") @db.Uuid
 
   site        Site                   @relation(fields: [siteId], references: [id])
   assignments TechnicianAssignment[]

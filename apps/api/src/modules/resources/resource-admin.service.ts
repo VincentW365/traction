@@ -65,6 +65,8 @@ const CAPACITY_ROLES = [
   'SUPPORT_EQUIPMENT',
   'PLACEHOLDER',
 ];
+/** How a legacy bay with no current resource was accounted for. */
+const BAY_DISPOSITIONS = ['UNRESOLVED', 'HISTORICAL_ONLY', 'REPLACED', 'RETIRED'];
 
 /**
  * Does someone still have to say what this is?
@@ -76,6 +78,20 @@ const CAPACITY_ROLES = [
  */
 const needsClassifying = (r: { capacityRole: string; retiredAt?: Date | null; resourceCategory?: unknown }): boolean =>
   r.capacityRole === 'UNVERIFIED' && !r.retiredAt && String(r.resourceCategory) !== 'EXTERNAL';
+
+/**
+ * Has the physical walk accounted for this legacy bay?
+ *
+ * Two ways, and they are equally valid: it is the same physical position as a
+ * current resource (linked), or it is not there any more and somebody said so
+ * (dispositioned). Requiring the first would push people into inventing links for
+ * bays that were demolished in the expansion — and an invented link is a fact the
+ * resource-aware engine would then reason from.
+ *
+ * Shared so the reconciliation view and the readiness gate cannot disagree.
+ */
+export const isBayResolved = (b: { resource?: unknown | null; reconciliationDisposition: string }): boolean =>
+  b.resource != null || String(b.reconciliationDisposition) !== 'UNRESOLVED';
 
 @Injectable()
 export class ResourceAdminService {
@@ -543,7 +559,10 @@ export class ResourceAdminService {
     if (legacyBayId) {
       const bay = await this.prisma.workBay.findUnique({
         where: { id: legacyBayId },
-        select: { id: true, code: true, siteId: true, resource: { select: { code: true } } },
+        select: {
+          id: true, code: true, siteId: true, reconciliationDisposition: true,
+          resource: { select: { code: true } },
+        },
       });
       if (!bay) throw new NotFoundException('That bay does not exist.');
       if (bay.siteId !== resource.siteId) {
@@ -552,6 +571,14 @@ export class ResourceAdminService {
       if (bay.resource && bay.resource.code !== resource.code) {
         throw new ConflictException(
           `Bay ${bay.code} is already linked to resource ${bay.resource.code}. One bay is one physical position — unlink it there first.`,
+        );
+      }
+      // The mirror of the check in setLegacyBayDisposition. Clearing it silently
+      // here would erase somebody's recorded finding as a side effect of a link.
+      if (bay.reconciliationDisposition !== 'UNRESOLVED') {
+        throw new ConflictException(
+          `${bay.code} was recorded as ${bay.reconciliationDisposition} — it is already resolved as history. ` +
+            'Clear that disposition first if this resource really is the same physical position.',
         );
       }
       bayCode = bay.code;
@@ -572,6 +599,84 @@ export class ResourceAdminService {
         : `Resource ${resource.code} unlinked from its legacy bay by ${actorUserId}`,
     );
     return { code: resource.code, legacyBayId, bayCode, changed: true };
+  }
+
+  /**
+   * CR-2026-108 — resolve a legacy bay that has no current resource.
+   *
+   * The reconciliation gate used to demand a link for every legacy bay. On a floor
+   * that has been physically reorganised that is sometimes impossible: a bay may
+   * have been demolished, absorbed, or replaced by an arrangement matching no
+   * single resource. The gate was therefore pushing towards inventing a link —
+   * and an invented link is a fact the resource-aware engine would go on to reason
+   * from. Saying "this one is history" is the honest answer, so it is now an answer
+   * the system accepts.
+   *
+   * Nothing about the bay's history changes. Its assignments keep pointing at it,
+   * and `status` — what the scheduler reads — is not touched.
+   */
+  async setLegacyBayDisposition(
+    bayId: string,
+    input: { disposition: string; note?: string },
+    actorUserId: string,
+  ) {
+    const disposition = (input?.disposition ?? '').trim().toUpperCase();
+    if (!BAY_DISPOSITIONS.includes(disposition)) {
+      throw new BadRequestException(
+        `"${input?.disposition}" is not a disposition. Choose one of: ${BAY_DISPOSITIONS.join(', ')}.`,
+      );
+    }
+    const bay = await this.prisma.workBay.findUnique({
+      where: { id: bayId },
+      select: {
+        id: true, code: true, reconciliationDisposition: true, dispositionNote: true,
+        resource: { select: { code: true } },
+        _count: { select: { assignments: true } },
+      },
+    });
+    if (!bay) throw new NotFoundException('That bay does not exist.');
+
+    // A linked bay is already resolved. Carrying both would be two answers to one
+    // question, and the next reader would have to guess which one won.
+    if (bay.resource && disposition !== 'UNRESOLVED') {
+      throw new ConflictException(
+        `${bay.code} is already matched to resource ${bay.resource.code}, which resolves it. ` +
+          'Unlink it first if it should be recorded as history instead.',
+      );
+    }
+    // A note is what makes this auditable a year from now. "REPLACED" on its own
+    // tells a future reader nothing about what replaced it.
+    const note = input.note?.trim() || null;
+    if (disposition !== 'UNRESOLVED' && !note) {
+      throw new BadRequestException(
+        'Say briefly what happened to this bay — a disposition without a reason is not a record of anything.',
+      );
+    }
+
+    if (bay.reconciliationDisposition === disposition && bay.dispositionNote === note) {
+      return { code: bay.code, disposition, changed: false };
+    }
+
+    await this.prisma.workBay.update({
+      where: { id: bayId },
+      data: {
+        reconciliationDisposition: disposition as never,
+        dispositionNote: note,
+        dispositionedAt: disposition === 'UNRESOLVED' ? null : new Date(),
+        dispositionedByUserId: disposition === 'UNRESOLVED' ? null : actorUserId,
+      },
+    });
+    await this.audit.log({
+      actorUserId,
+      action: 'LEGACY_BAY_DISPOSITION',
+      entityType: 'WorkBay',
+      entityId: bayId,
+      beforeJson: { disposition: bay.reconciliationDisposition, note: bay.dispositionNote },
+      afterJson: { disposition, note, historicalAssignments: bay._count.assignments },
+      notes: note ?? undefined,
+    });
+    this.logger.log(`Legacy bay ${bay.code} dispositioned ${disposition} by ${actorUserId}`);
+    return { code: bay.code, disposition, changed: true };
   }
 
   /**
@@ -601,6 +706,7 @@ export class ResourceAdminService {
         orderBy: { code: 'asc' },
         select: {
           id: true, code: true, bayType: true, status: true,
+          reconciliationDisposition: true, dispositionNote: true, dispositionedAt: true,
           resource: { select: { id: true, code: true } },
           _count: { select: { assignments: true } },
         },
@@ -632,6 +738,7 @@ export class ResourceAdminService {
         // disagree with the audit's own incompleteness figure.
         needsAttention: needsClassifying(r),
       })),
+      dispositions: BAY_DISPOSITIONS,
       legacyBays: bays.map((b) => ({
         id: b.id,
         code: b.code,
@@ -641,15 +748,23 @@ export class ResourceAdminService {
         link: b.resource
           ? { state: 'LINKED' as const, resourceId: b.resource.id, resourceCode: b.resource.code }
           : { state: 'UNLINKED' as const, resourceId: null, resourceCode: null },
-        // An unlinked bay that scheduling has actually used is the urgent case.
-        needsAttention: !b.resource && b._count.assignments > 0,
+        disposition: String(b.reconciliationDisposition),
+        dispositionNote: b.dispositionNote,
+        dispositionedAt: b.dispositionedAt?.toISOString() ?? null,
+        // Linked OR explicitly accounted for. A bay that was demolished is
+        // resolved by saying so, not by being pointed at the nearest new one.
+        resolved: isBayResolved(b),
+        // An unresolved bay that scheduling has actually used is the urgent case.
+        needsAttention: !isBayResolved(b) && b._count.assignments > 0,
       })),
       summary: {
         resourceRows: resources.length,
         legacyBayRows: bays.length,
         linkedPairs: resources.filter((r) => r.legacyBayId).length,
         unlinkedResources: resources.filter((r) => !r.legacyBayId && !r.retiredAt).length,
-        unlinkedBaysWithHistory: bays.filter((b) => !b.resource && b._count.assignments > 0).length,
+        dispositionedBays: bays.filter((b) => String(b.reconciliationDisposition) !== 'UNRESOLVED').length,
+        unresolvedBays: bays.filter((b) => !isBayResolved(b)).length,
+        unresolvedBaysWithHistory: bays.filter((b) => !isBayResolved(b) && b._count.assignments > 0).length,
         unverifiedResources: resources.filter(needsClassifying).length,
       },
     };

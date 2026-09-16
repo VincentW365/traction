@@ -14,6 +14,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
+import { isBayResolved } from './resource-admin.service';
 
 /** The five the CR names explicitly. Anything else is reported as "additional". */
 const NAMED_CAPABILITIES = ['GENERAL', 'LUBE', 'ALIGNMENT', 'INSPECTION', 'TIRE'];
@@ -80,24 +81,57 @@ export interface ReconciliationSummary {
     detail: string;
   }>;
 
-  /** Item 9 — old bay records nobody has matched to a resource. */
-  unlinkedLegacyBays: Array<{ code: string; bayType: string; status: string; historicalAssignments: number }>;
+  /**
+   * Item 9 — old bay records the walk has not accounted for.
+   *
+   * A bay is accounted for by being linked to its current resource OR by being
+   * explicitly dispositioned as historical-only, replaced or retired. Only the
+   * genuinely unresolved ones appear here, because the alternative was a gate that
+   * pushed people into inventing links to make it go green.
+   */
+  unresolvedLegacyBays: Array<{ code: string; bayType: string; status: string; historicalAssignments: number }>;
+
+  /** Resolved without a link, and why — the other half of item 9. */
+  dispositionedLegacyBays: Array<{
+    code: string;
+    bayType: string;
+    disposition: string;
+    note: string | null;
+    dispositionedAt: string | null;
+    /** Unchanged, always. Dispositioning records a fact; it never edits history. */
+    historicalAssignments: number;
+  }>;
 
   /** Item 10 — resources with no legacy counterpart, i.e. the expansion. */
   expansion: {
-    /** Only meaningful once every legacy bay has been dispositioned. */
-    linkingComplete: boolean;
+    /** Only meaningful once every legacy bay is linked or dispositioned. */
+    reconciliationComplete: boolean;
     note: string;
     resources: Array<{ code: string; name: string; capacityRole: string; capabilities: string[]; createdAt: string }>;
   };
 
-  /** Item 12 — does cleaning consume a mechanical position, or its own? */
+  /**
+   * Item 12 — does cleaning consume a mechanical position, or its own?
+   *
+   * This one does NOT resolve itself when the walk finishes. Configuration says
+   * cleaning shares, because CLEAN-01 requires the same capability repairs do;
+   * the building may say otherwise. Only management can close the gap, and the
+   * fix is a catalogue change rather than a bay assignment.
+   */
   vehicleCleaning: {
     serviceCode: string | null;
     requiredCapability: string | null;
     verdict: 'DEDICATED_POSITION' | 'SHARES_MECHANICAL_POSITION' | 'NO_VERIFIED_POSITION' | 'NOT_DETERMINED';
     detail: string;
     positions: string[];
+    /** Open until management answers. Never closed by classifying bays. */
+    managementConfirmation: {
+      open: boolean;
+      question: string;
+      /** Described, deliberately not implemented — see `status`. */
+      proposalIfDedicated: string;
+      status: 'AWAITING_PHYSICAL_CONFIRMATION' | 'NOT_APPLICABLE';
+    };
   };
 
   /** Item 13 — bookable today, and one bad day away from being unfulfillable. */
@@ -140,6 +174,7 @@ export class ReconciliationSummaryService {
       orderBy: { code: 'asc' },
       select: {
         id: true, code: true, bayType: true, status: true,
+        reconciliationDisposition: true, dispositionNote: true, dispositionedAt: true,
         resource: { select: { code: true } },
         _count: { select: { assignments: true } },
       },
@@ -233,13 +268,23 @@ export class ReconciliationSummaryService {
     }
 
     // --- items 9 & 10 -------------------------------------------------------
-    const unlinkedLegacyBays = bays
-      .filter((b) => !b.resource)
+    const unresolvedLegacyBays = bays
+      .filter((b) => !isBayResolved(b))
       .map((b) => ({
         code: b.code, bayType: b.bayType, status: b.status,
         historicalAssignments: b._count.assignments,
       }));
-    const linkingComplete = unlinkedLegacyBays.length === 0;
+    const dispositionedLegacyBays = bays
+      .filter((b) => String(b.reconciliationDisposition) !== 'UNRESOLVED')
+      .map((b) => ({
+        code: b.code,
+        bayType: b.bayType,
+        disposition: String(b.reconciliationDisposition),
+        note: b.dispositionNote,
+        dispositionedAt: b.dispositionedAt?.toISOString() ?? null,
+        historicalAssignments: b._count.assignments,
+      }));
+    const reconciliationComplete = unresolvedLegacyBays.length === 0;
     const expansionRows = live.filter((r) => !r.legacyBayId);
 
     // --- item 12 ------------------------------------------------------------
@@ -267,7 +312,7 @@ export class ReconciliationSummaryService {
     // The walk is what makes these numbers mean anything. Until it is done, a
     // pool of zero says nobody has classified a bay — not that nobody can do
     // the work — and the two must not be printed in the same words.
-    const walkComplete = positions.unverified === 0 && linkingComplete;
+    const walkComplete = positions.unverified === 0 && reconciliationComplete;
     const singlePositionBookableServices = bookable
       .map((s) => {
         const capability = s.requiredBayType!;
@@ -292,14 +337,16 @@ export class ReconciliationSummaryService {
           'the walk is incomplete, so every count here describes part of the shop.',
       );
     }
-    if (!linkingComplete) {
-      const withHistory = unlinkedLegacyBays.filter((b) => b.historicalAssignments > 0);
+    if (!reconciliationComplete) {
+      const withHistory = unresolvedLegacyBays.filter((b) => b.historicalAssignments > 0);
       blockers.push(
-        `${unlinkedLegacyBays.length} legacy bay record${unlinkedLegacyBays.length === 1 ? '' : 's'} not matched to a resource` +
+        `${unresolvedLegacyBays.length} legacy bay record${unresolvedLegacyBays.length === 1 ? '' : 's'} not yet accounted for` +
           (withHistory.length > 0
             ? ` (${withHistory.map((b) => `${b.code}: ${b.historicalAssignments} jobs`).join(', ')}) — ` +
-              'these are the records scheduling has actually been using.'
-            : '.'),
+              'these are the records scheduling has actually been using. '
+            : '. ') +
+          'Each needs either a link to the resource that IS that position, or a note saying it is history — ' +
+          'do not invent a link to clear this.',
       );
     }
     if (verifiedPositions.length === 0) {
@@ -337,13 +384,14 @@ export class ReconciliationSummaryService {
               'They are still not additive by construction — treat that as a coincidence of the current configuration, not a rule.',
       },
       vehicleRestrictions,
-      unlinkedLegacyBays,
+      unresolvedLegacyBays,
+      dispositionedLegacyBays,
       expansion: {
-        linkingComplete,
-        note: linkingComplete
-          ? 'Every legacy bay has been matched, so a resource with no link is genuinely new capacity.'
-          : 'Legacy matching is incomplete, so this list mixes genuine expansion with resources nobody has linked yet. ' +
-            'It becomes authoritative once the unmatched bays above are dispositioned.',
+        reconciliationComplete,
+        note: reconciliationComplete
+          ? 'Every legacy bay is linked or accounted for, so a resource with no link is genuinely new capacity.'
+          : 'Legacy reconciliation is incomplete, so this list mixes genuine expansion with resources nobody has dealt with yet. ' +
+            'It becomes authoritative once the bays above are linked or dispositioned.',
         resources: expansionRows.map((r) => ({
           code: r.code,
           name: r.name,
@@ -368,6 +416,30 @@ export class ReconciliationSummaryService {
     positions: T[],
     caps: (r: T) => string[],
   ): ReconciliationSummary['vehicleCleaning'] {
+    /**
+     * The question management has to answer, and what would follow from a yes.
+     * Carried on every verdict except the one where cleaning already has its own
+     * capability, because until then no amount of bay classification closes it.
+     */
+    const open = (): ReconciliationSummary['vehicleCleaning']['managementConfirmation'] => ({
+      open: true,
+      question:
+        'Does Vehicle Cleaning have a physical position of its own — a wash bay that is not also used for repairs — ' +
+        'or does it happen in a mechanical service position?',
+      proposalIfDedicated:
+        'If the walk confirms a dedicated cleaning position: add CLEANING as an additive service/resource capability, ' +
+        'assign it to that position only, and remap CLEAN-01 from its current capability to CLEANING. ' +
+        'Additive — no existing capability, service or historical record changes, and the remap is a public-catalogue ' +
+        'change requiring approval. NOT implemented: proposed only, and only after physical confirmation.',
+      status: 'AWAITING_PHYSICAL_CONFIRMATION',
+    });
+    const closed = (): ReconciliationSummary['vehicleCleaning']['managementConfirmation'] => ({
+      open: false,
+      question: 'Does Vehicle Cleaning have a physical position of its own?',
+      proposalIfDedicated: 'Already answered in configuration — cleaning has a capability of its own.',
+      status: 'NOT_APPLICABLE',
+    });
+
     if (!service || !service.requiredBayType) {
       return {
         serviceCode: service?.code ?? null,
@@ -377,6 +449,7 @@ export class ReconciliationSummaryService {
           ? `${service.code} has no required capability set, so where cleaning physically happens cannot be read from configuration.`
           : 'No CLEAN-01 service found in the catalogue.',
         positions: [],
+        managementConfirmation: open(),
       };
     }
     const capability = service.requiredBayType;
@@ -388,6 +461,7 @@ export class ReconciliationSummaryService {
         verdict: 'NO_VERIFIED_POSITION',
         detail: `No confirmed position carries ${capability}, so nothing yet says where Vehicle Cleaning happens.`,
         positions: [],
+        managementConfirmation: open(),
       };
     }
     // The catalogue decides this before the bays do. If other services ask for
@@ -402,10 +476,12 @@ export class ReconciliationSummaryService {
           `Vehicle Cleaning requires ${capability}, and ${competingServices} other active service${competingServices === 1 ? '' : 's'} ` +
           `require${competingServices === 1 ? 's' : ''} the same capability. Every position that can take a wash ` +
           `(${holders.map((r) => r.code).join(', ')}) can therefore be called on for repairs instead — a booked cleaning ` +
-          'occupies repair capacity, and Stage 5C must model it that way. ' +
-          `To give cleaning a position of its own it needs a capability of its own, not just a bay: set ${service.code} ` +
-          'to a distinct required capability and assign it only to the wash position.',
+          'occupies repair capacity, and Stage 5C must model it that way UNLESS the walk says otherwise. ' +
+          'This is what CONFIGURATION says, not what the building says: giving cleaning a position of its own ' +
+          'requires a capability of its own, which is a catalogue change and therefore management\'s call. ' +
+          'Classifying bays cannot close this one.',
         positions: holders.map((r) => r.code),
+        managementConfirmation: open(),
       };
     }
 
@@ -419,6 +495,7 @@ export class ReconciliationSummaryService {
         `${capability} is required by Vehicle Cleaning and by nothing else, and ${holders.map((r) => r.code).join(', ')} ` +
         `carr${holders.length === 1 ? 'ies' : 'y'} it. A booked cleaning does not consume a repair position.`,
       positions: holders.map((r) => r.code),
+      managementConfirmation: closed(),
     };
   }
 }

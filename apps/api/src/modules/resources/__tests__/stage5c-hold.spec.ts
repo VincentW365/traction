@@ -111,6 +111,34 @@ describe('hold 4 — the pilot services are not withdrawn from the stale invento
 });
 
 // ---------------------------------------------------------------------------
+describe('hold 8 — the CLEANING capability is proposed, never applied', () => {
+  const summary = readFileSync(join(__dirname, '..', 'reconciliation-summary.service.ts'), 'utf8');
+
+  it('nothing remaps CLEAN-01 or writes a required capability', () => {
+    for (const { src } of ALL_SOURCES) {
+      expect(src).not.toMatch(/requiredBayType:\s*'CLEANING'/);
+      expect(src).not.toMatch(/serviceType\.update\w*\([\s\S]{0,300}?requiredBayType/);
+    }
+  });
+
+  it('CLEANING is not seeded into the capability vocabulary ahead of approval', () => {
+    // The vocabulary is derived from what the catalogue asks for, so an unapproved
+    // capability cannot appear in the UI as an assignable option.
+    const admin = readFileSync(join(API_SRC, 'modules', 'resources', 'resource-admin.service.ts'), 'utf8');
+    const body = admin.slice(admin.indexOf('async capabilityVocabulary'));
+    const method = body.slice(0, body.search(/\n {2}(async |private |public |\/\*\*)/));
+    expect(method).not.toContain('CLEANING');
+    expect(method).toContain('requiredBayType');
+  });
+
+  it('the finding stays open for management rather than being auto-resolved', () => {
+    expect(summary).toContain('AWAITING_PHYSICAL_CONFIRMATION');
+    expect(summary).toContain('NOT implemented');
+    expect(summary).toContain('after physical confirmation');
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe('hold 5 — UNVERIFIED resources are never auto-classified', () => {
   /**
    * The guarantee is structural rather than textual: exactly ONE file in the
@@ -155,6 +183,20 @@ describe('hold 6 — WorkResource and WorkBay are never linked automatically', (
     // The value is the parameter, never a lookup result. `legacyBayId: bay.id`
     // would be the beginning of inference.
     expect(writes[0].text).toBe('data: { legacyBayId }');
+  });
+
+  /**
+   * The escape hatch that stops the gate pushing towards a false link. It writes
+   * a disposition and a note — never a link, never an assignment.
+   */
+  it('the disposition path records a finding and cannot create a link', () => {
+    const src = readFileSync(join(API_SRC, 'modules', 'resources', 'resource-admin.service.ts'), 'utf8');
+    const body = src.slice(src.indexOf('async setLegacyBayDisposition'));
+    const method = body.slice(0, body.search(/\n {2}(async |private |public |\/\*\*)/));
+    expect(method).not.toContain('legacyBayId');
+    expect(method).not.toMatch(/technicianAssignment\.(update|delete|create)/);
+    // A linked bay is already resolved; carrying both would be two answers.
+    expect(method).toContain('already matched to resource');
   });
 
   it('no seed or migration pairs them up by code or name', () => {

@@ -27,7 +27,11 @@ function build(overrides: Record<string, any> = {}) {
       create: vi.fn(async ({ data }: any) => ({ id: 'res-1', ...data })),
       update: vi.fn(async ({ data }: any) => ({ id: 'res-1', ...data })),
     },
-    workBay: { findUnique: vi.fn(async () => null), findMany: vi.fn(async () => []) },
+    workBay: {
+      findUnique: vi.fn(async () => null),
+      findMany: vi.fn(async () => []),
+      update: vi.fn(async ({ data }: any) => ({ id: 'bay-1', ...data })),
+    },
     workResourceCapability: {
       deleteMany: vi.fn(async () => ({ count: 0 })),
       createMany: vi.fn(async () => ({ count: 0 })),
@@ -146,7 +150,7 @@ describe('§5 — linking a resource to its old bay record', () => {
   it('links when the bay is free, and audits it', async () => {
     const h = build();
     h.prisma.workResource.findUnique = vi.fn(async () => RESOURCE);
-    h.prisma.workBay.findUnique = vi.fn(async () => ({ id: 'bay-1', code: 'BAY-01', siteId: SITE, resource: null }));
+    h.prisma.workBay.findUnique = vi.fn(async () => ({ id: 'bay-1', code: 'BAY-01', siteId: SITE, reconciliationDisposition: 'UNRESOLVED', resource: null }));
     const out = await h.service.linkLegacyBay('res-1', 'bay-1', 'user-1');
     expect(out.changed).toBe(true);
     expect(h.prisma.workResource.update.mock.calls[0][0].data).toEqual({ legacyBayId: 'bay-1' });
@@ -157,7 +161,7 @@ describe('§5 — linking a resource to its old bay record', () => {
     const h = build();
     h.prisma.workResource.findUnique = vi.fn(async () => RESOURCE);
     h.prisma.workBay.findUnique = vi.fn(async () => ({
-      id: 'bay-1', code: 'BAY-01', siteId: SITE, resource: { code: 'BAY-7' },
+      id: 'bay-1', code: 'BAY-01', siteId: SITE, reconciliationDisposition: 'UNRESOLVED', resource: { code: 'BAY-7' },
     }));
     await expect(h.service.linkLegacyBay('res-1', 'bay-1', 'user-1')).rejects.toBeInstanceOf(ConflictException);
     expect(h.prisma.workResource.update).not.toHaveBeenCalled();
@@ -166,7 +170,7 @@ describe('§5 — linking a resource to its old bay record', () => {
   it('refuses to link across sites', async () => {
     const h = build();
     h.prisma.workResource.findUnique = vi.fn(async () => RESOURCE);
-    h.prisma.workBay.findUnique = vi.fn(async () => ({ id: 'bay-1', code: 'BAY-01', siteId: 'other-site', resource: null }));
+    h.prisma.workBay.findUnique = vi.fn(async () => ({ id: 'bay-1', code: 'BAY-01', siteId: 'other-site', reconciliationDisposition: 'UNRESOLVED', resource: null }));
     await expect(h.service.linkLegacyBay('res-1', 'bay-1', 'user-1')).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -181,7 +185,7 @@ describe('§5 — linking a resource to its old bay record', () => {
   it('§7 — linking touches nothing but the pointer: no assignment or history is rewritten', async () => {
     const h = build();
     h.prisma.workResource.findUnique = vi.fn(async () => RESOURCE);
-    h.prisma.workBay.findUnique = vi.fn(async () => ({ id: 'bay-1', code: 'BAY-01', siteId: SITE, resource: null }));
+    h.prisma.workBay.findUnique = vi.fn(async () => ({ id: 'bay-1', code: 'BAY-01', siteId: SITE, reconciliationDisposition: 'UNRESOLVED', resource: null }));
     await h.service.linkLegacyBay('res-1', 'bay-1', 'user-1');
     expect(Object.keys(h.prisma.workResource.update.mock.calls[0][0].data)).toEqual(['legacyBayId']);
   });
@@ -195,6 +199,115 @@ describe('§5 — linking a resource to its old bay record', () => {
     expect(method).toMatch(/workBay\.findUnique\(\{\s*where:\s*\{\s*id:\s*legacyBayId/);
     expect(method).not.toContain('siteId_code');
     expect(method).not.toMatch(/code:\s*\{\s*(equals|contains|startsWith)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A bay is resolved by a link OR by being accounted for
+// ---------------------------------------------------------------------------
+describe('recording what happened to a legacy bay', () => {
+  const BAY = {
+    id: 'bay-1', code: 'BAY-01', reconciliationDisposition: 'UNRESOLVED',
+    dispositionNote: null, resource: null, _count: { assignments: 39 },
+  };
+
+  it('records the disposition with a note, an actor and a timestamp', async () => {
+    const h = build();
+    h.prisma.workBay.findUnique = vi.fn(async () => BAY);
+    const out = await h.service.setLegacyBayDisposition(
+      'bay-1', { disposition: 'HISTORICAL_ONLY', note: 'Demolished in the 2026 expansion.' }, 'user-1',
+    );
+    expect(out.changed).toBe(true);
+    const data = h.prisma.workBay.update.mock.calls[0][0].data;
+    expect(data.reconciliationDisposition).toBe('HISTORICAL_ONLY');
+    expect(data.dispositionNote).toBe('Demolished in the 2026 expansion.');
+    expect(data.dispositionedByUserId).toBe('user-1');
+    expect(data.dispositionedAt).toBeInstanceOf(Date);
+    expect(h.audit.log.mock.calls[0][0].action).toBe('LEGACY_BAY_DISPOSITION');
+  });
+
+  it('never touches assignments, status or anything else on the bay', async () => {
+    const h = build();
+    h.prisma.workBay.findUnique = vi.fn(async () => BAY);
+    await h.service.setLegacyBayDisposition('bay-1', { disposition: 'RETIRED', note: 'Taken out of service.' }, 'user-1');
+    expect(Object.keys(h.prisma.workBay.update.mock.calls[0][0].data).sort()).toEqual([
+      'dispositionNote', 'dispositionedAt', 'dispositionedByUserId', 'reconciliationDisposition',
+    ]);
+  });
+
+  it('records the historical job count in the audit entry rather than changing it', async () => {
+    const h = build();
+    h.prisma.workBay.findUnique = vi.fn(async () => BAY);
+    await h.service.setLegacyBayDisposition('bay-1', { disposition: 'REPLACED', note: 'Floor reorganised.' }, 'user-1');
+    expect(h.audit.log.mock.calls[0][0].afterJson).toMatchObject({ historicalAssignments: 39 });
+  });
+
+  it('demands a reason — a disposition without one is not a record of anything', async () => {
+    const h = build();
+    h.prisma.workBay.findUnique = vi.fn(async () => BAY);
+    await expect(h.service.setLegacyBayDisposition('bay-1', { disposition: 'RETIRED' }, 'user-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(
+      h.service.setLegacyBayDisposition('bay-1', { disposition: 'RETIRED', note: '   ' }, 'user-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(h.prisma.workBay.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a disposition it does not recognise', async () => {
+    const h = build();
+    h.prisma.workBay.findUnique = vi.fn(async () => BAY);
+    await expect(
+      h.service.setLegacyBayDisposition('bay-1', { disposition: 'PROBABLY_GONE', note: 'x' }, 'user-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  /** Two answers to one question, and the next reader has to guess which won. */
+  it('refuses to disposition a bay that is already linked', async () => {
+    const h = build();
+    h.prisma.workBay.findUnique = vi.fn(async () => ({ ...BAY, resource: { code: 'BAY-1' } }));
+    await expect(
+      h.service.setLegacyBayDisposition('bay-1', { disposition: 'RETIRED', note: 'Gone.' }, 'user-1'),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('refuses to link a bay that was recorded as history, rather than silently clearing it', async () => {
+    const h = build();
+    h.prisma.workResource.findUnique = vi.fn(async () => ({ id: 'res-1', code: 'BAY-1', siteId: SITE, legacyBayId: null }));
+    h.prisma.workBay.findUnique = vi.fn(async () => ({
+      id: 'bay-1', code: 'BAY-01', siteId: SITE, reconciliationDisposition: 'HISTORICAL_ONLY', resource: null,
+    }));
+    await expect(h.service.linkLegacyBay('res-1', 'bay-1', 'user-1')).rejects.toBeInstanceOf(ConflictException);
+    expect(h.prisma.workResource.update).not.toHaveBeenCalled();
+  });
+
+  it('allows UNRESOLVED back without a note, so a mistake can be undone', async () => {
+    const h = build();
+    h.prisma.workBay.findUnique = vi.fn(async () => ({
+      ...BAY, reconciliationDisposition: 'RETIRED', dispositionNote: 'Gone.',
+    }));
+    await h.service.setLegacyBayDisposition('bay-1', { disposition: 'UNRESOLVED' }, 'user-1');
+    const data = h.prisma.workBay.update.mock.calls[0][0].data;
+    expect(data.reconciliationDisposition).toBe('UNRESOLVED');
+    expect(data.dispositionedAt).toBeNull();
+    expect(data.dispositionedByUserId).toBeNull();
+  });
+
+  it('does nothing and audits nothing when the disposition is unchanged', async () => {
+    const h = build();
+    h.prisma.workBay.findUnique = vi.fn(async () => ({
+      ...BAY, reconciliationDisposition: 'RETIRED', dispositionNote: 'Gone.',
+    }));
+    const out = await h.service.setLegacyBayDisposition('bay-1', { disposition: 'RETIRED', note: 'Gone.' }, 'user-1');
+    expect(out.changed).toBe(false);
+    expect(h.audit.log).not.toHaveBeenCalled();
+  });
+
+  it('throws NotFound for a bay that does not exist', async () => {
+    const h = build();
+    await expect(
+      h.service.setLegacyBayDisposition('nope', { disposition: 'RETIRED', note: 'x' }, 'user-1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 
@@ -348,7 +461,7 @@ describe('§6 — the reconciliation view', () => {
       },
     ]);
     h.prisma.workBay.findMany = vi.fn(async () => [
-      { id: 'bay-1', code: 'BAY-01', bayType: 'GENERAL', status: 'ACTIVE', resource: null, _count: { assignments: 40 } },
+      { id: 'bay-1', code: 'BAY-01', bayType: 'GENERAL', status: 'ACTIVE', reconciliationDisposition: 'UNRESOLVED', dispositionNote: null, dispositionedAt: null, resource: null, _count: { assignments: 40 } },
     ]);
     const out = await h.service.reconciliation(SITE);
 
@@ -357,7 +470,7 @@ describe('§6 — the reconciliation view', () => {
     // A bay with real history and no resource is the urgent case, not noise.
     expect(out.legacyBays[0].needsAttention).toBe(true);
     expect(out.legacyBays[0].historicalAssignments).toBe(40);
-    expect(out.summary).toMatchObject({ linkedPairs: 0, unlinkedBaysWithHistory: 1, unverifiedResources: 1 });
+    expect(out.summary).toMatchObject({ linkedPairs: 0, unresolvedBaysWithHistory: 1, unverifiedResources: 1 });
     expect(h.prisma.workResource.update).not.toHaveBeenCalled();
   });
 

@@ -1611,3 +1611,116 @@ alarm about the data dressed up as an alarm about the shop: the pools were empty
 because nobody had classified a bay, not because nobody can change oil. Each
 finding now carries a `basis` of `VERIFIED` or `INCOMPLETE_CONFIGURATION`, and the
 "no position" blocker is only raised once the walk is actually complete.
+
+---
+
+## §N. Reconciliation semantics — resolved is not the same as linked
+
+Two changes to the gate, made during the hold. Both read-only in effect: no
+capacity number moves, no customer sees anything, no historical row is touched.
+
+### N1. A legacy bay is resolved by a link OR by being accounted for
+
+The gate previously demanded that every legacy `WorkBay` be matched to a
+`WorkResource` before Stage 5C could begin. On a floor that has been physically
+reorganised that is sometimes impossible — a bay may have been demolished,
+absorbed, or replaced by an arrangement corresponding to no single resource.
+
+The failure mode is what matters. A gate that can only be cleared by linking does
+not stop at inconveniencing the person doing the walk; it **pushes them into
+pairing a demolished bay with whichever new one stands nearest**, because that is
+the only way to make the screen go green. And that invented link is then a fact
+the resource-aware engine reasons from — a fabricated premise introduced by the
+very process meant to establish the truth.
+
+So a bay is now resolved when it is **either** linked to its current resource
+**or** explicitly dispositioned:
+
+| Disposition | Means |
+| --- | --- |
+| `UNRESOLVED` | Nobody has said anything. Blocks readiness. |
+| `HISTORICAL_ONLY` | Gone or absorbed. Its jobs are real history and stay put. |
+| `REPLACED` | Superseded by the expansion, but by no single resource. |
+| `RETIRED` | Formally out of service, kept for its record. |
+
+Migration `20260916170000_cr_2026_108_legacy_bay_disposition` — additive, four
+columns on `work_bays`, every existing bay landing on `UNRESOLVED`.
+
+Design points worth recording:
+
+- **Not folded into `work_bays.status`.** That column says whether a bay is active
+  for scheduling; disposition says how the walk accounted for it. One column
+  answering both would let a reconciliation note silently change what the
+  scheduler sees.
+- **A note is mandatory.** `REPLACED` on its own tells a future reader nothing.
+  The write is refused without one.
+- **Link and disposition are mutually exclusive, in both directions.** Linking a
+  dispositioned bay is refused rather than silently clearing the finding;
+  dispositioning a linked bay is refused for the same reason. Two answers to one
+  question means the next reader has to guess which won.
+- **Reversible.** Setting `UNRESOLVED` clears the note, timestamp and actor, so a
+  mistake during the walk is not permanent.
+- **Audited** as `LEGACY_BAY_DISPOSITION`, recording the historical job count in
+  the entry — a number the operation reports and never changes.
+
+The blocker text now says so explicitly: *"Each needs either a link to the resource
+that IS that position, or a note saying it is history — do not invent a link to
+clear this."*
+
+Verified live, rolled back:
+
+```
+ 1. starting point: 6 of 6 bays unresolved; BAY-01 carries 39 jobs, no resource
+ 2. no reason -> HTTP 400; unknown value -> HTTP 400
+ 3. BAY-01 recorded HISTORICAL_ONLY — resolved WITHOUT a link, still 39 jobs, still unlinked
+ 4. unresolved 6 -> 5; dispositioned 1; linked pairs unchanged at 0
+ 5. linking a bay already recorded as history -> HTTP 409
+ 6. gate moved it out of "unresolved" into "resolved without a link"
+ 7. remaining blocker: "...do not invent a link to clear this."
+11. rolled back — 6 unresolved again, 39 jobs intact
+```
+
+### N2. CLEAN-01 stays open as a management-confirmation item
+
+Configuration says cleaning shares a mechanical position: CLEAN-01 requires
+`GENERAL`, and so do 22 other active services. The building may say otherwise, and
+**classifying bays cannot settle it** — the answer lives in the catalogue.
+
+So the finding no longer resolves itself. `vehicleCleaning.managementConfirmation`
+carries `open: true` and `status: AWAITING_PHYSICAL_CONFIRMATION` on every verdict
+except the one where cleaning already has a capability of its own, and it stays
+open even when `readyForStage5C` is true. Those are two different questions and
+the report says both.
+
+The proposal, held until confirmed:
+
+> If the walk confirms a dedicated cleaning position: add CLEANING as an additive
+> service/resource capability, assign it to that position only, and remap CLEAN-01
+> from its current capability to CLEANING. Additive — no existing capability,
+> service or historical record changes, and the remap is a public-catalogue change
+> requiring approval. NOT implemented: proposed only, and only after physical
+> confirmation.
+
+`CLEANING` is deliberately absent everywhere. The capability vocabulary is derived
+from what the catalogue actually asks for, so it cannot appear in the UI as an
+assignable option before the remap is approved — verified live, the vocabulary is
+still `ALIGNMENT, DIAGNOSTIC, GENERAL, INSPECTION, LUBE, TIRE`. A guard test keeps
+it that way.
+
+### N3. The hold is otherwise unchanged
+
+`stage5c-hold.spec.ts` grew to 22 cases: the disposition path cannot create a link
+or touch an assignment, nothing remaps CLEAN-01, and CLEANING is not seeded into
+the vocabulary.
+
+State at the end of this change, unchanged from acceptance:
+
+```
+capacity roles : 17 x UNVERIFIED       dispositions : 6 x UNRESOLVED
+legacy links   : 0                     bay assignments : 62 (untouched)
+capacity mode  : FIXED                 concurrency  : 2
+duration source: DEFAULT               enforcement  : true, 6 pilot services
+CLEAN-01       : still requires GENERAL
+```
+
+Full API suite: 1458 passed, 17 skipped.

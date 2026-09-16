@@ -51,12 +51,18 @@ interface LegacyBayRow {
   status: string;
   historicalAssignments: number;
   link: { state: LinkState; resourceId: string | null; resourceCode: string | null };
+  disposition: string;
+  dispositionNote: string | null;
+  dispositionedAt: string | null;
+  /** Linked, or explicitly accounted for. Either one finishes the job. */
+  resolved: boolean;
   needsAttention: boolean;
 }
 
 interface Reconciliation {
   capabilityVocabulary: string[];
   capacityRoles: string[];
+  dispositions: string[];
   resources: ResourceRow[];
   legacyBays: LegacyBayRow[];
   summary: {
@@ -64,7 +70,9 @@ interface Reconciliation {
     legacyBayRows: number;
     linkedPairs: number;
     unlinkedResources: number;
-    unlinkedBaysWithHistory: number;
+    dispositionedBays: number;
+    unresolvedBays: number;
+    unresolvedBaysWithHistory: number;
     unverifiedResources: number;
   };
 }
@@ -114,6 +122,25 @@ const ROLE_BADGE: Record<string, string> = {
   OVERFLOW_SERVICE_POSITION: 'bg-teal-50 text-teal-700 border-teal-200',
   SUPPORT_EQUIPMENT: 'bg-slate-100 text-slate-600 border-slate-200',
   PLACEHOLDER: 'bg-slate-100 text-slate-500 border-slate-200',
+};
+
+/**
+ * How an old bay record was accounted for when no current resource corresponds
+ * to it. Written in shop words: a manager walking the floor says "that one's
+ * gone", not "HISTORICAL_ONLY".
+ */
+const DISPOSITION_LABEL: Record<string, string> = {
+  UNRESOLVED: 'Not decided yet',
+  HISTORICAL_ONLY: 'Gone — keep its history',
+  REPLACED: 'Replaced by the new layout',
+  RETIRED: 'Taken out of service',
+};
+
+const DISPOSITION_HELP: Record<string, string> = {
+  UNRESOLVED: 'Nobody has said what happened to this bay.',
+  HISTORICAL_ONLY: 'The bay no longer exists. Its past jobs are real and stay exactly where they are.',
+  REPLACED: 'The floor was reorganised, so no single bay today is the same place this one was.',
+  RETIRED: 'Formally out of service, kept for its record.',
 };
 
 const CAPABILITY_LABEL: Record<string, string> = {
@@ -174,6 +201,12 @@ export default function ResourceReconciliationPage() {
     onSuccess: refresh,
     onError: (e) => onError(e, 'Could not change that link.'),
   });
+  const setDisposition = useMutation({
+    mutationFn: ({ bayId, disposition, note }: { bayId: string; disposition: string; note?: string }) =>
+      api.post(`/resources/legacy-bays/${bayId}/disposition`, { disposition, note }),
+    onSuccess: refresh,
+    onError: (e) => onError(e, 'Could not record what happened to that bay.'),
+  });
 
   if (recon.isLoading || !recon.data) return <LoadingState />;
   const data = recon.data;
@@ -182,9 +215,9 @@ export default function ResourceReconciliationPage() {
   const live = data.resources.filter((r) => !r.retired);
   const unconfirmed = live.filter((r) => r.capacityRole === 'UNVERIFIED');
   const confirmed = live.filter((r) => r.capacityRole !== 'UNVERIFIED');
-  // A bay that carries real assignment history and has no resource is the urgent
-  // case: it is the model scheduling has actually been using all along.
-  const orphanBays = data.legacyBays.filter((b) => b.link.state === 'UNLINKED');
+  // A bay that carries real assignment history and is still unaccounted for is
+  // the urgent case: it is the model scheduling has actually been using.
+  const orphanBays = data.legacyBays.filter((b) => !b.resolved);
 
   return (
     <div className="p-6 max-w-[1400px]">
@@ -232,9 +265,13 @@ export default function ResourceReconciliationPage() {
             <div className="text-xs text-slate-500 mt-0.5">Still to confirm</div>
           </div>
           <div>
-            <div className="text-3xl font-bold text-slate-900">{data.summary.linkedPairs}</div>
+            <div className="text-3xl font-bold text-slate-900">{data.summary.unresolvedBays}</div>
             <div className="text-xs text-slate-500 mt-0.5">
-              Matched to an old bay record ({data.summary.resourceRows} resources / {data.summary.legacyBayRows} bays)
+              Old bay records still to deal with
+              <span className="block text-slate-400">
+                {data.summary.linkedPairs} matched · {data.summary.dispositionedBays} recorded as gone · of{' '}
+                {data.summary.legacyBayRows}
+              </span>
             </div>
           </div>
         </div>
@@ -372,47 +409,144 @@ export default function ResourceReconciliationPage() {
         {/* ---- the legacy side ---------------------------------------------- */}
         <div>
           <Section
-            title={`Older bay records (${data.legacyBays.length})`}
-            help="These are the rows the scheduler has actually been writing against. They are kept exactly as they are — matching one to a resource changes nothing about its history."
+            title={`Older bay records (${data.summary.unresolvedBays} to go)`}
+            help="These are the rows the scheduler has actually been writing against. Each one needs either a match to the resource that IS that same place, or a note saying it is gone. Never invent a match to clear the list."
             tone="plain"
           >
             {data.legacyBays.map((b) => (
-              <div key={b.id} className="px-4 py-3 border-b border-slate-100 last:border-0">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="font-medium text-slate-900 text-sm">{b.code}</div>
-                    <div className="text-xs text-slate-500">
-                      {capLabel(b.bayType)} · {b.historicalAssignments} job
-                      {b.historicalAssignments === 1 ? '' : 's'} on record
-                    </div>
-                  </div>
-                  {b.link.state === 'LINKED' ? (
-                    <span className="shrink-0 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      Matched to {b.link.resourceCode}
-                    </span>
-                  ) : (
-                    <span
-                      className={`shrink-0 px-2 py-0.5 rounded text-xs font-medium border ${
-                        b.needsAttention
-                          ? 'bg-amber-50 text-amber-700 border-amber-200'
-                          : 'bg-slate-100 text-slate-500 border-slate-200'
-                      }`}
-                    >
-                      Not matched
-                    </span>
-                  )}
-                </div>
-              </div>
+              <LegacyBayCard
+                key={b.id}
+                b={b}
+                dispositions={data.dispositions}
+                busy={setDisposition.isPending || setLink.isPending}
+                onDisposition={(disposition, note) => setDisposition.mutate({ bayId: b.id, disposition, note })}
+              />
             ))}
             {orphanBays.some((b) => b.needsAttention) && (
               <div className="px-4 py-3 bg-amber-50 text-xs text-amber-900 leading-relaxed">
-                Some unmatched bays carry real job history. Those are the ones the scheduler has been using, so matching
-                them to a resource is worth doing first.
+                Some of these carry real job history — they are the ones the scheduler has been using. Worth dealing
+                with first.
               </div>
             )}
           </Section>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * One old bay record, and the two honest ways to finish with it.
+ *
+ * The important design choice: "gone" is offered as prominently as "matched".
+ * An earlier version only allowed matching, which quietly pushed whoever was
+ * doing the walk towards pairing a demolished bay with whichever new one stood
+ * nearest — and that invented link would then be a fact the scheduler reasons from.
+ */
+function LegacyBayCard({
+  b,
+  dispositions,
+  busy,
+  onDisposition,
+}: {
+  b: LegacyBayRow;
+  dispositions: string[];
+  busy: boolean;
+  onDisposition: (disposition: string, note?: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState(b.dispositionNote ?? '');
+  const [choice, setChoice] = useState(b.disposition);
+
+  const linked = b.link.state === 'LINKED';
+  const badge = linked
+    ? { text: `Matched to ${b.link.resourceCode}`, cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    : b.resolved
+      ? { text: DISPOSITION_LABEL[b.disposition] ?? b.disposition, cls: 'bg-slate-100 text-slate-600 border-slate-200' }
+      : {
+          text: 'Not decided',
+          cls: b.needsAttention ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-500 border-slate-200',
+        };
+
+  return (
+    <div className="border-b border-slate-100 last:border-0">
+      <div className="px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-medium text-slate-900 text-sm">{b.code}</div>
+            <div className="text-xs text-slate-500">
+              {capLabel(b.bayType)} · {b.historicalAssignments} job{b.historicalAssignments === 1 ? '' : 's'} on record
+            </div>
+            {b.resolved && !linked && b.dispositionNote && (
+              <div className="text-xs text-slate-500 mt-1 italic">&ldquo;{b.dispositionNote}&rdquo;</div>
+            )}
+          </div>
+          <span className={`shrink-0 px-2 py-0.5 rounded text-xs font-medium border ${badge.cls}`}>{badge.text}</span>
+        </div>
+
+        {linked ? (
+          <p className="text-xs text-slate-400 mt-2">
+            Matched from the resource side. Unmatch it there if that was wrong.
+          </p>
+        ) : (
+          <button
+            onClick={() => setOpen((v) => !v)}
+            className="mt-2 text-xs font-medium text-slate-600 hover:text-slate-900 underline underline-offset-2"
+          >
+            {open ? 'Cancel' : b.resolved ? 'Change what happened to it' : 'Say what happened to it'}
+          </button>
+        )}
+      </div>
+
+      {open && !linked && (
+        <div className="px-4 pb-4 bg-slate-50/50 space-y-3">
+          <p className="text-xs text-slate-500 leading-relaxed pt-2">
+            If a bay standing today IS this same place, match it from the resource list instead. Only use this when
+            nothing today corresponds to it — and its {b.historicalAssignments} past job
+            {b.historicalAssignments === 1 ? '' : 's'} stay exactly where they are either way.
+          </p>
+          <fieldset disabled={busy} className="space-y-1">
+            {dispositions.map((d) => (
+              <label
+                key={d}
+                className="flex items-start gap-2 p-2 rounded-lg hover:bg-white cursor-pointer border border-transparent hover:border-slate-200"
+              >
+                <input type="radio" name={`disp-${b.id}`} checked={choice === d} onChange={() => setChoice(d)} className="mt-0.5" />
+                <span>
+                  <span className="text-sm font-medium text-slate-900">{DISPOSITION_LABEL[d] ?? d}</span>
+                  <span className="block text-xs text-slate-500 leading-relaxed">{DISPOSITION_HELP[d]}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          {choice !== 'UNRESOLVED' && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                What happened, briefly? <span className="font-normal text-slate-500">(required)</span>
+              </label>
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="e.g. Demolished when the new lifts went in"
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Whoever reads this in a year will not remember. One line is enough.
+              </p>
+            </div>
+          )}
+          <button
+            disabled={busy || (choice !== 'UNRESOLVED' && !note.trim())}
+            onClick={() => {
+              onDisposition(choice, note.trim() || undefined);
+              setOpen(false);
+            }}
+            className="px-3 py-2 text-sm font-medium rounded-lg bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Save
+          </button>
+        </div>
+      )}
     </div>
   );
 }

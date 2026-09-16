@@ -81,14 +81,27 @@ async function main() {
     }
   }
 
-  rule('9 — unmatched legacy bay records');
-  if (s.unlinkedLegacyBays.length === 0) {
-    console.log('  None — every legacy bay has been matched to a resource.');
+  rule('9 — legacy bay records not yet accounted for');
+  if (s.unresolvedLegacyBays.length === 0) {
+    console.log('  None — every legacy bay is either linked to its resource or recorded as history.');
   } else {
-    for (const b of s.unlinkedLegacyBays) {
+    for (const b of s.unresolvedLegacyBays) {
       const flag = b.historicalAssignments > 0 ? '  <- carries real job history' : '';
       console.log(`  ${pad(b.code, 12)} ${pad(b.bayType, 12)} ${pad(b.status, 10)} ${num(b.historicalAssignments, 5)} jobs${flag}`);
     }
+    console.log('\n  Each needs EITHER a link to the resource that is that same physical position,');
+    console.log('  OR a note saying it is history (demolished, absorbed, replaced, retired).');
+    console.log('  Do not invent a link to clear this list — a made-up link is a fact the');
+    console.log('  resource-aware engine would go on to reason from.');
+  }
+
+  if (s.dispositionedLegacyBays.length > 0) {
+    rule('9b — legacy bays resolved WITHOUT a link');
+    for (const b of s.dispositionedLegacyBays) {
+      console.log(`  ${pad(b.code, 12)} ${pad(b.disposition, 17)} ${num(b.historicalAssignments, 5)} jobs kept  ${b.note ?? ''}`);
+    }
+    console.log('\n  Their assignments are untouched. Dispositioning records a fact about the');
+    console.log('  building; it never edits history.');
   }
 
   rule('10 — expansion resources (no legacy counterpart)');
@@ -102,8 +115,16 @@ async function main() {
   }
 
   rule('12 — where Vehicle Cleaning happens');
-  console.log(`  Verdict: ${s.vehicleCleaning.verdict}`);
+  console.log(`  Verdict (from configuration): ${s.vehicleCleaning.verdict}`);
   console.log(`  ${s.vehicleCleaning.detail}`);
+  const mc = s.vehicleCleaning.managementConfirmation;
+  if (mc.open) {
+    console.log(`\n  *** OPEN — MANAGEMENT CONFIRMATION REQUIRED (${mc.status}) ***`);
+    console.log(`  Q: ${mc.question}`);
+    console.log(`  If yes: ${mc.proposalIfDedicated}`);
+    console.log('\n  This item does NOT close when the walk finishes. Classifying bays cannot');
+    console.log('  answer it — the fix is a catalogue change, and that is management\'s call.');
+  }
 
   rule('13 — bookable services with one position or none');
   if (s.singlePositionBookableServices.length === 0) {

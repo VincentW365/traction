@@ -245,6 +245,27 @@ export class ResourcesController {
     return this.admin.linkLegacyBay(id, body?.legacyBayId ?? null, user.sub);
   }
 
+  /**
+   * CR-2026-108 — account for a legacy bay that has no current resource.
+   *
+   * The reconciliation gate accepts a link OR a disposition, precisely so nobody
+   * has to invent a link for a bay that was demolished in the expansion. The bay's
+   * assignments are never touched.
+   *
+   * Routed under `legacy-bays` rather than `:id` because the id here is a WorkBay,
+   * not a WorkResource.
+   */
+  @Post('legacy-bays/:bayId/disposition')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Record how a legacy bay was accounted for: historical-only, replaced or retired (audited)' })
+  setLegacyBayDisposition(
+    @Param('bayId', ParseUUIDPipe) bayId: string,
+    @Body() body: { disposition?: string; note?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.admin.setLegacyBayDisposition(bayId, { disposition: body?.disposition ?? '', note: body?.note }, user.sub);
+  }
+
   @Post(':id/retire')
   @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
   @ApiOperation({ summary: 'Retire a resource permanently. History is kept; new work is refused.' })

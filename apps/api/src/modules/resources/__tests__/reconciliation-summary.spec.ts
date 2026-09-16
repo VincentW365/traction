@@ -40,6 +40,9 @@ interface BaySeed {
   status?: string;
   linkedTo?: string | null;
   assignments?: number;
+  /** UNRESOLVED | HISTORICAL_ONLY | REPLACED | RETIRED */
+  disposition?: string;
+  note?: string;
 }
 
 function build(opts: {
@@ -70,6 +73,9 @@ function build(opts: {
     code: b.code,
     bayType: b.bayType ?? 'GENERAL',
     status: b.status ?? 'ACTIVE',
+    reconciliationDisposition: b.disposition ?? 'UNRESOLVED',
+    dispositionNote: b.note ?? null,
+    dispositionedAt: b.disposition && b.disposition !== 'UNRESOLVED' ? new Date('2026-09-16T12:00:00Z') : null,
     resource: b.linkedTo ? { code: b.linkedTo } : null,
     _count: { assignments: b.assignments ?? 0 },
   }));
@@ -266,7 +272,7 @@ describe('item 8 — vehicle restrictions', () => {
 
 // ---------------------------------------------------------------------------
 describe('items 9 & 10 — the two inventories', () => {
-  it('lists unmatched bays with their history, which is what makes them urgent', async () => {
+  it('lists unaccounted-for bays with their history, which is what makes them urgent', async () => {
     const h = build({
       bays: [
         { code: 'BAY-01', assignments: 39 },
@@ -275,21 +281,21 @@ describe('items 9 & 10 — the two inventories', () => {
       ],
     });
     const s = await h.service.summary();
-    expect(s.unlinkedLegacyBays.map((b) => b.code)).toEqual(['BAY-01', 'BAY-06']);
-    expect(s.unlinkedLegacyBays[0].historicalAssignments).toBe(39);
+    expect(s.unresolvedLegacyBays.map((b) => b.code)).toEqual(['BAY-01', 'BAY-06']);
+    expect(s.unresolvedLegacyBays[0].historicalAssignments).toBe(39);
   });
 
-  it('refuses to call unlinked resources "expansion" while matching is unfinished', async () => {
+  it('refuses to call unlinked resources "expansion" while reconciliation is unfinished', async () => {
     const h = build({
       resources: [{ code: 'BAY-1', capacityRole: PRIMARY }],
       bays: [{ code: 'BAY-01', assignments: 39 }],
     });
     const s = await h.service.summary();
-    expect(s.expansion.linkingComplete).toBe(false);
+    expect(s.expansion.reconciliationComplete).toBe(false);
     expect(s.expansion.note).toContain('mixes genuine expansion');
   });
 
-  it('calls them expansion once every bay is dispositioned', async () => {
+  it('calls them expansion once every bay is linked or accounted for', async () => {
     const h = build({
       resources: [
         { code: 'BAY-1', capacityRole: PRIMARY, legacyBayId: 'bay-0' },
@@ -298,9 +304,74 @@ describe('items 9 & 10 — the two inventories', () => {
       bays: [{ code: 'BAY-01', linkedTo: 'BAY-1', assignments: 39 }],
     });
     const s = await h.service.summary();
-    expect(s.expansion.linkingComplete).toBe(true);
+    expect(s.expansion.reconciliationComplete).toBe(true);
     expect(s.expansion.resources.map((r) => r.code)).toEqual(['BAY-8']);
     expect(s.expansion.note).toContain('genuinely new capacity');
+  });
+});
+
+// ---------------------------------------------------------------------------
+/**
+ * A bay demolished during the expansion has no current resource and never will.
+ * The gate used to demand a link anyway, which pushed towards inventing one — and
+ * an invented link is a fact the resource-aware engine would then reason from.
+ */
+describe('a legacy bay is resolved by a link OR by being accounted for', () => {
+  const DISPOSITIONS = ['HISTORICAL_ONLY', 'REPLACED', 'RETIRED'];
+
+  it.each(DISPOSITIONS)('%s resolves a bay without any link', async (disposition) => {
+    const h = build({
+      resources: [{ code: 'BAY-1', capacityRole: PRIMARY, capabilities: ['GENERAL'] }],
+      bays: [{ code: 'BAY-01', assignments: 39, disposition, note: 'Demolished during the 2026 expansion.' }],
+    });
+    const s = await h.service.summary();
+    expect(s.unresolvedLegacyBays).toEqual([]);
+    expect(s.readyForStage5C).toBe(true);
+  });
+
+  it('keeps every historical assignment on a dispositioned bay', async () => {
+    const h = build({
+      bays: [{ code: 'BAY-01', assignments: 39, disposition: 'HISTORICAL_ONLY', note: 'Absorbed into BAY-08.' }],
+    });
+    const s = await h.service.summary();
+    // The count is reported, not reduced. Dispositioning records a fact about the
+    // building; it must never look like a reason to tidy history away.
+    expect(s.dispositionedLegacyBays[0]).toMatchObject({
+      code: 'BAY-01', disposition: 'HISTORICAL_ONLY', historicalAssignments: 39, note: 'Absorbed into BAY-08.',
+    });
+  });
+
+  it('reports linked and dispositioned bays separately — they are different facts', async () => {
+    const h = build({
+      resources: [{ code: 'BAY-1', capacityRole: PRIMARY, capabilities: ['GENERAL'], legacyBayId: 'bay-0' }],
+      bays: [
+        { code: 'BAY-01', linkedTo: 'BAY-1', assignments: 39 },
+        { code: 'BAY-02', assignments: 6, disposition: 'REPLACED', note: 'Floor reorganised; no 1:1 successor.' },
+      ],
+    });
+    const s = await h.service.summary();
+    expect(s.dispositionedLegacyBays.map((b) => b.code)).toEqual(['BAY-02']);
+    expect(s.unresolvedLegacyBays).toEqual([]);
+  });
+
+  it('still blocks on a bay nobody has said anything about', async () => {
+    const h = build({
+      resources: [{ code: 'BAY-1', capacityRole: PRIMARY, capabilities: ['GENERAL'] }],
+      bays: [
+        { code: 'BAY-01', assignments: 39, disposition: 'HISTORICAL_ONLY', note: 'Gone.' },
+        { code: 'BAY-02', assignments: 6 },
+      ],
+    });
+    const s = await h.service.summary();
+    expect(s.unresolvedLegacyBays.map((b) => b.code)).toEqual(['BAY-02']);
+    expect(s.readyForStage5C).toBe(false);
+  });
+
+  it('tells the reader not to invent a link to clear the blocker', async () => {
+    const h = build({ bays: [{ code: 'BAY-01', assignments: 39 }] });
+    const s = await h.service.summary();
+    const blocker = s.blockers.find((b) => b.includes('not yet accounted for'))!;
+    expect(blocker).toContain('do not invent a link');
   });
 });
 
@@ -361,6 +432,64 @@ describe('item 12 — where Vehicle Cleaning happens', () => {
   it('does not guess when the service has no required capability', async () => {
     const h = build({ services: [{ ...CLEAN, requiredBayType: null }] });
     expect((await h.service.summary()).vehicleCleaning.verdict).toBe('NOT_DETERMINED');
+  });
+
+  /**
+   * This finding does NOT close when the walk finishes. Classifying bays cannot
+   * answer it, because the answer lives in the catalogue. So it stays open, and
+   * the fix stays a proposal until a person confirms the physical arrangement.
+   */
+  it('stays open for management even with a fully classified shop', async () => {
+    const h = build({
+      resources: [{ code: 'BAY-1', capacityRole: PRIMARY, capabilities: ['GENERAL'], legacyBayId: 'bay-0' }],
+      bays: [{ code: 'BAY-01', linkedTo: 'BAY-1' }],
+      services: [CLEAN, REPAIR],
+    });
+    const s = await h.service.summary();
+    expect(s.readyForStage5C).toBe(true);
+    // Ready to build on, and this question still unanswered. Both are true.
+    expect(s.vehicleCleaning.managementConfirmation).toMatchObject({
+      open: true,
+      status: 'AWAITING_PHYSICAL_CONFIRMATION',
+    });
+  });
+
+  it('proposes CLEANING additively, and only after confirmation', async () => {
+    const h = build({
+      resources: [{ code: 'PWASH-01', capacityRole: PRIMARY, capabilities: ['GENERAL'] }],
+      services: [CLEAN, REPAIR],
+    });
+    const { proposalIfDedicated } = (await h.service.summary()).vehicleCleaning.managementConfirmation;
+    expect(proposalIfDedicated).toContain('add CLEANING');
+    expect(proposalIfDedicated).toContain('Additive');
+    expect(proposalIfDedicated).toContain('NOT implemented');
+    expect(proposalIfDedicated).toContain('after physical confirmation');
+  });
+
+  it('stays open when configuration cannot answer the question at all', async () => {
+    const h = build({ services: [{ ...CLEAN, requiredBayType: null }] });
+    expect((await h.service.summary()).vehicleCleaning.managementConfirmation.open).toBe(true);
+  });
+
+  it('closes only once cleaning genuinely has a capability of its own', async () => {
+    const h = build({
+      resources: [{ code: 'PWASH-01', capacityRole: PRIMARY, capabilities: ['CLEANING'] }],
+      services: [{ ...CLEAN, requiredBayType: 'CLEANING' }, REPAIR],
+    });
+    const s = await h.service.summary();
+    expect(s.vehicleCleaning.verdict).toBe('DEDICATED_POSITION');
+    expect(s.vehicleCleaning.managementConfirmation).toMatchObject({ open: false, status: 'NOT_APPLICABLE' });
+  });
+
+  it('CLEANING is not in the capability vocabulary until CLEAN-01 is remapped', async () => {
+    // The vocabulary is derived from what the catalogue asks for, so the proposal
+    // cannot leak into the UI as an assignable option before it is approved.
+    const h = build({
+      resources: [{ code: 'BAY-1', capacityRole: PRIMARY, capabilities: ['GENERAL'] }],
+      services: [CLEAN, REPAIR],
+    });
+    const s = await h.service.summary();
+    expect(s.capabilities.map((c) => c.capability)).not.toContain('CLEANING');
   });
 });
 
@@ -440,14 +569,14 @@ describe('readiness, and the promise that nothing is written', () => {
     expect(s.blockers[0]).toContain('unclassified');
   });
 
-  it('is NOT ready while a legacy bay is unmatched', async () => {
+  it('is NOT ready while a legacy bay is neither linked nor accounted for', async () => {
     const h = build({
       resources: [{ code: 'BAY-1', capacityRole: PRIMARY, capabilities: ['GENERAL'], legacyBayId: 'bay-9' }],
       bays: [{ code: 'BAY-01', assignments: 39 }],
     });
     const s = await h.service.summary();
     expect(s.readyForStage5C).toBe(false);
-    expect(s.blockers.some((b) => b.includes('not matched'))).toBe(true);
+    expect(s.blockers.some((b) => b.includes('not yet accounted for'))).toBe(true);
   });
 
   it('is NOT ready when positions exist but carry no capability', async () => {
