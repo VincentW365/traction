@@ -1489,3 +1489,125 @@ Carried into 5C: the arrival-control number (§20 / L6), the `ResourceReservatio
 capability question (§23 / L3), the specialty double-booking decision once the
 inventory is real (§17 / L5), and re-running the Stage 4F comparison against
 confirmed capacity.
+
+---
+
+## §M. The Stage 5C hold — what exists during it, and what may not
+
+Stage 5B is accepted. The next activity is **operational, not developmental**: the
+expanded Service Centre is reconciled in person through
+`/admin/resources/reconciliation`. No Stage 5C code is written until that is done
+and reviewed.
+
+Two things were built during the hold, both read-only, because the alternative was
+to start engineering the report on the day management asked for it.
+
+### M1. The reconciliation summary — the Stage 5C entry gate
+
+`GET /resources/reconciliation-summary` and `pnpm resources:summary`
+(`reconciliation-summary.service.ts`). It writes nothing, classifies nothing,
+links nothing and infers no capacity number.
+
+It returns the thirteen items management specified — the position census
+(primary, overflow, support equipment, placeholders, temporarily unavailable,
+remaining UNVERIFIED), capability counts for GENERAL / LUBE / ALIGNMENT /
+INSPECTION / TIRE plus any capability the shop has added, vehicle restrictions,
+unmatched legacy bays, expansion resources with no legacy counterpart, where
+Vehicle Cleaning physically happens, and every customer-bookable service whose
+capability has one verified position or none.
+
+It also returns `readyForStage5C` with a list of `blockers`, so the answer to "is
+the walk finished" is a field rather than a judgement call.
+
+**The arithmetic rule is enforced, not just documented.** Capability pools are
+never summed into a shop total. The report publishes both numbers side by side:
+
+```
+Sum of the pool column ......... 9   <- NOT shop capacity
+Distinct physical positions .... 7   <- the real ceiling
+Positions carrying >1 capability 2
+```
+
+Publishing the wrong number next to the right one is deliberate. Someone will add
+that column up; this is the line that stops them acting on it.
+
+### M2. A flaw the dry run exposed
+
+Running the report against a temporarily classified inventory (rolled back
+immediately) produced:
+
+> BAY-01, OVF-01, OVF-02, PWASH-01 carry GENERAL and nothing else, so a booked
+> cleaning does not consume a repair position.
+
+That was wrong, and wrong in a way that would have mattered. The first
+implementation asked "does this position do anything besides cleaning?" — but
+CLEAN-01 requires `GENERAL`, and so do **22 other active services**. A bay carrying
+only `GENERAL` is not a dedicated wash position; it is a repair bay with a hose.
+
+The question belongs to the catalogue, not the bay. The corrected verdict:
+
+> Vehicle Cleaning requires GENERAL, and 22 other active services require the same
+> capability. Every position that can take a wash can therefore be called on for
+> repairs instead — a booked cleaning occupies repair capacity, and Stage 5C must
+> model it that way. To give cleaning a position of its own it needs a capability
+> of its own, not just a bay.
+
+That last sentence is the actionable part: a dedicated wash position is a
+**catalogue change** (give CLEAN-01 its own required capability), not a bay
+assignment. It is recommended, not implemented — changing the public catalogue is
+management's call.
+
+Note the shape of this finding. Cleaning cannot be given a dedicated position by
+classifying bays, which is the only thing the walk changes. So this one does not
+resolve itself when the inventory is confirmed.
+
+### M3. The hold, expressed as tests
+
+`stage5c-hold.spec.ts` — 18 cases. The risk is not that someone defies these
+constraints; it is that a change six months from now makes one true by accident,
+with nobody reading this document. A failure there is a prompt to ask, not to edit
+the assertion.
+
+| Constraint | How it is held |
+| --- | --- |
+| No new production capacity number inferred | Nothing in the application writes `booking_max_concurrent_appointments`; `verifiedActivePositions` reaches no booking path |
+| RESOURCE_AWARE not activated | Nothing writes `booking_capacity_mode`; no default other than FIXED |
+| No CATALOGUE durations | Nothing writes `appointment_duration_source` |
+| Pilot services not withdrawn | Nothing in the application sets `bookableOnline`; the risk is reported, never acted on |
+| No auto-classification | **Exactly one file writes a `WorkResource` at all** — the audited admin service. Creation defaults to UNVERIFIED; update takes the caller's value. The audit proposes a role and never writes one |
+| No auto-linking by code or name | The bridge is written in one place as `data: { legacyBayId }` — the caller's id, never a lookup result. No migration back-fills the column |
+| No `ResourceReservation` rows | Nothing in the resources module creates one; `requiredCapability` is deliberately absent from the schema, because adding it *is* the Stage 5C decision |
+| Corrected `impact()` retained | `capabilityImpact` still reports pool loss, still counts booked work through the catalogue, still refuses to predict a delay |
+
+`booking_max_arrivals_per_slot` does not exist anywhere in the codebase, and a test
+keeps it that way until management supplies the number.
+
+### M4. State at the start of the hold
+
+```
+capacity roles   : 17 x UNVERIFIED
+legacy links     : 0
+capability rows  : 0
+status rows      : 0
+reservations     : 0
+capacity mode    : FIXED
+concurrency      : 2
+duration source  : DEFAULT
+enforcement      : true, 6 pilot services
+```
+
+Every dry run in this section rolled back to exactly that.
+
+### M5. What the summary says today
+
+NOT READY, with three blockers: 16 resources unclassified (MSHOP-EXT is EXTERNAL
+and excluded by category), 6 legacy bays unmatched — four of them carrying real job
+history (BAY-01: 39, BAY-03: 16, BAY-02: 6, BAY-05: 1) — and no confirmed vehicle
+positions at all.
+
+One design note worth recording. An early version reported all six pilot services
+as `CANNOT BE FULFILLED`, because their capability pools were empty. That is an
+alarm about the data dressed up as an alarm about the shop: the pools were empty
+because nobody had classified a bay, not because nobody can change oil. Each
+finding now carries a `basis` of `VERIFIED` or `INCOMPLETE_CONFIGURATION`, and the
+"no position" blocker is only raised once the walk is actually complete.

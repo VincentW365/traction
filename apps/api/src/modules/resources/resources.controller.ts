@@ -14,6 +14,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ResourcesService } from './resources.service';
 import { ResourceTruthAuditService } from './resource-truth-audit.service';
+import { ReconciliationSummaryService } from './reconciliation-summary.service';
 import { ResourceAdminService, type ResourceWriteModel } from './resource-admin.service';
 import { AssignResourceDto } from './dto/assign-resource.dto';
 import { SetOperationalStatusDto } from './dto/set-operational-status.dto';
@@ -36,6 +37,7 @@ export class ResourcesController {
     private prisma: PrismaService,
     private audit: AuditService,
     private readonly truthAuditService: ResourceTruthAuditService,
+    private readonly summaryService: ReconciliationSummaryService,
   ) {}
 
   /**
@@ -63,6 +65,18 @@ export class ResourcesController {
   @ApiOperation({ summary: 'Resource / legacy bay reconciliation — both inventories with link state' })
   reconciliation(@Query('siteId') siteId: string) {
     return this.admin.reconciliation(siteId);
+  }
+
+  /**
+   * CR-2026-108 — the Stage 5C entry gate. READ-ONLY. It reports what the physical
+   * walk established, refuses to add overlapping capability pools into a shop
+   * total, and says in `blockers` what is still missing.
+   */
+  @Get('reconciliation-summary')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Reconciliation summary — the Stage 5C readiness gate (read-only)' })
+  reconciliationSummary(@Query('siteId') siteId?: string) {
+    return this.summaryService.summary(siteId);
   }
 
   @Get('board')
