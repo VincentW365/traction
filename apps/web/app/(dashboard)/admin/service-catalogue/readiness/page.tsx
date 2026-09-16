@@ -44,6 +44,17 @@ interface Report {
   services: Row[];
   proposedStartingSet: Array<{ code: string; proposedCustomerFacingName: string; durationMinutes: number; proposedBufferMinutes: number; requiredBayType: string | null; requiredSkillCode: string | null; reason: string }>;
   deliberatelyExcluded: Array<{ code: string; name: string; reason: string }>;
+  publicCataloguePreview: {
+    todayServiceCount: number; afterEnforcementServiceCount: number;
+    enforcementEnabled: boolean; durationSource: string; preflightFailures: string[];
+    items: Array<{
+      code: string; customerFacingName: string; internalName: string;
+      catalogueDurationMinutes: number | null; bookingBufferMinutes: number;
+      plannedMinutesToday: number; plannedMinutesIfCatalogue: number;
+      requiredBayType: string | null; requiredSkillCode: string | null;
+      vehicleRestriction: string; notes: string[];
+    }>;
+  };
 }
 
 const READINESS_META: Record<Readiness, { label: string; cls: string }> = {
@@ -215,6 +226,65 @@ export default function CatalogueReadinessPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* --- Stage 4D: what a customer would actually see --- */}
+      <div className="card border-blue-200">
+        <div className="card-header flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Public catalogue preview — {r.publicCataloguePreview.afterEnforcementServiceCount} services
+          </h2>
+          <span className="text-xs text-slate-500">
+            today {r.publicCataloguePreview.todayServiceCount} · enforcement {r.publicCataloguePreview.enforcementEnabled ? 'ON' : 'OFF'}
+          </span>
+        </div>
+        <div className="card-body">
+          {r.publicCataloguePreview.preflightFailures.length > 0 ? (
+            <div className="mb-3 rounded-md border border-red-200 bg-red-50 p-3">
+              <p className="text-xs font-semibold text-red-800">Preflight fails — enforcement must not be switched on:</p>
+              <ul className="mt-1 list-disc pl-5 text-xs text-red-700">
+                {r.publicCataloguePreview.preflightFailures.map((f, i) => <li key={i}>{f}</li>)}
+              </ul>
+            </div>
+          ) : (
+            <p className="mb-3 text-xs text-emerald-700">Preflight passes — enforcement can be switched on when management approves.</p>
+          )}
+          <div className="overflow-x-auto">
+            <table className="table text-xs">
+              <thead>
+                <tr>
+                  <th>Customer sees</th><th>Catalogue</th><th>Buffer</th>
+                  <th>Plans today</th><th>Plans if CATALOGUE</th><th>Bay / Skill</th><th>Vehicle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.publicCataloguePreview.items.map((i) => (
+                  <tr key={i.code}>
+                    <td>
+                      <div className="font-medium text-slate-900">{i.customerFacingName}</div>
+                      <div className="font-mono text-[10px] text-slate-400">{i.code} · {i.internalName}</div>
+                      {i.notes.filter((n) => !n.startsWith('No turnover')).map((n) => (
+                        <div key={n} className="mt-1 text-[10px] text-amber-800">{n}</div>
+                      ))}
+                    </td>
+                    <td className="text-center">{i.catalogueDurationMinutes}m</td>
+                    <td className="text-center">{i.bookingBufferMinutes}m</td>
+                    <td className="text-center font-semibold text-slate-900">{i.plannedMinutesToday}m</td>
+                    <td className="text-center text-slate-500">{i.plannedMinutesIfCatalogue}m</td>
+                    <td className="text-[10px] text-slate-500">{i.requiredBayType ?? '--'} / {i.requiredSkillCode ?? '--'}</td>
+                    <td className="text-[10px] text-slate-500">{i.vehicleRestriction}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-slate-600">
+            <strong>Plans today</strong> is what the scheduler actually reserves right now
+            (duration source <strong>{r.publicCataloguePreview.durationSource}</strong>).
+            <strong> Plans if CATALOGUE</strong> is what it would reserve after a separate, later decision.
+            Configuring a catalogue duration has not changed production scheduling.
+          </p>
         </div>
       </div>
 

@@ -12,12 +12,18 @@ import { CatalogueReadinessService } from '../catalogue-readiness.service';
  * evidence in front of them.
  */
 
-const SERVICE = {
+const SERVICE: {
+  id: string; code: string; name: string; customerFacingName: string | null; family: string;
+  baseDurationMinutes: number; bookingBufferMinutes: number; bookableOnline: boolean;
+  appointmentOnly: boolean; quickService: boolean; isExternal: boolean; isActive: boolean;
+  requiredSkillCode: string | null; requiredBayType: string | null; canUseOverflow: boolean;
+  canUseLightSlot: boolean; requiresMileage: boolean; kpiComponents: Array<{ componentRole: string }>;
+} = {
   id: 'st-1', code: 'OIL-01', name: 'Oil Change', customerFacingName: null, family: 'Quick Service',
   baseDurationMinutes: 30, bookingBufferMinutes: 0, bookableOnline: false,
   appointmentOnly: false, quickService: true, isExternal: false, isActive: true,
   requiredSkillCode: 'LUBE', requiredBayType: 'LUBE', canUseOverflow: false,
-  canUseLightSlot: true, requiresMileage: true, kpiComponents: [] as Array<{ componentRole: string }>,
+  canUseLightSlot: true, requiresMileage: true, kpiComponents: [],
 };
 
 type Svc = typeof SERVICE;
@@ -182,5 +188,72 @@ describe('CR-2026-108 §4B — proposals are proposals', () => {
     const h = build([{}]);
     const r = await h.service.audit();
     expect(r.proposedStartingSet[0].proposedBufferMinutes).toBe(0);
+  });
+});
+
+/**
+ * CR-2026-108 Stage 4D — the preview exists so nobody has to switch the feature
+ * on to find out what /book will look like, and so the preflight can refuse the
+ * one failure that matters: enforcement on with nothing to offer.
+ */
+describe('CR-2026-108 §4D — public catalogue preview', () => {
+  it('previews exactly the services marked bookable, not everything active', async () => {
+    const h = build([
+      { code: 'OIL-01', name: 'Oil Change', bookableOnline: true, customerFacingName: 'Oil Change' },
+      { code: 'BRK-02', name: 'Brake Pad Replacement', bookableOnline: false },
+    ]);
+    const r = await h.service.audit();
+    expect(r.publicCataloguePreview.items.map((i) => i.code)).toEqual(['OIL-01']);
+    expect(r.publicCataloguePreview.afterEnforcementServiceCount).toBe(1);
+  });
+
+  it('shows what the scheduler plans TODAY versus under CATALOGUE, so the difference is unmissable', async () => {
+    const h = build([{ bookableOnline: true, baseDurationMinutes: 30, bookingBufferMinutes: 0 }]);
+    const r = await h.service.audit();
+    const item = r.publicCataloguePreview.items[0];
+    // Configuring a catalogue duration has NOT changed production scheduling.
+    expect(item.plannedMinutesToday).toBe(80);
+    expect(item.plannedMinutesIfCatalogue).toBe(30);
+    expect(r.publicCataloguePreview.durationSource).toBe('DEFAULT');
+  });
+
+  it('adds the buffer to the CATALOGUE figure but never to what the customer is quoted', async () => {
+    const h = build([{ bookableOnline: true, baseDurationMinutes: 60, bookingBufferMinutes: 15 }]);
+    const r = await h.service.audit();
+    const item = r.publicCataloguePreview.items[0];
+    expect(item.catalogueDurationMinutes).toBe(60); // what the customer is told
+    expect(item.plannedMinutesIfCatalogue).toBe(75); // what the bay would hold
+  });
+
+  /** The "online booking suddenly offers nothing" failure. */
+  it('preflight FAILS when nothing is marked bookable online', async () => {
+    const h = build([{ bookableOnline: false }]);
+    const r = await h.service.audit();
+    expect(r.publicCataloguePreview.preflightFailures[0]).toMatch(/nothing to offer/);
+  });
+
+  it('preflight FAILS when an enabled service has no usable duration', async () => {
+    const h = build([{ bookableOnline: true, baseDurationMinutes: 0 }]);
+    const r = await h.service.audit();
+    expect(r.publicCataloguePreview.preflightFailures.join(' ')).toMatch(/no usable catalogue duration/);
+  });
+
+  it('preflight passes for a properly configured service', async () => {
+    const h = build([{ bookableOnline: true, customerFacingName: 'Oil Change' }]);
+    const r = await h.service.audit();
+    expect(r.publicCataloguePreview.preflightFailures).toEqual([]);
+  });
+
+  /** §9 — flagged for assessment, deliberately not solved by inventing a resource type. */
+  it('flags a cleaning service that would consume a mechanical bay', async () => {
+    const h = build([{ code: 'CLEAN-01', name: 'Vehicle Cleaning', bookableOnline: true, requiredBayType: 'GENERAL' }]);
+    const r = await h.service.audit();
+    expect(r.publicCataloguePreview.items[0].notes.join(' ')).toMatch(/same capacity as mechanical work/);
+  });
+
+  it('previewing changes nothing', async () => {
+    const h = build([{ bookableOnline: true }]);
+    await h.service.audit();
+    expect(h.writes).toEqual([]);
   });
 });

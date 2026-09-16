@@ -16,7 +16,9 @@ Delivered in stages, each with tests:
 | 3 | Admin Booking Simulator + UAT session (§D) | complete |
 | 4A | Catalogue capability, enforcement OFF (§E) | complete |
 | 4B | Catalogue readiness audit (§F) | complete — awaiting review |
-| 4C–4F | Configuration, preflight, preview, activation | not started |
+| 4C | Pilot catalogue configured (§G) | complete |
+| 4D | Preflight + public preview (§G4) | complete — awaiting review |
+| 4E–4F | Enforcement, duration-source switch | not started |
 | 5 | Resource-aware capacity engine (SHADOW only) | not started |
 | 6 | Reservation semantics + end-to-end validation | not started |
 
@@ -728,3 +730,126 @@ them — they share only one distinctive token. Raising the sensitivity enough t
 catch it produced false positives elsewhere, so it is reported here for human
 review rather than tuned for. Both appear in the proposed set; management should
 decide whether both belong on a public page.
+
+---
+
+## §G. Stage 4C — pilot catalogue configured, and 4D preview
+
+### G1. BRK-02 vs DISC-01 — the question was already settled in the codebase
+
+Investigated through catalogue relationships, KPI component configuration, order
+usage and appointment references, as instructed — not from the names.
+
+| | BRK-02 | DISC-01 |
+| --- | --- | --- |
+| Name | Brake Pad Replacement | Disc Pad Change |
+| Duration | 90 min | 60 min |
+| Component role | `FRONT_BRAKES` | `FRONT_BRAKES` |
+| Axle qualifier required | yes | yes |
+| Skill / batching family | BRAKE / BRAKES | BRAKE / BRAKES |
+| Parts pre-position | yes | yes |
+| **Order lines, all history** | **3** | **0** |
+| **Appointment services** | **2** | **0** |
+
+They are **aliases for the same work**, and the platform already treats them so.
+`package-detection.ts` says it outright: *"DISC-01 and BRK-02 both describe front
+pad work. Both map to FRONT_BRAKES, and the component counts ONCE even if both
+are on the order — one set of pads earns one brake allowance."* The KPI seed adds
+that DISC-01 was *"never used on a work order in the whole history, so it is
+marked superseded to keep it out of new bookings while historical lines stay
+intact"*, and that BRK-02 is *"the code actually used on work orders"*.
+
+**Recommendation: BRK-02 is canonical. DISC-01 should never be publicly bookable**,
+and is a candidate for `isActive = false` in a separate change. Nothing was
+deleted or merged. Both remain `bookableOnline = false`.
+
+The 30-minute duration gap (90 vs 60) is unresolved and cannot be settled from
+data — there is no per-service evidence for either. It needs someone who does the
+work.
+
+### G2. The pilot — six services
+
+Applied by `pnpm booking:pilot-catalogue --commit`: idempotent, audited
+(`SERVICE_TYPE_UPDATE` with `reasonCode: SELF_SERVICE_PILOT_CATALOGUE`), and
+kept in git so the same decision can be applied to the manager's deployment
+rather than retyped.
+
+It is **not** in the seed. `bookableOnline` is a management decision, and seeding
+it would resurrect this list every deploy and silently overrule a manager who
+later enabled or withdrew a service — the same defect class as CR-2026-095's
+technician roster.
+
+| Code | Customer sees | Catalogue | Buffer |
+| --- | --- | ---: | ---: |
+| OIL-01 | Oil Change | 30m | 0 |
+| TIR-01 | Tire Rotation | 25m | 0 |
+| BRK-01 | Brake Inspection | 30m | 0 |
+| TIR-02 | Wheel Alignment | 60m | 0 |
+| INSP-01 | Pre-Purchase Vehicle Inspection | 75m | 0 |
+| CLEAN-01 | Vehicle Cleaning | 30m | 0 |
+
+The script refuses to enable anything inactive, external, or without a usable
+duration — a guard against a future edit of the list.
+
+### G3. Verified state
+
+```
+active services                 : 31
+bookableOnline = true           : 6   (exactly the approved codes)
+booking_enforce_online_bookable : false
+appointment_duration_source     : DEFAULT
+BRK-02 bookable=false · DISC-01 bookable=false
+live /book right now            : 30 services
+after enforcement would be      : 6 services
+```
+
+**One visible change on /book**, and only one: `INSP-01` now displays
+"Pre-Purchase Vehicle Inspection" instead of "Pre-Purchase Inspection". The
+customer-facing name is used whenever it is set, independently of enforcement —
+naming is presentation, not gating. The other five names are identical to their
+internal ones, and the SET of services offered is unchanged at 30.
+
+### G4. Stage 4D — preflight and public preview
+
+Both on the Catalogue Readiness page.
+
+**Preflight** refuses the failure it exists for — enforcement on with nothing to
+offer — plus an enabled service with no usable duration, no name to fall back on,
+or marked external. Current result: **passes**.
+
+**Preview** shows exactly the six, with two duration columns side by side:
+
+| Customer sees | Catalogue | Plans today | Plans if CATALOGUE |
+| --- | ---: | ---: | ---: |
+| Brake Inspection | 30m | **80m** | 30m |
+| Vehicle Cleaning | 30m | **80m** | 30m |
+| Pre-Purchase Vehicle Inspection | 75m | **80m** | 75m |
+| Oil Change | 30m | **80m** | 30m |
+| Tire Rotation | 25m | **80m** | 25m |
+| Wheel Alignment | 60m | **80m** | 60m |
+
+"Plans today" is what the scheduler actually reserves now. Configuring a catalogue
+duration has **not** changed production scheduling and will not until
+`appointment_duration_source` is switched separately (Stage 4F).
+
+**CLEAN-01 is flagged** as §9 asked: it uses a GENERAL service bay, so cleaning
+appointments would consume the same scarce mechanical capacity as repair work.
+Flagged for assessment during resource-aware capacity — deliberately not solved
+by inventing a resource type.
+
+### G5. Live duration evidence (§10)
+
+The platform already records what is needed: `TechnicianWorkSegment` (40 closed
+segments) and `ServiceOrderPause`. What was missing is that the audit measured
+**elapsed** time.
+
+It now measures **active labour**: the UNION of a job's work segments. A segment
+ends when work stops — a pause, a parts wait, the end of a shift — so the union is
+time a technician was actually on the vehicle. The union and not the sum, because
+two technicians working together is still one occupied bay-hour. Elapsed includes
+every hold and would report a job that waited overnight for a part as a twelve-hour
+job; it remains the fallback for orders with no segments, labelled `ELAPSED` so
+the two bases are never silently mixed.
+
+That is what makes the future review possible: `Oil Change · catalogue 30 · live
+n=47 · median active 27 · p75 32`, rather than manual estimates indefinitely.

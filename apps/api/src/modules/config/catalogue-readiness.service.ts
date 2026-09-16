@@ -42,6 +42,16 @@ export interface DurationEvidence {
   to: string | null;
   /** True when the sample is too small to support any conclusion. */
   insufficient: boolean;
+  /**
+   * CR-2026-108 Stage 4C §10 — WHAT was measured.
+   *
+   * ACTIVE_LABOUR is the union of technician work segments: the time a technician
+   * was actually on the job, with pauses and parts waits excluded by construction,
+   * because a pause ends a segment. ELAPSED is completion minus start, which
+   * includes every hold and is therefore an upper bound, not a labour time.
+   * Never merged, for the same reason live and imported evidence are never merged.
+   */
+  basis: 'ACTIVE_LABOUR' | 'ELAPSED';
 }
 
 export interface ServiceReadinessRow {
@@ -120,6 +130,42 @@ export interface CatalogueReadinessReport {
     reason: string;
   }>;
   deliberatelyExcluded: Array<{ code: string; name: string; reason: string }>;
+  /** CR-2026-108 Stage 4D — exactly what a customer would see once enforced. */
+  publicCataloguePreview: PublicCataloguePreview;
+}
+
+/**
+ * CR-2026-108 Stage 4D — the public catalogue, previewed BEFORE enforcement.
+ *
+ * Nobody should have to switch the feature on to find out what /book will look
+ * like. The two duration columns exist to make one thing unmissable: configuring
+ * a catalogue duration has NOT changed the production scheduler, and will not
+ * until `appointment_duration_source` is switched separately.
+ */
+export interface PublicCataloguePreview {
+  /** What a customer sees today, under the live configuration. */
+  todayServiceCount: number;
+  /** What they would see if enforcement were switched on now. */
+  afterEnforcementServiceCount: number;
+  enforcementEnabled: boolean;
+  durationSource: 'CATALOGUE' | 'DEFAULT';
+  /** Reasons enforcement must not be switched on yet; empty means preflight passes. */
+  preflightFailures: string[];
+  items: Array<{
+    code: string;
+    customerFacingName: string;
+    internalName: string;
+    catalogueDurationMinutes: number | null;
+    bookingBufferMinutes: number;
+    /** What the scheduler plans with TODAY (DEFAULT mode). */
+    plannedMinutesToday: number;
+    /** What it would plan with if CATALOGUE were activated — duration + buffer. */
+    plannedMinutesIfCatalogue: number;
+    requiredBayType: string | null;
+    requiredSkillCode: string | null;
+    vehicleRestriction: string;
+    notes: string[];
+  }>;
 }
 
 /** Words that carry no distinguishing meaning when comparing service names. */
@@ -330,6 +376,68 @@ export class CatalogueReadinessService {
       deliberatelyExcluded: rows
         .filter((r) => r.readiness !== 'READY_FOR_REVIEW')
         .map((r) => ({ code: r.code, name: r.effectiveCustomerName, reason: r.reasons[0] ?? '' })),
+      publicCataloguePreview: this.preview(rows, booking, defaultDuration),
+    };
+  }
+
+  /**
+   * CR-2026-108 Stage 4D — what /book would offer once enforcement is on, and the
+   * preflight that must pass before it can be.
+   */
+  private preview(
+    rows: ServiceReadinessRow[],
+    booking: { enforceOnlineBookable: boolean; durationSource: 'CATALOGUE' | 'DEFAULT'; excludedServiceCodes: string[] },
+    defaultDuration: number,
+  ): PublicCataloguePreview {
+    const enabled = rows.filter((r) => r.bookableOnline && r.isActive && !r.isExternal && !booking.excludedServiceCodes.includes(r.code));
+
+    const preflightFailures: string[] = [];
+    // The failure this preflight exists to prevent: enforcement on, nothing
+    // approved, and online booking silently offering an empty list.
+    if (enabled.length === 0) {
+      preflightFailures.push('No active service is marked bookable online — enforcing would leave the booking page with nothing to offer.');
+    }
+    for (const r of enabled) {
+      if (!r.baseDurationMinutes || r.baseDurationMinutes <= 0) {
+        preflightFailures.push(`${r.code} has no usable catalogue duration; a slot could not be sized from it.`);
+      }
+      if (!r.customerFacingName && !r.name?.trim()) {
+        preflightFailures.push(`${r.code} has neither a customer-facing name nor an internal one to fall back on.`);
+      }
+      if (r.isExternal) preflightFailures.push(`${r.code} is external work and cannot be a customer service.`);
+    }
+
+    return {
+      todayServiceCount: rows.filter((r) => r.currentlyOfferedToCustomers).length,
+      afterEnforcementServiceCount: enabled.length,
+      enforcementEnabled: booking.enforceOnlineBookable,
+      durationSource: booking.durationSource,
+      preflightFailures,
+      items: enabled.map((r) => {
+        const notes: string[] = [];
+        // Flagged, not solved: a cleaning job sitting in a GENERAL bay competes for
+        // the same scarce mechanical capacity as repair work. Whether that matters
+        // is a resource question, and resource-aware capacity is Stage 5.
+        if (r.requiredBayType === 'GENERAL' && /clean/i.test(r.name)) {
+          notes.push('Uses a GENERAL service bay, so it consumes the same capacity as mechanical work. Assess during resource-aware capacity (Stage 5).');
+        }
+        if (r.bookingBufferMinutes === 0) {
+          notes.push('No turnover buffer configured — deliberate; there is no per-service evidence to derive one from yet.');
+        }
+        return {
+          code: r.code,
+          customerFacingName: r.effectiveCustomerName,
+          internalName: r.name,
+          catalogueDurationMinutes: r.baseDurationMinutes,
+          bookingBufferMinutes: r.bookingBufferMinutes,
+          plannedMinutesToday: defaultDuration,
+          plannedMinutesIfCatalogue: (r.baseDurationMinutes ?? defaultDuration) + r.bookingBufferMinutes,
+          requiredBayType: r.requiredBayType,
+          requiredSkillCode: r.requiredSkillCode,
+          vehicleRestriction: r.canUseLightSlot ? 'Light-slot eligible' : r.canUseOverflow ? 'Overflow eligible' : 'Standard bay only',
+          notes,
+        };
+      }),
     };
   }
 
@@ -366,7 +474,7 @@ export class CatalogueReadinessService {
 
   private emptyEvidence(): DurationEvidence[] {
     return (['LIVE_PLATFORM', 'HISTORICAL_IMPORT'] as const).map((source) => ({
-      source, sampleCount: 0, medianMinutes: null, p75Minutes: null, p90Minutes: null, from: null, to: null, insufficient: true,
+      source, sampleCount: 0, medianMinutes: null, p75Minutes: null, p90Minutes: null, from: null, to: null, insufficient: true, basis: 'ACTIVE_LABOUR' as const,
     }));
   }
 
@@ -378,25 +486,67 @@ export class CatalogueReadinessService {
    * "median" invites it to be treated as a measurement.
    */
   private async durationEvidence(): Promise<Map<string, DurationEvidence[]>> {
+    // Active labour, not elapsed time (CR-2026-108 §10).
+    //
+    // A technician work segment ends when work stops — a pause, a parts wait, the
+    // end of a shift — so the UNION of a job's segments is the time someone was
+    // actually on the vehicle. Elapsed (completed - started) includes every hold
+    // and would report a job that waited overnight for a part as a twelve-hour
+    // job. The union, not the sum: two technicians working together is still one
+    // occupied bay-hour.
+    //
+    // Orders with no segments fall back to elapsed, labelled as such, so the two
+    // are never silently mixed.
     const rows = await this.prisma.$queryRawUnsafe<
-      Array<{ code: string; source_type: string; n: number; median: number | null; p75: number | null; p90: number | null; from_at: Date | null; to_at: Date | null }>
+      Array<{ code: string; source_type: string; basis: string; n: number; median: number | null; p75: number | null; p90: number | null; from_at: Date | null; to_at: Date | null }>
     >(`
-      SELECT st.code,
-             sv.source_type,
+      WITH seg AS (
+        SELECT service_order_id, started_at, ended_at,
+               max(ended_at) OVER (
+                 PARTITION BY service_order_id ORDER BY started_at
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+               ) AS prev_end
+        FROM technician_work_segments
+        WHERE ended_at IS NOT NULL AND ended_at > started_at
+      ),
+      islands AS (
+        SELECT service_order_id, started_at, ended_at,
+               sum(CASE WHEN prev_end IS NULL OR started_at > prev_end THEN 1 ELSE 0 END)
+                 OVER (PARTITION BY service_order_id ORDER BY started_at) AS grp
+        FROM seg
+      ),
+      merged AS (
+        SELECT service_order_id, grp, min(started_at) AS s, max(ended_at) AS e
+        FROM islands GROUP BY 1, 2
+      ),
+      active AS (
+        SELECT service_order_id, sum(EXTRACT(EPOCH FROM (e - s))/60) AS active_minutes
+        FROM merged GROUP BY 1
+      ),
+      measured AS (
+        SELECT st.code,
+               sv.source_type,
+               CASE WHEN a.active_minutes IS NOT NULL THEN 'ACTIVE_LABOUR' ELSE 'ELAPSED' END AS basis,
+               COALESCE(a.active_minutes, EXTRACT(EPOCH FROM (so.completed_at - so.started_at))/60) AS minutes,
+               so.started_at
+        FROM service_orders so
+        JOIN service_visits sv ON sv.id = so.service_visit_id
+        JOIN service_order_items soi ON soi.service_order_id = so.id
+        JOIN service_types st ON st.id = soi.service_type_id
+        LEFT JOIN active a ON a.service_order_id = so.id
+        WHERE so.started_at IS NOT NULL AND so.completed_at IS NOT NULL
+          AND so.completed_at > so.started_at
+      )
+      SELECT code, source_type, basis,
              count(*)::int AS n,
-             percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (so.completed_at-so.started_at))/60) AS median,
-             percentile_cont(0.75) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (so.completed_at-so.started_at))/60) AS p75,
-             percentile_cont(0.90) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (so.completed_at-so.started_at))/60) AS p90,
-             min(so.started_at) AS from_at,
-             max(so.started_at) AS to_at
-      FROM service_orders so
-      JOIN service_visits sv ON sv.id = so.service_visit_id
-      JOIN service_order_items soi ON soi.service_order_id = so.id
-      JOIN service_types st ON st.id = soi.service_type_id
-      WHERE so.started_at IS NOT NULL AND so.completed_at IS NOT NULL
-        AND so.completed_at > so.started_at
-        AND EXTRACT(EPOCH FROM (so.completed_at-so.started_at))/60 BETWEEN 5 AND 600
-      GROUP BY 1, 2
+             percentile_cont(0.5)  WITHIN GROUP (ORDER BY minutes) AS median,
+             percentile_cont(0.75) WITHIN GROUP (ORDER BY minutes) AS p75,
+             percentile_cont(0.90) WITHIN GROUP (ORDER BY minutes) AS p90,
+             min(started_at) AS from_at,
+             max(started_at) AS to_at
+      FROM measured
+      WHERE minutes BETWEEN 1 AND 600
+      GROUP BY 1, 2, 3
     `);
 
     const out = new Map<string, DurationEvidence[]>();
@@ -405,6 +555,9 @@ export class CatalogueReadinessService {
       const source: DurationEvidence['source'] = r.source_type === 'HISTORICAL_IMPORT' ? 'HISTORICAL_IMPORT' : 'LIVE_PLATFORM';
       const list = out.get(r.code)!;
       const slot = list.find((e) => e.source === source)!;
+      // Elapsed only wins the label when there is no active-labour measurement at
+      // all; a mixed sample is reported as the weaker of the two, never as the better.
+      if (r.basis === 'ELAPSED') slot.basis = 'ELAPSED';
       slot.sampleCount += r.n;
       slot.medianMinutes = r.median === null ? slot.medianMinutes : Math.round(r.median);
       slot.p75Minutes = r.p75 === null ? slot.p75Minutes : Math.round(r.p75);
