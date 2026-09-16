@@ -243,15 +243,15 @@ if (dbOk) {
       jobSheet = false;
     }
     check('Job Sheet', jobSheet, jobSheet ? 'code-defined form; job_sheet_drafts present' : 'job_sheet_drafts missing — run pnpm db:migrate');
-    check('Pre-Job Inspection', !!pre, pre ? `active v${pre.version}` : 'no active PRE_INSPECTION template — run pnpm db:seed');
+    check('Pre-Job Inspection', !!pre, pre ? `active v${pre.version}` : 'no active PRE_INSPECTION template — run pnpm forms:ensure');
     check(
       'Service Inspection',
       !!vi && vi.items > 0,
       vi
         ? vi.items > 0
           ? `active v${vi.version}, ${vi.items} checklist items`
-          : `active v${vi.version} has NO checklist items — run pnpm db:seed`
-        : 'no active VEHICLE_INSPECTION template — run pnpm db:seed',
+          : `active v${vi.version} has NO checklist items — run pnpm forms:ensure`
+        : 'no active VEHICLE_INSPECTION template — run pnpm forms:ensure',
     );
   } catch {
     check('Required forms', false, 'inspection_templates missing — run pnpm db:migrate');

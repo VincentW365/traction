@@ -23,6 +23,31 @@ export interface InspectionActor {
   role: string;
 }
 
+/**
+ * CR-2026-107 — what staff see if an inspection form is somehow unavailable.
+ *
+ * The old message ("No active ... template is configured ... run pnpm db:seed")
+ * was a database fact shown to whoever happened to be standing at the vehicle.
+ * A technician cannot run a seed, and telling them to is noise; a manager can
+ * act, and needs the exact remedy. So the fact is the same and the instruction
+ * is not. No ids, versions or table names reach any of them.
+ */
+export function inspectionUnavailableMessage(
+  kind: 'VEHICLE_INSPECTION' | 'PRE_INSPECTION',
+  role: string,
+): string {
+  const form = kind === 'PRE_INSPECTION' ? 'Pre-Job Inspection' : 'Vehicle Inspection';
+  // ADMIN is the internal role code for a Manager (see docs/05_User_Roles_Permissions.md).
+  const canAct = role === 'ADMIN' || role === 'MANAGER';
+  return canAct
+    ? `${form} is not set up for this site yet. Open Setup → Deployment → Required forms to confirm, ` +
+        'then run the required form bootstrap (pnpm forms:ensure) against this environment. ' +
+        'No other work is affected and nothing already recorded is at risk.'
+    : `${form} is not set up for this site yet, so it cannot be started. ` +
+        'Please let a manager know — this needs an administrator to turn the form on. ' +
+        'The Job Sheet and the rest of the visit are unaffected.';
+}
+
 const DETAIL_INCLUDE = {
   items: { orderBy: { orderIndex: 'asc' as const } },
   wheelMeasurements: true,
@@ -123,10 +148,13 @@ export class InspectionsService {
       include: { items: { orderBy: { orderIndex: 'asc' } } },
     });
     if (!template || (kind === 'VEHICLE_INSPECTION' && template.items.length === 0)) {
-      throw new BadRequestException(
-        `No active ${kind === 'PRE_INSPECTION' ? 'pre-job inspection' : 'service inspection'} template is configured on this deployment. ` +
-          'Run the production-safe seed (pnpm db:seed) and re-check Admin → Deployment → Required forms.',
-      );
+      // CR-2026-107 — this should now be unreachable on a healthy deployment
+      // (RequiredFormsBootstrap repairs it at every API start, and deploy:check
+      // fails the deployment before it serves traffic). If it is ever seen, the
+      // message must tell the person in front of the vehicle what to DO — not
+      // print a database fact. Technical remedies go only to those who can act
+      // on them; a technician or advisor gets a plain instruction instead.
+      throw new BadRequestException(inspectionUnavailableMessage(kind, actor.role));
     }
 
     const inspection = await this.prisma.$transaction(async (tx) => {

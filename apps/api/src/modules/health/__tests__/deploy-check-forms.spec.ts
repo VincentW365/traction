@@ -32,6 +32,22 @@ describe('deploy-check — Required Form Configuration', () => {
     expect(renderYaml).toContain('node scripts/deploy-check.mjs --forms && pnpm --filter @bsop/api start');
   });
 
+  /**
+   * CR-2026-107 — the start command must REPAIR before it VERIFIES. The forms
+   * check exits non-zero on a missing form, so running it ahead of the repair
+   * would stop the API before it could fix itself — turning a self-healing
+   * deployment back into a dead one.
+   */
+  it('repairs before it verifies at API start', () => {
+    // Anchor on the real directive, not the word "startCommand" in a comment.
+    const line = renderYaml
+      .split('\n')
+      .find((l) => /^\s*startCommand:/.test(l) && l.includes('deploy-check.mjs --forms'));
+    expect(line, 'the API startCommand must run the forms check').toBeTruthy();
+    expect(line).toContain('forms:ensure');
+    expect(line!.indexOf('forms:ensure')).toBeLessThan(line!.indexOf('deploy-check.mjs --forms'));
+  });
+
   it('a missing form is a FAIL, never a warning', () => {
     // The forms checks must not pass { warnOnly: true }.
     const section = deployCheck.slice(deployCheck.indexOf('Required form configuration'));

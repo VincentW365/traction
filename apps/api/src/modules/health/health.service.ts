@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { assessPublicAppUrl } from '../../common/helpers/public-url';
+import { requiredFormsState } from '../inspections/templates/required-forms';
 
 /**
  * CR-2026-094 — can the deployed site be verified against the pushed commit?
@@ -100,7 +101,6 @@ export class HealthService {
     const [
       customers, vehicles, serviceVisits, serviceTypes, sites, users,
       activeKpiPolicies, kpiMappings, activeInspectionTemplates, importedRefs,
-      topServiceInspection, topPreJobInspection, jobSheetTable,
     ] = await Promise.all([
       count(() => this.prisma.customer.count()),
       count(() => this.prisma.vehicle.count()),
@@ -112,37 +112,19 @@ export class HealthService {
       count(() => this.prisma.kpiServiceComponent.count({ where: { isActive: true } })),
       count(() => this.prisma.inspectionTemplate.count({ where: { isActive: true } })),
       count(() => this.prisma.externalSystemRef.count()),
-      // CR-2026-106 — per-form readiness with the SAME predicate the API applies
-      // when a form is opened (docs/121 §C2): the highest ACTIVE version per kind,
-      // and the service inspection must carry items on that row. Each is a number
-      // through `count` so a missing table reads as null, never a crash.
-      count(async () => {
-        const t = await this.prisma.inspectionTemplate.findFirst({
-          where: { isActive: true, kind: 'VEHICLE_INSPECTION' },
-          orderBy: { version: 'desc' },
-          select: { _count: { select: { items: true } } },
-        });
-        return t ? t._count.items : 0;
-      }),
-      count(async () => {
-        const t = await this.prisma.inspectionTemplate.findFirst({
-          where: { isActive: true, kind: 'PRE_INSPECTION' },
-          orderBy: { version: 'desc' },
-          select: { id: true },
-        });
-        return t ? 1 : 0;
-      }),
-      count(async () => {
-        await this.prisma.jobSheetDraft.count();
-        return 1;
-      }),
     ]);
 
-    const forms = {
-      jobSheet: (jobSheetTable ?? 0) > 0,
-      preJobInspection: (topPreJobInspection ?? 0) > 0,
-      serviceInspection: (topServiceInspection ?? 0) > 0,
-    };
+    // CR-2026-107 — per-form readiness comes from the SHARED predicate
+    // (`requiredFormsState`), the same function the API's create path, the seed,
+    // the startup bootstrap and deploy:check use. It was duplicated inline here;
+    // two copies of one truth is exactly how a deployment starts reporting
+    // "seeded" while a form refuses to open. A missing table reads as not-ready
+    // rather than crashing the admin page.
+    const forms = await requiredFormsState(this.prisma).catch(() => ({
+      jobSheet: false,
+      preJobInspection: false,
+      serviceInspection: false,
+    }));
 
     // Reference data is what the seed must have produced; operational data is what
     // only the controlled import (or real use) produces. The distinction is the whole

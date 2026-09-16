@@ -121,6 +121,39 @@ serving, `pnpm deploy:check` has a **Required form configuration** section that
 FAILS when a form is unusable, and Admin → Deployment shows Job Sheet /
 Pre-Job Inspection / Service Inspection as PASS/FAIL from the live database.
 
+### CR-2026-107 — the deployment now repairs itself
+
+Everything above still holds, but **none of it is load-bearing any more**, and
+that is the point. Both remedies above lived in `render.yaml` or in this runbook
+— exactly the things a detached Build Command or a restored database skips. So
+the guarantee moved inside the application:
+
+**The API creates any missing inspection template at every start**
+(`RequiredFormsBootstrap`). It is idempotent, non-destructive, writes nothing
+when the database is already correct, and runs regardless of how the service was
+built, who deployed it, or which database it was pointed at. A deploy log line
+records the outcome every time:
+
+```
+[RequiredForms] Required forms — Job Sheet: PASS · Pre-Job Inspection: PASS · Service Inspection: PASS
+```
+
+If it had to repair something, the line above it says exactly what and why.
+
+**To repair an existing deployment without redeploying or wiping anything:**
+
+```
+DATABASE_URL=<External Database URL> pnpm forms:ensure
+```
+
+It adds only what is missing. It never deletes a template, an inspection, a
+visit, a photograph or any customer data, and completed inspections keep the
+exact template version they were performed against. Running it twice is safe —
+a healthy database reports `Already correct — no changes were needed.`
+
+`pnpm db:seed` still works and is still the right command for first-install
+reference data; `forms:ensure` is the narrow, safe subset for a live site.
+
 
 ## CR-2026-106 — go-live settings the deployed site needs (owner steps)
 

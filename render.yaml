@@ -34,7 +34,14 @@ services:
     # CR-2026-106 — the forms check runs at every start too (a few ms): a database
     # replaced or restored after the last build can no longer serve traffic with
     # the inspection forms missing while the build-time check stays green.
-    startCommand: pnpm exec prisma migrate deploy && node scripts/deploy-check.mjs --forms && pnpm --filter @bsop/api start
+    # CR-2026-107 — order matters: REPAIR (forms:ensure) before VERIFY
+    # (deploy-check --forms). The check exits non-zero on a missing form, so
+    # running it first would stop the API before it could fix itself. Both are
+    # idempotent and cost milliseconds on a healthy database. Note these are a
+    # convenience for blueprint-managed services only: the real guarantee is
+    # RequiredFormsBootstrap inside the API, which runs no matter how (or by
+    # whom) this service was configured.
+    startCommand: pnpm exec prisma migrate deploy && pnpm run forms:ensure && node scripts/deploy-check.mjs --forms && pnpm --filter @bsop/api start
     envVars:
       - key: DATABASE_URL
         fromDatabase:

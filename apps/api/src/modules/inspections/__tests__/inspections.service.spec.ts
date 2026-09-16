@@ -74,7 +74,7 @@ describe('InspectionsService.create (CR-2026-034 C-2)', () => {
 
   it('rejects when no active template exists', async () => {
     const h = build({ template: null });
-    await expect(h.service.create({ serviceVisitId: 'v1' } as any, MGR)).rejects.toThrow(/inspection template is configured/);
+    await expect(h.service.create({ serviceVisitId: 'v1' } as any, MGR)).rejects.toThrow(/Vehicle Inspection is not set up for this site/);
   });
 
   it('rejects when the visit is missing', async () => {
@@ -150,7 +150,25 @@ describe('InspectionsService.create — template lookup predicate (CR-2026-106)'
     const h = build();
     h.prisma.inspectionTemplate.findFirst.mockResolvedValue(null);
     await expect(h.service.create({ serviceVisitId: 'v1', kind: 'PRE_INSPECTION' } as any, MGR)).rejects.toThrow(
-      /pre-job inspection template.*pnpm db:seed/,
+      /Pre-Job Inspection is not set up for this site.*forms:ensure/s,
     );
+  });
+
+  /**
+   * CR-2026-107 §13 — the person who can fix it gets the remedy; the person who
+   * cannot gets an instruction they can actually follow. Neither gets an id.
+   */
+  it('gives floor staff a plain instruction and never a technical remedy or an id', async () => {
+    const h = build();
+    h.prisma.inspectionTemplate.findFirst.mockResolvedValue(null);
+    const TECH = { sub: 't1', siteId: 'site1', role: 'TECHNICIAN' };
+    let message = '';
+    try {
+      await h.service.create({ serviceVisitId: 'v1' } as any, TECH);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toMatch(/Vehicle Inspection is not set up for this site.*let a manager know/s);
+    expect(message).not.toMatch(/forms:ensure|db:seed|template|uuid|[0-9a-f]{8}-[0-9a-f]{4}/i);
   });
 });

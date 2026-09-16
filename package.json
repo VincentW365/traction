@@ -18,6 +18,7 @@
     "capture:kpi": "node scripts/capture-kpi-screenshots.mjs",
     "deploy:check": "node scripts/deploy-check.mjs",
     "deploy:bootstrap": "node scripts/deploy-bootstrap.mjs",
+    "forms:ensure": "tsx scripts/ensure-forms.ts",
     "customers:import": "tsx apps/api/scripts/import-customers.ts",
     "customers:import:commit": "tsx apps/api/scripts/import-customers.ts --commit",
   "customers:reconcile": "tsx apps/api/scripts/import-customers.ts --reconcile",
