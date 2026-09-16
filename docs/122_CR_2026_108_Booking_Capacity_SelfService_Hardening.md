@@ -21,7 +21,8 @@ Delivered in stages, each with tests:
 | 4E | Enforcement ON — six-service public catalogue (§H) | complete |
 | 4F | DEFAULT vs CATALOGUE impact analysis (§I) | complete — HOLD recommended |
 | 5A | Resource truth audit (§J) | complete — MANAGEMENT REVIEW GATE |
-| 5B–5D | Resource pool model, SHADOW engine, validation | blocked on 5A review |
+| 5B | Resource registry bridge — DESIGN PROPOSAL (§K) | awaiting approval |
+| 5C–5D | SHADOW engine, validation | blocked on 5B approval |
 | 6 | Reservation semantics + end-to-end validation | not started |
 
 ---
@@ -1132,3 +1133,146 @@ appointment_duration_source         : DEFAULT
 booking_capacity_mode               : FIXED
 booking_max_concurrent_appointments : 2
 ```
+
+---
+
+## §K. Stage 5B — resource registry bridge: DESIGN PROPOSAL
+
+Nothing in this section is implemented. It is the "smallest safe bridge" proposal
+requested before any resource-model change.
+
+**Capacity 7 has NOT been applied anywhere.** It was evidence that the existing
+resource data is internally inconsistent, and the physical expansion makes it
+stale as well. Production remains `booking_max_concurrent_appointments = 2`.
+
+### K1. Most of the operational requirements already exist
+
+Before proposing anything, what is already built and audited in
+`resource-admin.service.ts`, usable today with no redeploy:
+
+| Requirement | Status |
+| --- | --- |
+| §3 Add Resource through Setup → Resources & Bays | `create()` — exists |
+| §4 Take out of service / decommission, never delete | `setStatus()`, `retire()`, `reactivate()` — exists |
+| §4 Status vocabulary | `AVAILABLE`, `TEMPORARILY_UNAVAILABLE`, `MAINTENANCE`, `OUT_OF_SERVICE` + `retiredAt` — already matches what was asked for |
+| §4 Hard delete only when unused | `deleteIfUnused()` — exists |
+| §13 Downtime without deployment | `setStatus()` — exists, audited with actor, timestamp, previous status and reason |
+| §14 Impact warning before taking out of service | `impact()` — exists, **but see K4** |
+| §18 Lifecycle audit history | `history()` reading `AuditLog` — exists |
+| §17 Immediate cache invalidation | **No cache exists.** Rules and capacity are read from the database on every availability call, so a manager's change applies to the very next request. Nothing to invalidate. |
+
+So Stage 5B is not "build resource administration". It is "make the registry mean
+something to capacity", which is a much smaller change.
+
+### K2. The bridge — one nullable link, nothing deleted
+
+The mismatch found in §J2 is a **vocabulary** problem, not a data problem:
+
+- `ServiceType.requiredBayType` → GENERAL, LUBE, ALIGNMENT, DIAGNOSTIC, INSPECTION, TIRE
+- `WorkBay.bayType` → the same vocabulary (6 rows, 62 assignments)
+- `WorkResource.resourceCategory` → BAY, OVERFLOW, LIGHT_SLOT, POWER_WASH, EXTERNAL
+
+`resourceCategory` describes **what a thing is**. `requiredBayType` describes
+**what work it supports**. Forcing one field to carry both is what created the
+split, and §7 rightly says not to.
+
+Proposed bridge, smallest version:
+
+```
+WorkResource.legacyBayId  String? @unique   -> WorkBay.id
+```
+
+One nullable, unique foreign key, pointing from the canonical registry at the
+legacy row it supersedes. That gives:
+
+- **assignments keep writing `bayId`** — the 62 existing rows and the whole dispatch
+  workflow are untouched, and `WorkBay` is not deleted;
+- **capacity reads `WorkResource`** — one authoritative inventory;
+- **reconciliation links the two** so the same physical bay is one record with two
+  access paths, rather than two records that can disagree.
+
+The link is set during the reconciliation walk-through (K5), by a person, never
+inferred from matching codes — `BAY-01` exists in both tables and they are
+**not** the same thing: the legacy `BAY-01` is a GENERAL bay, the resource
+`BAY-01` is "Heavy Lift 1".
+
+### K3. Schema proposal — three additive changes
+
+All additive, all defaulting so that **nothing gains capacity by migrating**.
+
+**1. Capacity contract**
+
+```
+enum ResourceCapacityRole { PRIMARY_SERVICE_POSITION OVERFLOW_SERVICE_POSITION SUPPORT_EQUIPMENT PLACEHOLDER }
+WorkResource.capacityRole ResourceCapacityRole @default(SUPPORT_EQUIPMENT)
+```
+
+Defaulting to `SUPPORT_EQUIPMENT` means derived capacity is **zero** until a
+person classifies each resource. That is deliberate: after an expansion the
+database is known-stale, so the safe default is "counts for nothing" rather than
+"counts for something we have not checked". No existing field can carry this —
+`resourceCategory` is a type, and `schedulingEnabled` means "may receive work",
+which a jack legitimately can.
+
+**2. Work capabilities** (§7, §12)
+
+```
+model WorkResourceCapability { resourceId, capability String, @@unique([resourceId, capability]) }
+```
+
+A join table rather than a column, because one bay supports several work types —
+and because a capability must never imply a capacity unit. Bay 4 supporting
+`GENERAL + INSPECTION` is still **one** physical position; the solver allocates
+resource identities and then checks capability, never sums category counts.
+`capability` reuses the `requiredBayType` vocabulary so the catalogue and the
+registry finally speak the same language.
+
+**3. The bridge**
+
+```
+WorkResource.legacyBayId String? @unique
+```
+
+Nothing is dropped, nothing is renamed, no existing row changes meaning.
+
+### K4. A real gap in the existing impact warning
+
+`impact()` counts `ResourceReservation` and `TechnicianAssignment.resourceId` —
+both of which are **empty** (§J2). So taking an alignment bay out of service
+today reports "no impact" however many alignment appointments are booked.
+
+§14 asks for exactly the warning that would not appear. The fix is for `impact()`
+to count **upcoming appointments whose services require a capability this resource
+provides**, which only becomes possible once capabilities exist. It should land
+with K3, not before.
+
+### K5. Reconciliation, and how the expansion gets counted
+
+§9's three-way split, on the existing audit page:
+
+- **Currently configured** — the 17 rows, each with its proposed role and a
+  confirm/correct action;
+- **Needs confirmation** — everything the audit flagged, which right now is
+  everything except `MSHOP-EXT`;
+- **Add newly installed** — the expansion bays, entered through the existing
+  `create()` with the new role + capability fields.
+
+`Verified active vehicle positions` is then **derived**: active, not retired,
+operational status `AVAILABLE`, `capacityRole` in (PRIMARY, OVERFLOW). Adding a
+bay raises it; putting one into maintenance lowers it; no configuration key is
+edited and no deploy occurs (§10, §11).
+
+`booking_max_concurrent_appointments` stays as the safety ceiling while SHADOW is
+proven, exactly as §10 describes — a guard, not the source.
+
+### K6. Open question, carried from the truncated §20
+
+The Stage 5A finding that arrival capacity and active-work capacity are conflated
+was accepted, and the requirement text ends mid-sentence on the split. The
+proposal above deliberately models only **physical work positions**.
+
+Before 5C, confirm the other half: what should govern *arrivals* — how many
+customers should be scheduled to arrive or start around the same time, given the
+front desk, check-in, and how long a vehicle may reasonably wait in the queue?
+That is a different number from "how many bays exist", and the proposal does not
+guess it.
