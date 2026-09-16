@@ -582,12 +582,32 @@ export class PublicBookingService {
     return d;
   }
 
+  /**
+   * Resolve service codes for a NEW customer booking.
+   *
+   * CR-2026-108 Stage 4E — when `booking_enforce_online_bookable` is on this also
+   * requires `bookableOnline`. Filtering only the service LIST would have made
+   * enforcement cosmetic: the page would stop offering a diagnostic while the API
+   * still accepted one posted directly.
+   *
+   * Called only from `availability` and `confirm` — both new-booking paths. A
+   * RESCHEDULE reads its services from the appointment itself and never comes
+   * through here, so an existing booking for a service that is no longer publicly
+   * offered can still be moved. That is deliberate: `bookableOnline = false` means
+   * "a customer cannot START a new booking for this", not "this appointment is
+   * now stuck".
+   */
   private async resolveServices(codes: string[], rules: BookingRules) {
     const unique = [...new Set(codes.map((c) => c.trim()).filter(Boolean))];
     if (unique.length === 0) throw new BadRequestException('Choose at least one service.');
     const types = await this.prisma.serviceType.findMany({
-      where: { code: { in: unique }, isActive: true, isExternal: false },
-      select: { id: true, code: true, name: true, baseDurationMinutes: true },
+      where: {
+        code: { in: unique },
+        isActive: true,
+        isExternal: false,
+        ...(rules.enforceOnlineBookable ? { bookableOnline: true } : {}),
+      },
+      select: { id: true, code: true, name: true, customerFacingName: true, baseDurationMinutes: true },
     });
     const missing = unique.filter((c) => !types.some((t) => t.code === c) || rules.excludedServiceCodes.includes(c));
     if (missing.length) throw new BadRequestException(`These services cannot be booked online: ${missing.join(', ')}`);

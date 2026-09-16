@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { bookingRulesFromRows, BOOKING_DEFAULTS, BOOKING_RULE_KEYS } from '../booking.config';
 import { PublicBookingService } from '../public-booking.service';
 
@@ -108,5 +110,76 @@ describe('CR-2026-108 §4A — customer-facing name', () => {
     });
     const out = await h.service.listServices();
     expect(out[0].name).toBe('Oil Change');
+  });
+});
+
+/**
+ * CR-2026-108 Stage 4E — enforcement must be real, and must not strand anyone.
+ *
+ * Two failures to avoid, pulling in opposite directions:
+ *  - filtering only the service LIST makes enforcement cosmetic: the page stops
+ *    offering a diagnostic while the API still accepts one posted directly;
+ *  - enforcing on the RESCHEDULE path would strand every customer holding a valid
+ *    appointment for a service that is no longer publicly offered.
+ */
+/** One method's body: from its signature to the next member declaration. */
+function methodBody(signature: string): string {
+  const src = readFileSync(join(__dirname, '..', 'public-booking.service.ts'), 'utf8');
+  const start = src.indexOf(signature);
+  if (start === -1) throw new Error(`method not found: ${signature}`);
+  const rest = src.slice(start + signature.length);
+  // Stop at the next member declaration or its doc comment.
+  const next = rest.search(/\n {2}(async |private |public |\/\*\*)/);
+  return rest.slice(0, next === -1 ? undefined : next);
+}
+
+describe('CR-2026-108 §4E — enforcement is real on new bookings', () => {
+  const ENFORCED = [{ ruleKey: 'booking_enforce_online_bookable', valueJson: true }];
+
+  it('the confirm path requires bookableOnline, not just the list', async () => {
+    const h = build({ rules: ENFORCED });
+    // resolveServices is exercised through availability(); assert the predicate.
+    await h.service.listServices();
+    const listWhere = h.findMany.mock.calls[0][0].where;
+    expect(listWhere).toMatchObject({ bookableOnline: true });
+
+    const src = readFileSync(join(__dirname, '..', 'public-booking.service.ts'), 'utf8');
+    const resolve = src.slice(src.indexOf('private async resolveServices'));
+    const body = resolve.slice(0, resolve.indexOf('\n  }'));
+    // The same predicate must appear on the NEW-booking resolver.
+    expect(body).toContain('enforceOnlineBookable');
+    expect(body).toContain('bookableOnline: true');
+  });
+
+  it('legacy mode leaves the confirm path completely unfiltered', () => {
+    const src = readFileSync(join(__dirname, '..', 'public-booking.service.ts'), 'utf8');
+    const resolve = src.slice(src.indexOf('private async resolveServices'));
+    const body = resolve.slice(0, resolve.indexOf('\n  }'));
+    // Conditional spread, not an unconditional filter.
+    expect(body).toMatch(/\.\.\.\(rules\.enforceOnlineBookable \?/);
+  });
+
+  /**
+   * Grandfathering is STRUCTURAL: reschedule reads its services from the
+   * appointment and never calls resolveServices. This pins that, because the
+   * tempting "tidy-up" of routing reschedule through the same resolver would
+   * silently strand existing customers.
+   */
+  it('rescheduling reads services from the appointment, never from the resolver', () => {
+    const body = methodBody('async rescheduleByCustomer');
+    expect(body).toContain('appt.services.map((s) => s.serviceType)');
+    expect(body).not.toContain('resolveServices');
+  });
+
+  it('cancelling never re-validates the service either', () => {
+    const body = methodBody('async cancelByCustomer');
+    expect(body).not.toContain('resolveServices');
+    expect(body).not.toContain('bookableOnline');
+  });
+
+  /** Staff eligibility is a different question and must stay unaffected. */
+  it('staff appointment creation is not filtered by bookableOnline', () => {
+    const src = readFileSync(join(__dirname, '..', '..', 'appointments', 'appointments.service.ts'), 'utf8');
+    expect(src).not.toContain('bookableOnline');
   });
 });

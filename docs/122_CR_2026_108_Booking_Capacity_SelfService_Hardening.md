@@ -18,7 +18,8 @@ Delivered in stages, each with tests:
 | 4B | Catalogue readiness audit (§F) | complete — awaiting review |
 | 4C | Pilot catalogue configured (§G) | complete |
 | 4D | Preflight + public preview (§G4) | complete — awaiting review |
-| 4E–4F | Enforcement, duration-source switch | not started |
+| 4E | Enforcement ON — six-service public catalogue (§H) | complete |
+| 4F | DEFAULT vs CATALOGUE impact analysis (§I) | complete — HOLD recommended |
 | 5 | Resource-aware capacity engine (SHADOW only) | not started |
 | 6 | Reservation semantics + end-to-end validation | not started |
 
@@ -853,3 +854,142 @@ the two bases are never silently mixed.
 
 That is what makes the future review possible: `Oil Change · catalogue 30 · live
 n=47 · median active 27 · p75 32`, rather than manual estimates indefinitely.
+
+---
+
+## §H. Stage 4E — enforcement ON
+
+### H1. A gap found before activating
+
+`listServices` filtered on `bookableOnline`, but `resolveServices` — the resolver
+behind **availability and confirm** — did not. Enforcement would have been
+cosmetic: the page would stop offering a diagnostic while the API still accepted
+one posted directly. `resolveServices` now applies the same predicate when the
+rule is on.
+
+### H2. Grandfathering is structural, not a special case
+
+`rescheduleByCustomer` takes its services from the appointment
+(`appt.services.map((s) => s.serviceType)`) and never calls `resolveServices`;
+`cancelByCustomer` and the manage view never re-validate either. So an existing
+booking for a service that is no longer publicly offered can still be viewed,
+moved and cancelled — without a grandfathering branch existing anywhere.
+
+`bookableOnline = false` means **"a customer cannot START a new booking for
+this"**, never "this appointment is now stuck". Tests pin the structure, because
+the tempting tidy-up of routing reschedule through the shared resolver would
+silently strand every such customer.
+
+### H3. Verified live, end to end
+
+```
+ 1. BEFORE: enforcement off, /book offers 30 services
+ 2. legacy booking BK-B01-260916-011 created for SPK-01 (about to become non-public)
+ 3. enforcement ON (configuration only — no redeploy, no restart)
+ 4. AFTER: /book offers exactly 6
+ 5. all six produce valid availability responses
+ 6. grandfathered manage page opens and still shows Spark Plug Replacement
+ 7. grandfathered RESCHEDULE works and keeps SPK-01 — not switched to another service
+ 8. grandfathered CANCEL works
+ 9. new booking for ENG-01 refused by the API: HTTP 400
+10. availability for ENG-01 refused: HTTP 400
+11. staff unaffected: 31 services internally, ENG-01 still schedulable (80m)
+```
+
+No diagnostics, no package components, no DISC-01, no BRK-02. Staff eligibility is
+untouched — `bookableOnline` is a customer rule, and `appointments.service.ts`
+never reads it (pinned by test).
+
+---
+
+## §I. Stage 4F — DEFAULT vs CATALOGUE impact
+
+`pnpm booking:duration-impact`. Read-only: the two models are compared by handing
+the **same production availability service** two in-memory rule sets. The database
+rule is never touched, and production stayed on DEFAULT throughout.
+
+### I1. Slot counts barely move — and that is misleading
+
+| Service | Catalogue | Slots DEFAULT | Slots CATALOGUE | Δ |
+| --- | ---: | ---: | ---: | ---: |
+| Oil Change | 30m | 225 | 229 | +1.8% |
+| Tire Rotation | 25m | 225 | 229 | +1.8% |
+| Brake Inspection | 30m | 225 | 229 | +1.8% |
+| Wheel Alignment | 60m | 225 | 227 | +0.9% |
+| Pre-Purchase Vehicle Inspection | 75m | 225 | 225 | 0% |
+| Vehicle Cleaning | 30m | 225 | 229 | +1.8% |
+
+**+1.3% overall — and it means almost nothing.** The calendar is nearly empty, so
+a shorter job only adds the few extra starts that still fit before closing. Slot
+count is the wrong measure on an empty diary.
+
+### I2. Saturation — the number that matters
+
+How many bookings ONE day absorbs before refusing another:
+
+| Scenario | DEFAULT | CATALOGUE | Change |
+| --- | ---: | ---: | ---: |
+| A short-service heavy | 12 | **22** | **+83%** |
+| B mixed | 12 | **18** | **+50%** |
+| C long-service heavy | 12 | **14** | +17% |
+
+Peak concurrency stays at 2 in every case — the policy guard holds. What changes
+is **throughput**: on a short-service day the shop would accept nearly twice as
+many vehicles.
+
+### I3. Slot-grid arithmetic — all checks pass
+
+Durations are used as configured and never rounded to the 20-minute grid.
+
+```
+PASS  25m at 10:00 blocks an overlapping 10:20 start    FIXED_CAPACITY_REACHED
+PASS  ...and 10:40 is free again (no over-blocking)     AVAILABLE
+PASS  30m blocks 10:20
+PASS  30m leaves 10:40 free
+PASS  back-to-back does not overlap                     peak=0
+PASS  75m never offers a start finishing after close    last start 20:40Z
+PASS  ...and the tail is reported, not silently dropped 3 slots OUTSIDE_OPENING_HOURS
+PASS  a 25m service occupies 25m, not rounded           25m
+```
+
+### I4. CLEAN-01
+
+Vehicle Cleaning requires a **GENERAL** bay, and the FIXED model counts service
+POSITIONS rather than bay types — so a cleaning booking consumes one of the same
+positions a repair would. Under CATALOGUE it holds a full position for 30 minutes.
+Whether that is acceptable is a resource question; no CLEANING resource type
+exists and inventing one now is Stage 5.
+
+### I5. ETA effect
+
+| Service | Planned DEFAULT | Planned CATALOGUE | Initial ETA shifts |
+| --- | ---: | ---: | ---: |
+| Oil Change | 80m | 30m | −50m |
+| Tire Rotation | 80m | 25m | −55m |
+| Brake Inspection | 80m | 30m | −50m |
+| Wheel Alignment | 80m | 60m | −20m |
+| Pre-Purchase Vehicle Inspection | 80m | 75m | −5m |
+| Vehicle Cleaning | 80m | 30m | −50m |
+
+Planned duration is what the scheduler **reserves**. The ETA a customer sees after
+arrival comes from the live model, which re-estimates from actual progress — this
+is the starting input, not a promised finish time. Buffers stayed at 0; none were
+derived.
+
+### I6. Recommendation: **HOLD**
+
+Not because the model is wrong. The arithmetic is correct, the grid handles
+25/30/75-minute jobs properly, nothing is rounded, and no service loses slots.
+
+The reason is §I2. CATALOGUE would let the shop accept **up to 83% more vehicles
+per day**, and the ceiling that would absorb them —
+`booking_max_concurrent_appointments = 2` — is the placeholder this CR already
+declined to change, because its evidence turned out to be 6.9% coverage with 624
+of 626 records from a legacy import (§A). Switching duration source now would
+multiply throughput against a number nobody has validated.
+
+The safe order is **Stage 5 resource audit → a validated capacity figure → then
+CATALOGUE**. At that point re-run `pnpm booking:duration-impact`; it is repeatable
+and costs nothing.
+
+Production remains on `appointment_duration_source = DEFAULT`.
