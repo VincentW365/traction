@@ -27,6 +27,7 @@ import {
 } from './engine/parts-readiness.checker';
 import { EtaService } from './eta/eta.service';
 import { resolvePlannedMinutes, type EtaWaitingVisit } from './eta/eta.model';
+import type { VehicleClass } from './availability/service-duration';
 
 @Injectable()
 export class SchedulingService {
@@ -66,6 +67,8 @@ export class SchedulingService {
               appointment: {
                 include: { services: { include: { serviceType: true } } },
               },
+              // CR-2026-111b — the class the planned duration depends on.
+              vehicle: { select: { serviceClass: true } },
               serviceOrders: {
                 include: {
                   partsRequests: {
@@ -180,9 +183,16 @@ export class SchedulingService {
                 })),
               ),
               appointmentServices: sv?.appointment?.services?.map((s) => ({
+                code: s.serviceType.code,
                 baseDurationMinutes: s.serviceType.baseDurationMinutes,
+                sedanDurationMinutes: s.serviceType.sedanDurationMinutes,
+                suvDurationMinutes: s.serviceType.suvDurationMinutes,
                 qty: s.qty,
               })),
+              // CR-2026-111b — the waiting vehicle's own class. A queue ETA built
+              // on the sedan figure for an SUV is wrong for that customer and for
+              // everyone behind them in the queue.
+              vehicleClass: (sv?.vehicle?.serviceClass ?? null) as VehicleClass,
             },
             etaRules.defaultDurationMinutes,
           );

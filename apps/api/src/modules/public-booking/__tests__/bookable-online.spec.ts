@@ -15,10 +15,20 @@ import { PublicBookingService } from '../public-booking.service';
  * services — with the switch flipped by configuration, never by a redeploy.
  */
 
-interface Svc { code: string; name: string; customerFacingName: string | null; family: string; baseDurationMinutes: number }
+interface Svc {
+  code: string;
+  name: string;
+  customerFacingName: string | null;
+  family: string;
+  baseDurationMinutes: number;
+  // CR-2026-111b — the real query selects these, so the fixture must too, or it
+  // models a query shape production no longer issues.
+  sedanDurationMinutes: number | null;
+  suvDurationMinutes: number | null;
+}
 const SERVICES: Svc[] = [
-  { code: 'OIL-01', name: 'Oil Change — Standard', customerFacingName: null, family: 'LUBE', baseDurationMinutes: 30 },
-  { code: 'DIAG-01', name: 'Diagnostic Investigation', customerFacingName: null, family: 'DIAG', baseDurationMinutes: 60 },
+  { code: 'OIL-01', name: 'Oil Change — Standard', customerFacingName: null, family: 'LUBE', baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null },
+  { code: 'DIAG-01', name: 'Diagnostic Investigation', customerFacingName: null, family: 'DIAG', baseDurationMinutes: 60, sedanDurationMinutes: null, suvDurationMinutes: null },
 ];
 
 function build(over: { rules?: Array<{ ruleKey: string; valueJson: unknown }>; services?: Svc[] } = {}) {
@@ -92,7 +102,7 @@ describe('CR-2026-108 §4A — enforced mode', () => {
 describe('CR-2026-108 §4A — customer-facing name', () => {
   it('shows the customer-facing name when one is set', async () => {
     const h = build({
-      services: [{ code: 'OIL-01', name: 'LOF PKG A (INT)', customerFacingName: 'Oil & filter change', family: 'LUBE', baseDurationMinutes: 30 }],
+      services: [{ code: 'OIL-01', name: 'LOF PKG A (INT)', customerFacingName: 'Oil & filter change', family: 'LUBE', baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null }],
     });
     const out = await h.service.listServices();
     expect(out[0].name).toBe('Oil & filter change');
@@ -106,7 +116,7 @@ describe('CR-2026-108 §4A — customer-facing name', () => {
 
   it('treats a blank customer-facing name as unset rather than showing nothing', async () => {
     const h = build({
-      services: [{ code: 'OIL-01', name: 'Oil Change', customerFacingName: '   ', family: 'LUBE', baseDurationMinutes: 30 }],
+      services: [{ code: 'OIL-01', name: 'Oil Change', customerFacingName: '   ', family: 'LUBE', baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null }],
     });
     const out = await h.service.listServices();
     expect(out[0].name).toBe('Oil Change');

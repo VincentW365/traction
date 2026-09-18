@@ -40,7 +40,7 @@ function build(o: { rules?: Array<{ ruleKey: string; valueJson: unknown; siteId?
       findMany: vi.fn(async ({ where }: any) => (where?.ruleKey?.in ? (o.rules ?? []) : [])),
       findFirst: vi.fn(async ({ where }: any) => (where?.ruleKey === 'operating_hours' ? { valueJson: HOURS } : null)),
     },
-    serviceType: { findMany: vi.fn(async () => [{ id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30 }]) },
+    serviceType: { findMany: vi.fn(async () => [{ id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null }]) },
     appointment: {
       findMany: vi.fn(async () => []),
       findFirst: vi.fn(async () => null),
@@ -140,7 +140,7 @@ describe('staff changes to an ONLINE booking', () => {
     manageTokenHash: 'hash',
     scheduledStartAt: at(key, 10),
     scheduledEndAt: at(key, 11, 20),
-    services: [{ qty: 1, serviceType: { id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30 } }],
+    services: [{ qty: 1, serviceType: { id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null } }],
     customer: { phone: '8765550100', email: 'c@example.com', notificationOptInSms: true, notificationOptInEmail: true },
     vehicle: { plateNumber: 'ABC1234', make: 'Toyota', model: 'Corolla' },
     site: { name: "Bert's", timezone: 'America/Jamaica' },

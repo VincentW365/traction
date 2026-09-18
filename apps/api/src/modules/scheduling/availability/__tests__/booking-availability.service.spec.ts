@@ -49,8 +49,8 @@ describe('audience rules', () => {
     const rules = await svc.loadRules('site-1');
     expect(rules.booking.customerLatestStart).toBe('15:00');
 
-    const cust = svc.slotRules([{ baseDurationMinutes: 30 }], rules, 'CUSTOMER');
-    const staff = svc.slotRules([{ baseDurationMinutes: 30 }], rules, 'STAFF');
+    const cust = svc.slotRules([{ baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null }], rules, 'CUSTOMER');
+    const staff = svc.slotRules([{ baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null }], rules, 'STAFF');
     expect(cust.minNoticeMinutes).toBe(rules.booking.minNoticeMinutes);
     expect(staff.minNoticeMinutes).toBe(0);
     expect(staff.sameDayAllowed).toBe(true);
@@ -80,7 +80,7 @@ describe('audience rules', () => {
     ];
     const { svc } = build({ existing, capacity: 2 });
     const rules = await svc.loadRules('site-1');
-    const services = [{ baseDurationMinutes: 30 }];
+    const services = [{ baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null }];
     const cust = await svc.availability(SITE, services, { from: key, days: 1, audience: 'CUSTOMER', rules });
     const staff = await svc.availability(SITE, services, { from: key, days: 1, audience: 'STAFF', rules });
     const custSlots = new Map(cust.days[0].slots.map((s) => [s.startAt, s.available]));

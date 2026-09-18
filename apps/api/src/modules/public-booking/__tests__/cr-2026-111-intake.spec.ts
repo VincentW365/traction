@@ -136,14 +136,20 @@ describe('§16.1 existing customer books General Servicing', () => {
   });
 
   /**
-   * An unclassified vehicle falls to the service's own base figure. That is the
-   * approved configuration's default, not a guess invented at booking time.
+   * CR-2026-111b §5 — an unclassified vehicle gets the LONGER standard, not the
+   * shorter one.
+   *
+   * This reverses the first cut, which fell back to the base (sedan) figure. The
+   * two errors are not symmetrical: over-planning costs a little capacity, while
+   * under-planning holds a bay past the slot and into the next customer's
+   * appointment. Missing classification data must not be resolved in the
+   * shop's favour.
    */
-  it('a vehicle with no class recorded falls back to the base duration', async () => {
+  it('a vehicle with no class recorded gets the CONSERVATIVE 120, never the shorter 90', async () => {
     const h = build({ serviceClass: null });
     await h.service.confirm(existingCustomerBooking(), 'ip1');
     const data = createdAppointment(h);
-    expect(data.scheduledEndAt.getTime() - data.scheduledStartAt.getTime()).toBe(90 * MIN);
+    expect(data.scheduledEndAt.getTime() - data.scheduledStartAt.getTime()).toBe(120 * MIN);
   });
 
   /**

@@ -24,7 +24,7 @@ describe('resolvePlannedMinutes — precedence', () => {
     expect(resolvePlannedMinutes({ orderItems: [{ estimateMinutes: 0, baseDurationMinutes: 45 }, { baseDurationMinutes: 15 }] }, 80)).toBe(60);
   });
   it('then appointment services × qty', () => {
-    expect(resolvePlannedMinutes({ appointmentServices: [{ baseDurationMinutes: 30, qty: 2 }] }, 80)).toBe(60);
+    expect(resolvePlannedMinutes({ appointmentServices: [{ baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null, qty: 2 }] }, 80)).toBe(60);
   });
   it('falls back to the configured default (management: 80)', () => {
     expect(resolvePlannedMinutes({}, 80)).toBe(80);

@@ -69,18 +69,33 @@ export class AppointmentsController {
   @ApiQuery({ name: 'from', required: false, description: 'First day, YYYY-MM-DD (site local)' })
   @ApiQuery({ name: 'days', required: false, description: 'Days to compute (max 31)' })
   @ApiQuery({ name: 'excludeAppointmentId', required: false, description: 'When rescheduling, ignore this appointment' })
+  @ApiQuery({
+    name: 'vehicleId',
+    required: false,
+    description:
+      "CR-2026-111b — the vehicle being booked, so the advisor is offered slots of the length that vehicle needs. " +
+      'The class is read from the vehicle record; the caller never asserts it.',
+  })
   async availability(
     @Query('siteId') siteId: string,
     @Query('serviceCodes') serviceCodes?: string,
     @Query('from') from?: string,
     @Query('days') days?: string,
     @Query('excludeAppointmentId') excludeAppointmentId?: string,
+    @Query('vehicleId') vehicleId?: string,
   ) {
     if (!siteId) throw new BadRequestException('siteId is required');
     if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new BadRequestException('from must be YYYY-MM-DD');
     const d = days ? Number(days) : undefined;
     if (d !== undefined && (!Number.isInteger(d) || d < 1 || d > 31)) throw new BadRequestException('days must be 1–31');
-    return this.appointmentsService.staffAvailability(siteId, (serviceCodes ?? '').split(',').map((c) => c.trim()).filter(Boolean), from, d, excludeAppointmentId || undefined);
+    return this.appointmentsService.staffAvailability(
+      siteId,
+      (serviceCodes ?? '').split(',').map((c) => c.trim()).filter(Boolean),
+      from,
+      d,
+      excludeAppointmentId || undefined,
+      vehicleId || undefined,
+    );
   }
 
   @Get('booking-link')

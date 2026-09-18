@@ -13,6 +13,7 @@
  */
 
 import type { EtaModelConfig } from './eta.config';
+import { catalogueMinutesFor, type MeasurableService, type VehicleClass } from '../availability/service-duration';
 
 export type InServiceStage = 'IN_PROGRESS' | 'HOLD' | 'QC';
 
@@ -55,14 +56,23 @@ const MS = 60_000;
  *  1. a KPI standard already fixed for the job (vehicle-class aware, CR-2026-088);
  *  2. Σ `ServiceOrderItem.estimateMinutes` (populated at order creation);
  *  3. Σ `ServiceType.baseDurationMinutes` on order items;
- *  4. Σ `ServiceType.baseDurationMinutes × qty` on appointment services;
+ *  4. Σ the booked services' configured duration for this vehicle class × qty;
  *  5. the configured default (management's 80 minutes).
  */
 export function resolvePlannedMinutes(
   input: {
     kpiStandardMinutes?: number | null;
     orderItems?: Array<{ estimateMinutes?: number | null; baseDurationMinutes?: number | null }>;
-    appointmentServices?: Array<{ baseDurationMinutes?: number | null; qty?: number | null }>;
+    /**
+     * CR-2026-111b — booked services carry their class-specific durations, and the
+     * class columns are REQUIRED so a caller cannot reach this branch with only the
+     * base figure. A vehicle waiting in the queue for an SUV general service is
+     * 120 minutes of work, and a queue ETA built on 90 tells every customer behind
+     * it the wrong time.
+     */
+    appointmentServices?: Array<MeasurableService & { qty?: number | null }>;
+    /** The waiting vehicle's class, for those durations. */
+    vehicleClass?: VehicleClass;
   },
   defaultMinutes: number,
 ): number {
@@ -75,8 +85,9 @@ export function resolvePlannedMinutes(
   const base = items.reduce((s, i) => s + (i.baseDurationMinutes && i.baseDurationMinutes > 0 ? i.baseDurationMinutes : 0), 0);
   if (base > 0) return base;
 
+  // CR-2026-111b — the SAME class rule the booking paths use, not a fourth copy.
   const booked = (input.appointmentServices ?? []).reduce(
-    (s, a) => s + (a.baseDurationMinutes && a.baseDurationMinutes > 0 ? a.baseDurationMinutes * Math.max(1, a.qty ?? 1) : 0),
+    (s, a) => s + catalogueMinutesFor(a, input.vehicleClass ?? null) * Math.max(1, a.qty ?? 1),
     0,
   );
   if (booked > 0) return booked;

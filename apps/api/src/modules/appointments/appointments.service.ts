@@ -12,7 +12,15 @@ import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { EtaService } from '../scheduling/eta/eta.service';
 import { BOOKING_RULE_KEYS, bookingRulesFromRows } from '../public-booking/booking.config';
 import { maxConcurrentOverlap, type SlotRules } from '../public-booking/availability.engine';
-import { BookingAvailabilityService, type BookingRuleSet } from '../scheduling/availability/booking-availability.service';
+import {
+  BookingAvailabilityService,
+  catalogueMinutesFor,
+  SERVICE_DURATION_SELECT,
+  variesByVehicleClass,
+  type BookingRuleSet,
+  type VehicleClass,
+} from '../scheduling/availability/booking-availability.service';
+
 import { NotificationsService } from '../notifications/notifications.service';
 import { localDayKey } from '../../common/helpers/operating-hours';
 import { publicUrl } from '../../common/helpers/public-url';
@@ -23,6 +31,19 @@ import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { UpdateAppointmentDto } from './dto/update-appointment.dto';
 import { toZonedTime } from 'date-fns-tz';
 import { getDay, getHours, getMinutes, startOfDay, isBefore, isSameDay } from 'date-fns';
+
+/**
+ * CR-2026-111b — a service as the staff paths carry it: the shared duration shape
+ * plus the id they need to write AppointmentService rows. The duration fields are
+ * required, so a query that forgets them does not compile.
+ */
+interface StaffMeasurableService {
+  id: string;
+  code: string;
+  baseDurationMinutes: number | null;
+  sedanDurationMinutes: number | null;
+  suvDurationMinutes: number | null;
+}
 
 /**
  * Expected shape of the operating_hours BusinessRuleConfig value_json.
@@ -74,13 +95,49 @@ export class AppointmentsService {
   // enforced for staff). Used by the appointment wizard's Date/Time steps.
   // ---------------------------------------------------------------------------
 
-  async staffAvailability(siteId: string, serviceCodes: string[], from?: string, days?: number, excludeAppointmentId?: string) {
+  async staffAvailability(
+    siteId: string,
+    serviceCodes: string[],
+    from?: string,
+    days?: number,
+    excludeAppointmentId?: string,
+    vehicleId?: string,
+  ) {
     if (!this.availability) throw new BadRequestException('Availability engine is not configured.');
     const site = await this.prisma.site.findUnique({ where: { id: siteId }, select: { id: true, timezone: true } });
     if (!site) throw new NotFoundException(`Site ${siteId} not found`);
     const codes = [...new Set(serviceCodes.map((c) => c.trim()).filter(Boolean))];
     const services = codes.length ? [...(await this.resolveServiceTypeCodes(codes)).values()] : [];
-    return this.availability.availability(site, services, { from, days, audience: 'STAFF', excludeAppointmentId: excludeAppointmentId ?? null });
+    // CR-2026-111b — when the wizard already knows the vehicle, the slots an
+    // advisor is shown are the length that vehicle actually needs. Without it the
+    // advisor would be offered a slot the booking then refuses to fit into.
+    const vehicleClass = await this.resolveVehicleClass(vehicleId, services);
+    return this.availability.availability(site, services, {
+      from,
+      days,
+      audience: 'STAFF',
+      excludeAppointmentId: excludeAppointmentId ?? null,
+      vehicleClass,
+    });
+  }
+
+  /**
+   * CR-2026-111b — the vehicle's service class, from the ONE shared engine.
+   *
+   * Delegates rather than querying, so staff and customer paths cannot drift apart
+   * again.
+   *
+   * The lookup is skipped when NO service being booked varies by class, which is
+   * most of the catalogue: the class cannot change the answer, so asking the
+   * database for it would be a query whose result is discarded.
+   */
+  private async resolveVehicleClass(
+    vehicleId: string | null | undefined,
+    services: Array<{ sedanDurationMinutes: number | null; suvDurationMinutes: number | null }>,
+  ): Promise<VehicleClass> {
+    if (!this.availability || !vehicleId) return null;
+    if (!services.some(variesByVehicleClass)) return null;
+    return this.availability.vehicleClassOf(vehicleId);
   }
 
   /**
@@ -264,16 +321,24 @@ export class AppointmentsService {
     }
 
     // 5. Planned duration. CR-2026-106 — from the SAME rule the public engine uses
-    // (appointment_duration_source: DEFAULT = management's 80 minutes, CATALOGUE =
+    // (appointment_duration_source: DEFAULT = the flat default, CATALOGUE =
     // catalogue sum); the legacy catalogue sum remains only when the shared engine
     // is not wired (unit specs).
+    //
+    // CR-2026-111b — and from the same VEHICLE. An advisor booking an SUV general
+    // service must get the same 120 minutes the customer would get booking it
+    // themselves; the channel the appointment came through is not an input to how
+    // long the work takes (§4).
     const ctx = await this.staffPlacementContext(data.siteId);
     const selectedServices = data.serviceTypes.map((s) => serviceTypeMap.get(s.serviceTypeCode)!).filter(Boolean);
+    const vehicleClass = await this.resolveVehicleClass(data.vehicleId, selectedServices);
     const totalDurationMinutes = ctx
-      ? this.availability!.plannedMinutes(selectedServices, ctx.rules)
+      ? this.availability!.plannedMinutes(selectedServices, ctx.rules, vehicleClass)
       : data.serviceTypes.reduce((sum, s) => {
           const st = serviceTypeMap.get(s.serviceTypeCode);
-          return sum + (st?.baseDurationMinutes ?? 0) * (s.qty ?? 1);
+          // Still the shared class rule — a second copy of it here is exactly what
+          // this change set out to remove.
+          return sum + (st ? catalogueMinutesFor(st, vehicleClass) : 0) * (s.qty ?? 1);
         }, 0);
 
     const scheduledEndAt = new Date(
@@ -285,7 +350,7 @@ export class AppointmentsService {
     const placement = ctx
       ? this.availability!.assertSlotAllowed(scheduledStartAt, scheduledEndAt, ctx.site, ctx.rules, 'STAFF', { overrideLatestStart: data.overrideLatestStart === true })
       : { latestStartOverridden: false };
-    const slotRules = ctx ? this.availability!.slotRules(selectedServices, ctx.rules, 'STAFF') : null;
+    const slotRules = ctx ? this.availability!.slotRules(selectedServices, ctx.rules, 'STAFF', vehicleClass) : null;
 
     // 5b. P4(a): reject an overlapping active appointment for the SAME vehicle.
     await this.validateNoVehicleOverlap(
@@ -460,6 +525,14 @@ export class AppointmentsService {
     const updateData: Record<string, unknown> = {};
     // CR-2026-106 — shared placement context for reschedules (null when unwired).
     const rescheduleCtx = data.scheduledStartAt ? await this.staffPlacementContext(existing.siteId) : null;
+    // CR-2026-111b — Defect B: a reschedule must not change how long the work takes.
+    // The vehicle is the same vehicle, so its class is resolved here and used for
+    // every duration below; without it an SUV general service would quietly shrink
+    // from 120 minutes back to 90 the moment anyone moved the appointment.
+    const rescheduleVehicleClass = await this.resolveVehicleClass(
+      existing.vehicleId,
+      existing.services.map((s) => s.serviceType),
+    );
     let latestStartOverridden = false;
 
     // Handle reschedule
@@ -480,8 +553,8 @@ export class AppointmentsService {
         const services = existing.services;
         // CR-2026-106 — same duration rule as create/public when the engine is wired.
         const totalDuration = rescheduleCtx
-          ? this.availability!.plannedMinutes(services.map((s) => s.serviceType), rescheduleCtx.rules)
-          : services.reduce((sum, s) => sum + s.serviceType.baseDurationMinutes * s.qty, 0);
+          ? this.availability!.plannedMinutes(services.map((s) => s.serviceType), rescheduleCtx.rules, rescheduleVehicleClass)
+          : services.reduce((sum, s) => sum + catalogueMinutesFor(s.serviceType, rescheduleVehicleClass) * s.qty, 0);
         updateData.scheduledEndAt = new Date(
           newStart.getTime() + totalDuration * 60 * 1000,
         );
@@ -530,7 +603,7 @@ export class AppointmentsService {
       // Delete existing services and create new ones inside transaction
       const appointment = await this.prisma.$transaction(async (tx) => {
         if (rescheduleCtx && data.scheduledStartAt) {
-          capacityOutcome = await this.guardStaffSlot(tx, rescheduleCtx, baseStart, this.availability!.slotRules(newServices, rescheduleCtx.rules, 'STAFF'), data.acknowledgeCapacity === true, id);
+          capacityOutcome = await this.guardStaffSlot(tx, rescheduleCtx, baseStart, this.availability!.slotRules(newServices, rescheduleCtx.rules, 'STAFF', rescheduleVehicleClass), data.acknowledgeCapacity === true, id);
         }
         await tx.appointmentService.deleteMany({
           where: { appointmentId: id },
@@ -611,7 +684,7 @@ export class AppointmentsService {
               tx,
               rescheduleCtx,
               updateData.scheduledStartAt as Date,
-              this.availability!.slotRules(existing.services.map((s) => s.serviceType), rescheduleCtx.rules, 'STAFF'),
+              this.availability!.slotRules(existing.services.map((s) => s.serviceType), rescheduleCtx.rules, 'STAFF', rescheduleVehicleClass),
               data.acknowledgeCapacity === true,
               id,
             );
@@ -959,20 +1032,28 @@ export class AppointmentsService {
    * Resolve service type codes to their database records.
    * Throws if any code is not found or not active.
    */
-  private async resolveServiceTypeCodes(
-    codes: string[],
-  ): Promise<Map<string, { id: string; baseDurationMinutes: number }>> {
+  private async resolveServiceTypeCodes(codes: string[]): Promise<Map<string, StaffMeasurableService>> {
     const uniqueCodes = [...new Set(codes)];
 
     const serviceTypes = await this.prisma.serviceType.findMany({
       where: { code: { in: uniqueCodes }, isActive: true },
-      select: { id: true, code: true, baseDurationMinutes: true },
+      // CR-2026-111b — the shared duration select. This query used to name
+      // `baseDurationMinutes` alone, which is why a staff-created SUV general
+      // service planned 90 minutes while the same booking made by the customer
+      // planned 120. One select, one rule, no divergence.
+      select: SERVICE_DURATION_SELECT,
     });
 
     const map = new Map(
       serviceTypes.map((st) => [
         st.code,
-        { id: st.id, baseDurationMinutes: st.baseDurationMinutes },
+        {
+          id: st.id,
+          code: st.code,
+          baseDurationMinutes: st.baseDurationMinutes,
+          sedanDurationMinutes: st.sedanDurationMinutes,
+          suvDurationMinutes: st.suvDurationMinutes,
+        },
       ]),
     );
 
@@ -1021,7 +1102,7 @@ export class AppointmentsService {
   private async mergeServicesIntoExisting(
     appointmentId: string,
     newServices: { serviceTypeCode: string; qty?: number; notes?: string }[],
-    serviceTypeMap: Map<string, { id: string; baseDurationMinutes: number }>,
+    serviceTypeMap: Map<string, StaffMeasurableService>,
     userId: string,
   ) {
     const existing = await this.prisma.appointment.findUniqueOrThrow({

@@ -11,7 +11,7 @@
  */
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
-import { BookingAvailabilityService, type BookingAudience } from '../scheduling/availability/booking-availability.service';
+import { BookingAvailabilityService, SERVICE_DURATION_SELECT, type BookingAudience } from '../scheduling/availability/booking-availability.service';
 import type { AvailabilityDecision } from '../scheduling/availability/slot-decision';
 import { ResourceAvailabilityService, primaryCapability } from '../scheduling/availability/resource-availability.service';
 import { ShadowComparisonService, type ShadowComparisonRun } from '../scheduling/availability/shadow-comparison.service';
@@ -98,7 +98,10 @@ export class BookingSimulatorService {
     if (codes.length === 0) throw new BadRequestException('Choose at least one service to simulate.');
     const services = await this.prisma.serviceType.findMany({
       where: { code: { in: codes } },
-      select: { code: true, name: true, baseDurationMinutes: true, requiredBayType: true },
+      // CR-2026-111b — the simulator measures real durations, so it uses the shared
+      // select. A simulator that quoted the sedan figure for every vehicle would be
+      // worse than no simulator: it would look like evidence.
+      select: { ...SERVICE_DURATION_SELECT, requiredBayType: true },
     });
     if (services.length === 0) throw new BadRequestException(`No service matched: ${codes.join(', ')}`);
 

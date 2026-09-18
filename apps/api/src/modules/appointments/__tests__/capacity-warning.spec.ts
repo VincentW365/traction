@@ -17,7 +17,7 @@ function build(opts: { capacity?: number; existing?: number; withEta?: boolean }
   };
   const prisma: any = {
     businessRuleConfig: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
-    serviceType: { findMany: vi.fn(async () => [{ id: 'st-1', code: 'OIL-01', baseDurationMinutes: 60 }]) },
+    serviceType: { findMany: vi.fn(async () => [{ id: 'st-1', code: 'OIL-01', baseDurationMinutes: 60, sedanDurationMinutes: null, suvDurationMinutes: null }]) },
     appointment: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => existing) },
     $transaction: vi.fn(async (cb: any) => cb(tx)),
   };

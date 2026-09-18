@@ -57,7 +57,7 @@ function build(o: Opts = {}) {
           id: 'appt-1',
           ...data,
           scheduledEndAt: data.scheduledEndAt,
-          services: [{ serviceType: { id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30 } }],
+          services: [{ serviceType: { id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null } }],
           customer: { id: data.customerId, firstName: 'Jane', phone: '876-555-0100', email: 'jane@example.com', notificationOptInSms: true, notificationOptInEmail: false },
           vehicle: { id: data.vehicleId, plateNumber: 'ABC1234', make: 'Toyota', model: 'Corolla', modelYear: 2019 },
         };
@@ -79,7 +79,7 @@ function build(o: Opts = {}) {
       findMany: vi.fn(async () => o.bookingRules ?? []),
       findFirst: vi.fn(async ({ where }: any) => (where?.ruleKey === 'operating_hours' ? { valueJson: HOURS } : null)),
     },
-    serviceType: { findMany: vi.fn(async () => [{ id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30 }]) },
+    serviceType: { findMany: vi.fn(async () => [{ id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null }]) },
     vehicle: { findUnique: vi.fn(async () => o.identifyVehicle ?? null) },
     appointment: {
       findMany: vi.fn(async () => []),
@@ -235,7 +235,7 @@ describe('manage link — cancel / reschedule rules', () => {
   const appt = (start: Date, status = 'CONFIRMED') => ({
     id: 'appt-1', siteId: 'site-1', vehicleId: 'veh-1', status, appointmentNumber: 'BK-B01-260912-001',
     scheduledStartAt: start, scheduledEndAt: new Date(start.getTime() + 80 * MIN),
-    services: [{ serviceType: { id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30 } }],
+    services: [{ serviceType: { id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null } }],
     customer: { id: 'c1', firstName: 'Jane', phone: '876-555-0100', email: null, notificationOptInSms: true, notificationOptInEmail: true },
     vehicle: { id: 'veh-1', plateNumber: 'ABC1234', make: 'Toyota', model: 'Corolla', modelYear: 2019 },
   });

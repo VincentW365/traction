@@ -42,7 +42,9 @@ import { isSlotAvailable, type SlotRules } from './availability.engine';
 import {
   BookingAvailabilityService,
   formatLatestStartLabel,
+  SERVICE_DURATION_SELECT,
   type BookingRuleSet,
+  type VehicleClass,
 } from '../scheduling/availability/booking-availability.service';
 import type { ServiceRequestDto } from './dto/public-booking.dto';
 import {
@@ -237,7 +239,10 @@ export class PublicBookingService {
         code: { notIn: booking.excludedServiceCodes },
         ...(booking.enforceOnlineBookable ? { bookableOnline: true } : {}),
       },
-      select: { code: true, name: true, customerFacingName: true, family: true, baseDurationMinutes: true },
+      // CR-2026-111b — SERVICE_DURATION_SELECT plus the customer-facing columns. The
+      // class columns must be here even for a catalogue listing: without them the
+      // quoted "about N minutes" would silently be the sedan figure for every vehicle.
+      select: { ...SERVICE_DURATION_SELECT, customerFacingName: true, family: true },
       orderBy: [{ family: 'asc' }, { name: 'asc' }],
     });
     return types.map((t) => ({
@@ -276,24 +281,15 @@ export class PublicBookingService {
   }
 
   /**
-   * CR-2026-111 — the vehicle's service class, for duration resolution.
+   * CR-2026-111b — the vehicle's service class, from the ONE shared engine.
    *
-   * General Servicing is approved at 90 minutes for a sedan and 120 for an SUV, so
-   * the duration cannot be known until the vehicle is. The class is read from the
-   * VEHICLE RECORD, never from the request: a public caller must not be able to
-   * assert "sedan" and buy itself a shorter slot than the work needs.
-   *
-   * Unknown (a vehicle being added for the first time, or one never classified)
-   * returns null, and the engine falls back to the service's base duration. That is
-   * the approved configuration's own default, not a guess made here.
+   * This module kept its own copy until the staff path was found resolving the
+   * same question differently. There is now one implementation, on
+   * `BookingAvailabilityService`, and this is a thin delegate so the call sites
+   * below read the same as before.
    */
-  private async vehicleClassOf(vehicleId?: string | null): Promise<string | null> {
-    if (!vehicleId) return null;
-    const vehicle = await this.prisma.vehicle.findUnique({
-      where: { id: vehicleId },
-      select: { serviceClass: true },
-    });
-    return vehicle?.serviceClass ?? null;
+  private vehicleClassOf(vehicleId?: string | null): Promise<VehicleClass> {
+    return this.avail.vehicleClassOf(vehicleId);
   }
 
   // ---------------------------------------------------------------------------
@@ -659,18 +655,9 @@ export class PublicBookingService {
         isExternal: false,
         ...(rules.enforceOnlineBookable ? { bookableOnline: true } : {}),
       },
-      // CR-2026-111 — the class-specific columns must be selected, or every lookup
-      // silently falls back to the base duration and the approved 90/120 split
-      // never applies to a single booking.
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        customerFacingName: true,
-        baseDurationMinutes: true,
-        sedanDurationMinutes: true,
-        suvDurationMinutes: true,
-      },
+      // CR-2026-111b — the ONE duration select. Listing the columns by hand here is
+      // how Defect A happened; naming the shared constant is how it cannot happen again.
+      select: { ...SERVICE_DURATION_SELECT, customerFacingName: true },
     });
     const missing = unique.filter((c) => !types.some((t) => t.code === c) || rules.excludedServiceCodes.includes(c));
     if (missing.length) throw new BadRequestException(`These services cannot be booked online: ${missing.join(', ')}`);
@@ -715,7 +702,7 @@ export class PublicBookingService {
       services: {
         include: {
           serviceType: {
-            select: { id: true, code: true, name: true, baseDurationMinutes: true, sedanDurationMinutes: true, suvDurationMinutes: true },
+            select: SERVICE_DURATION_SELECT,
           },
         },
       },
