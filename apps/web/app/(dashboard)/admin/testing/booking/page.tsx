@@ -330,18 +330,37 @@ export default function BookingSimulatorPage() {
               <p className="mt-1 text-violet-800">
                 Valid {session.ttlMinutes} minutes (until {new Date(session.expiresAt).toLocaleTimeString()}).
               </p>
-              {session.bookingUrl ? (
-                <p className="mt-2 break-all">
-                  <a className="font-mono text-blue-700 underline" href={session.bookingUrl} target="_blank" rel="noreferrer">
-                    {session.bookingUrl}
-                  </a>
-                </p>
-              ) : (
-                <p className="mt-2 text-violet-800">
-                  PUBLIC_APP_URL is not set, so no link could be built. Open /book and supply the token as
-                  <code className="mx-1">?uat=</code>.
-                </p>
-              )}
+              {/*
+                The server builds this from PUBLIC_APP_URL, which is a deployment
+                setting and is routinely unset in development. The previous
+                fallback told the tester to "supply the token as ?uat=" without
+                ever showing them a token — so the session was unusable exactly
+                where it is needed most.
+
+                The browser already knows where this app is served from, and that
+                is the same origin /book lives on. Build the link from it.
+              */}
+              {(() => {
+                const link =
+                  session.bookingUrl ??
+                  (typeof window !== 'undefined' ? `${window.location.origin}/book?uat=${session.token}` : null);
+                if (!link) return null;
+                return (
+                  <>
+                    <p className="mt-2 break-all">
+                      <a className="font-mono text-blue-700 underline" href={link} target="_blank" rel="noreferrer">
+                        {link}
+                      </a>
+                    </p>
+                    {!session.bookingUrl && (
+                      <p className="mt-1 text-violet-700">
+                        Built from this browser&rsquo;s address because <code className="mx-0.5">PUBLIC_APP_URL</code> is
+                        not set. Fine for testing here; set it on the deployment before sending links to customers.
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
               <p className="mt-2 text-violet-800">
                 Afterwards, review what would have been sent under Communication history, or via
                 <code className="mx-1">/notifications/captured?runLabel={session.runLabel}</code>.
