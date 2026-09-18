@@ -1724,3 +1724,238 @@ CLEAN-01       : still requires GENERAL
 ```
 
 Full API suite: 1458 passed, 17 skipped.
+
+---
+
+## §O. Stage 5C + 5D — the resource-aware engine, in SHADOW
+
+The hold was lifted with instructions to finish the platform on what is confirmed
+today and let management fill in the rest later without redevelopment. This is
+what was built.
+
+### O1. The solver — identity, not arithmetic
+
+`resource-capacity.engine.ts`, pure and I/O-free.
+
+The obvious implementation counts pools and compares: `GENERAL = 8,
+INSPECTION = 3, LUBE = 2` → thirteen jobs at once. That is wrong in the direction
+that oversells the shop, because the same bay appears in several pools. A heavy
+lift that does general work, inspections and oil changes is counted three times
+and is still **one vehicle at a time**. Sum the pools and eight bays become
+thirteen promises.
+
+So capacity is not a number here. It is a question about **identity**: can the
+jobs overlapping at some instant each be given a *different* physical resource
+eligible for that job? That is a maximum bipartite matching — jobs on one side,
+position nodes on the other, an edge where the resource can do the work — and a
+slot is offerable only when every overlapping job, including the one being placed,
+matches simultaneously.
+
+Kuhn's augmenting-path algorithm, deliberately rather than anything cleverer: the
+graph is a handful of jobs against tens of positions, and a matching a reader can
+check by hand is worth more than an asymptotic improvement nobody will measure.
+
+Two details that matter:
+
+- **Every instant, not just the start.** A matching that works at 09:00 can fail
+  at 10:00 when a third job begins, so the check runs at each event point.
+- **Greedy would be wrong.** If the only alignment-capable bay is also the only
+  free general bay, handing it to the general job first reports a false BLOCKED.
+  The augmenting path re-assigns instead.
+
+Eligibility covers capacity role, active/retired/scheduling flags, operational
+status, capability, vehicle class, and the DMAIC Rule 3 mobile-jack sedan gate. A
+resource with `capacity: 2` becomes two nodes; a resource with three capabilities
+stays one.
+
+### O2. INCOMPLETE is not a kind of BLOCKED — and this caught a real bug
+
+A pool of zero has two entirely different causes: the shop genuinely cannot do the
+work, or nobody has finished classifying the bays. The engine reports the second as
+`INCOMPLETE`, never as a capacity limit.
+
+The first shadow validation run showed why this matters. It reported **708 slots
+"oversold"** — the fixed limit offering work no position could cover, which is the
+dangerous direction and the one the production preflight blocks on. Every one of
+them was actually "nobody has said which bay does oil changes yet".
+
+The categorisation was wrong: an INCOMPLETE slot has `available: false`, so a naive
+comparison counted it as the fixed model overselling. The four outcomes are now
+mutually exclusive with INCOMPLETE taking precedence, and they partition the
+compared slots. After the fix: **0 oversold, 0 undersold, 708 incomplete.**
+
+An unfinished configuration must not be able to raise a critical safety finding.
+
+### O3. The eight-bay baseline
+
+`pnpm resources:baseline [--commit]`, driven through `ResourceAdminService` so
+every change is validated and audited exactly as from the screen.
+
+| Code | Source | Role |
+| --- | --- | --- |
+| BAY-01, BAY-02 | existing heavy lifts | PRIMARY + GENERAL |
+| BAY-03 | existing lift — **flagged**, recorded as `sedan`/STANDARD | PRIMARY + GENERAL |
+| BAY-06, BAY-07 | were "(TBD)", renamed to Heavy Lift 6/7 | PRIMARY + GENERAL |
+| BAY-08, BAY-09, BAY-10 | created — not in the pre-expansion inventory | PRIMARY + GENERAL |
+| MJACK-01/02, STAND-01/02 | jacks and stands | SUPPORT_EQUIPMENT |
+| BAY-04, BAY-05, OVF-01/02, LT-01/02, PWASH-01, MSHOP-EXT | ambiguous | left UNVERIFIED |
+
+Two judgement calls, both correctable on screen without code:
+
+- **BAY-03 is counted as one of the eight** and flagged. It is recorded as a
+  `sedan` lift at STANDARD weight, not `heavy`, but it accepts both vehicle classes
+  and is a full lift position. If it is not one of the eight management means,
+  change its role and add the eighth.
+- **BAY-04 (Mobile Lift) and BAY-05 (Power Jack) were NOT classified as equipment**
+  despite reading like jacks, because they sit in the BAY code series. Ambiguous
+  stays UNVERIFIED.
+
+**No `capacity = 8` exists anywhere.** The derived count is eight because eight
+verified resources exist. Adding a ninth made it nine, live, in the acceptance run.
+
+### O4. Shadow comparison and its persistence
+
+`booking_shadow_comparisons` — migration `20260918100000`, additive.
+
+Only **meaningful differences** are written: agreement is the expected case and
+storing it would bury the signal. Only slots where the fixed engine reached a
+*capacity* decision are compared at all — a slot excluded because it is in the past
+is not a disagreement about capacity.
+
+No PII. No customer, vehicle, plate, appointment id or token. A vehicle *class* is
+stored because a class is not identifying; a plate would be. A test asserts the
+absence of each forbidden field.
+
+`configFingerprint` ties a finding to the inventory it was measured against —
+without it a row from last week is uninterpretable the moment somebody commissions
+a bay. Retention 90 days.
+
+### O5. Readiness split, and the activation guard
+
+§13's two bars, because holding shadow to the production bar meant no evidence
+could be gathered until the configuration was already perfect — and the evidence is
+how you find out what still needs configuring.
+
+**READY FOR SHADOW** — currently READY. At least one confirmed position, at least
+one capability assigned, inventory readable. Eight unclassified resources mean the
+figures carry a lower-bound caveat, which is a caveat on the numbers rather than a
+reason to withhold them.
+
+**READY FOR PRODUCTION RESOURCE_AWARE** — currently NOT READY, 2 of 7 checks
+failing. All seven of §14's requirements are named checks, so a failure tells a
+manager what to go and do.
+
+The guard is on the one path that writes `booking_capacity_mode`: setting it to a
+resource-aware value runs the preflight and throws `RESOURCE_AWARE_PREFLIGHT_FAILED`
+with the blockers named. Verified live — HTTP 400, two blockers.
+
+### O6. Reservations — abstract, and the race
+
+`ResourceReservation.requiredCapability` added. A booking reserves **"one
+compatible ALIGNMENT position"**, not ALIGN-01: a customer picking a time three
+weeks out must not be handed a dispatch decision, and pinning a bay would break the
+moment it went into maintenance.
+
+The race — `availability says yes → another booking lands → appointment created` —
+is guarded by the **same per-site-per-day advisory lock every other writer already
+takes**. Re-check and reserve inside that lock and the second writer serialises,
+sees the reservation, and loses cleanly.
+
+Reschedule is release-then-reserve in **one** transaction. Split across two and the
+old interval is free for an instant — exactly long enough for a concurrent booking
+to take the position, leaving a customer who merely moved their time with no bay.
+
+Under FIXED this writes nothing, so shadow cannot affect production. The
+architecture exists now so the concurrency design is reviewed while the stakes are
+a test database.
+
+### O7. Stage 5D — 22 validation cases
+
+`stage5d-validation.spec.ts`, 55 assertions across all twenty-two, numbered to
+match. Deterministic on purpose: several describe a configuration that does not
+exist yet (there is no alignment bay), and the point is to prove the engine is
+correct when it does — the live measurement is the shadow validation run.
+
+Full API suite: **1545 passed, 17 skipped.**
+
+### O8. §23 — expansion is configuration, live
+
+Every change made through the API, every one rolled back:
+
+```
+ 1. baseline: 8 confirmed primary positions, 0 overflow, 4 equipment, 7 unconfirmed
+ 2. GENERAL pool: 8 eligible positions (derived, not entered)
+ 3. ADD BAY:        8 -> 9 positions, GENERAL pool 8 -> 9     (no deployment)
+ 4. MAINTENANCE:    9 -> 8                                     (immediate)
+ 5. RESTORE:        8 -> 9, role never changed                 (immediate)
+ 6. ADD OVERFLOW:   overflow 0 -> 1, GENERAL pool -> 10        (automatic)
+ 7. Wheel Alignment before: 13 slots "cannot tell", 0 positions
+ 8. after adding ALIGNMENT to BAY-01: 13 slots agree, 1 eligible position (immediate)
+ 9. ALIGNMENT pool now 1 — a single point of failure the dashboard reports
+10. shadow READY; production NOT READY (2 of 7 checks failing)
+11. activation refused: HTTP 400 RESOURCE_AWARE_PREFLIGHT_FAILED, 2 blockers named
+12. rolled back to 8 primary / 0 overflow / GENERAL 8 / ALIGNMENT 0
+```
+
+### O9. §20 — Stage 4F re-run: still HOLD, for a narrower reason
+
+`pnpm booking:duration-impact-resource`. Each duration model measured twice: once
+against the fixed limit that decides bookings today, once against the resource model.
+
+| Service | Needs | DEF | CAT | FIXED slots | RES slots |
+| --- | --- | --- | --- | --- | --- |
+| Oil Change | LUBE | 80m | 30m | 235 → 239 (+1.7%) | not evaluable |
+| Tire Rotation | GENERAL | 80m | 25m | 235 → 239 (+1.7%) | 235 → 239 (+1.7%) |
+| Brake Inspection | GENERAL | 80m | 30m | 235 → 239 (+1.7%) | 235 → 239 (+1.7%) |
+| Wheel Alignment | ALIGNMENT | 80m | 60m | 235 → 237 (+0.9%) | not evaluable |
+| Pre-Purchase Inspection | INSPECTION | 80m | 75m | 235 → 235 (0%) | not evaluable |
+| Vehicle Cleaning | GENERAL | 80m | 30m | 235 → 239 (+1.7%) | 235 → 239 (+1.7%) |
+
+**The eight confirmed positions genuinely do weaken the original concern.** A +83%
+saturation increase against a ceiling of 2 is a different proposition from the same
+increase against 8.
+
+**But the recommendation stays HOLD**, for a reason Stage 4F did not have: the
+services that shorten most under CATALOGUE are the specialty ones, and **three of
+the six have no configured position at all**. Switching now would increase the rate
+of bookings flowing toward pools whose size nobody has established. That is not a
+bigger version of the old risk — it is an unmeasured one.
+
+Re-run after the specialty capabilities are assigned. If each has two or more
+positions, the case for CATALOGUE becomes straightforward.
+
+### O10. §15 — CLEANING, configurable now
+
+The capability column is plain text, so extending the vocabulary needs no enum
+migration. `resource_additional_capabilities` (default `['CLEANING']`) makes it
+assignable **before** any service requires it — which has to be possible, because a
+wash bay must be configurable before CLEAN-01 can be remapped to need it.
+
+Assigning CLEANING today changes no availability: the solver only matches a job's
+required capability against a resource's list, and nothing requires CLEANING. The
+remap itself stays a public-catalogue decision, and a test asserts nothing in the
+application performs it.
+
+### O11. §16 — arrival smoothing, still separate
+
+Unchanged and unsolved, deliberately. Resource capacity asks *can the workshop
+physically service the vehicle*; arrival policy asks *how many customers should be
+invited to arrive in the same period*. `booking_max_concurrent_appointments = 2`
+remains the temporary arrival/throughput safety control. No new arrival limit was
+invented and `booking_max_arrivals_per_slot` still does not exist.
+
+### O12. Final production state (§25)
+
+```
+customer catalogue enforcement : ON, 6 pilot services
+duration source                : DEFAULT
+production capacity model      : FIXED
+concurrency safety control     : 2 (unchanged)
+RESOURCE_AWARE                 : functioning in SHADOW
+resources                      : 8 PRIMARY + 4 SUPPORT_EQUIPMENT + 8 UNVERIFIED
+capabilities                   : GENERAL x8
+shadow comparison rows         : 708 (all INCOMPLETE — configuration gaps)
+resource reservations          : 0
+```
+
+`deploy:check` PASS — 25 ok, 1 warning, 0 failures.

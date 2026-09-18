@@ -37,6 +37,7 @@ function build(overrides: Record<string, any> = {}) {
       createMany: vi.fn(async () => ({ count: 0 })),
     },
     serviceType: { findMany: vi.fn(async () => []) },
+    businessRuleConfig: { findFirst: vi.fn(async () => null) },
     resourceOperationalStatus: { upsert: vi.fn(async () => ({ id: 'ops-1' })) },
     resourceReservation: { count: vi.fn(async () => 0) },
     technicianAssignment: { count: vi.fn(async () => 0) },
@@ -51,10 +52,14 @@ function build(overrides: Record<string, any> = {}) {
   return { service: new ResourceAdminService(prisma as any, audit as any), prisma, audit };
 }
 
-/** The vocabulary is read from the data, so tests must seed both halves. */
-function withVocabulary(prisma: any, values: string[]) {
+/**
+ * The vocabulary is read from the data, so tests must seed every half: what the
+ * catalogue asks for, what the legacy bays are, and the configured extras.
+ */
+function withVocabulary(prisma: any, values: string[], extras: string[] | null = []) {
   prisma.serviceType.findMany = vi.fn(async () => values.map((v) => ({ requiredBayType: v })));
   prisma.workBay.findMany = vi.fn(async () => []);
+  prisma.businessRuleConfig.findFirst = vi.fn(async () => (extras === null ? null : { valueJson: extras }));
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +371,35 @@ describe('§8 — what work a position can take', () => {
   it('throws NotFound for an unknown resource instead of creating orphan capabilities', async () => {
     const h = build();
     await expect(h.service.setCapabilities('nope', ['GENERAL'], 'user-1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  /**
+   * §15 — CLEANING has to be assignable BEFORE CLEAN-01 is remapped to require it,
+   * or there is no way to configure a wash bay first. Assigning a capability that
+   * no service asks for changes no availability; it records a fact.
+   */
+  it('accepts a capability the shop has configured even though no service asks for it', async () => {
+    const h = build();
+    withVocabulary(h.prisma, ['GENERAL'], ['CLEANING']);
+    h.prisma.workResource.findUnique = vi.fn(async () => RESOURCE);
+    const out = await h.service.setCapabilities('res-1', ['CLEANING'], 'user-1');
+    expect(out.capabilities).toEqual(['CLEANING']);
+  });
+
+  it('CLEANING is available by default, so a wash bay can be configured without a deployment', async () => {
+    const h = build();
+    // No configured row at all — the default still offers it.
+    withVocabulary(h.prisma, ['GENERAL'], null);
+    h.prisma.workResource.findUnique = vi.fn(async () => RESOURCE);
+    expect(await h.service.capabilityVocabulary()).toContain('CLEANING');
+  });
+
+  it('the extension list is configuration, so a future capability needs no code change', async () => {
+    const h = build();
+    withVocabulary(h.prisma, ['GENERAL'], ['CLEANING', 'bodywork']);
+    const vocab = await h.service.capabilityVocabulary();
+    // Normalised on the way in, so casing in a config row cannot create a twin.
+    expect(vocab).toEqual(['BODYWORK', 'CLEANING', 'GENERAL']);
   });
 
   it('§9 — capabilities never touch `capacity`: three skills is still one vehicle', () => {

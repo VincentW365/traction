@@ -3,16 +3,20 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * CR-2026-108 — the Stage 5C hold.
+ * CR-2026-108 — permanent invariants of the resource model.
  *
- * Management accepted Stage 5B and stopped the work: the next activity is a
- * physical walk of the Service Centre, not more code. Seven things must not
- * happen while that hold is in force, and the risk is not that someone defies
- * them — it is that a later change makes one true by accident, months from now,
- * with nobody reading this CR.
+ * These began as the Stage 5C hold. Management has since lifted the hold and asked
+ * for the engine to be finished, so two of the original rules are gone: the
+ * resource model may now be activated (behind a preflight rather than never), and
+ * CLEANING is now deliberately assignable so a wash bay can be configured before
+ * CLEAN-01 is remapped.
  *
- * So the hold is expressed as tests. Each one names the rule it protects, and a
- * failure here is a prompt to go and ask, not to edit the assertion.
+ * What remains are the properties that must hold for as long as the platform does,
+ * and they are asserted here rather than documented because the risk was never
+ * that somebody would defy them — it is that a change months from now breaks one
+ * by accident with nobody reading this CR.
+ *
+ * A failure here is a prompt to go and ask, not to edit the assertion.
  */
 
 const API_SRC = join(__dirname, '..', '..', '..');
@@ -35,7 +39,7 @@ function sources(dir: string): string[] {
 const ALL_SOURCES = sources(join(API_SRC, 'modules')).map((f) => ({ file: f, src: readFileSync(f, 'utf8') }));
 
 // ---------------------------------------------------------------------------
-describe('hold 1 — no new production capacity number is inferred', () => {
+describe('invariant 1 — no capacity number is ever hard-coded', () => {
   it('nothing in the application writes the concurrency rule', () => {
     const writers = ALL_SOURCES.filter(
       ({ src }) =>
@@ -66,24 +70,52 @@ describe('hold 1 — no new production capacity number is inferred', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('hold 2 — RESOURCE_AWARE is not activated', () => {
-  it('no code switches the capacity mode', () => {
+/**
+ * §14 — the hold on activation became a GUARD on activation. The resource model
+ * may take over customer-facing decisions, but only after a preflight passes:
+ * being wrong here turns into a vehicle nobody can service.
+ */
+describe('invariant 2 — RESOURCE_AWARE cannot be activated without a preflight', () => {
+  const config = readFileSync(join(API_SRC, 'modules', 'config', 'config.service.ts'), 'utf8');
+
+  it('the one path that writes the capacity mode checks readiness first', () => {
     const writers = ALL_SOURCES.filter(
       ({ src }) =>
         src.includes('booking_capacity_mode') && /businessRuleConfig\.(update|updateMany|upsert|create)/.test(src),
     );
-    expect(writers.map((w) => w.file)).toEqual([]);
+    expect(writers.map((w) => w.file.slice(w.file.indexOf('modules')))).toEqual([join('modules', 'config', 'config.service.ts')]);
+    expect(config).toContain('productionActivationBlockers');
+    expect(config).toContain('RESOURCE_AWARE_PREFLIGHT_FAILED');
+  });
+
+  it('the guard refuses rather than warns, and names what is blocking', () => {
+    const guard = config.slice(config.indexOf("ruleKey === 'booking_capacity_mode'"));
+    const upToFind = guard.slice(0, guard.indexOf('// Find current active rule'));
+    expect(upToFind).toContain('throw new BadRequestException');
+    expect(upToFind).toContain('blockers');
   });
 
   it('nothing defaults the capacity mode to anything but FIXED', () => {
-    const config = readFileSync(join(API_SRC, 'modules', 'public-booking', 'booking.config.ts'), 'utf8');
-    expect(config).not.toMatch(/capacityMode:\s*'RESOURCE_AWARE'/);
-    expect(config).not.toMatch(/capacityMode:\s*'SHADOW'/);
+    const eta = readFileSync(join(API_SRC, 'modules', 'scheduling', 'eta', 'eta.config.ts'), 'utf8');
+    expect(eta).toContain("capacityMode: 'FIXED'");
+    expect(eta).not.toMatch(/capacityMode:\s*'RESOURCES',?\s*\n\s*capacityResourceCategories/);
+  });
+
+  it('the shadow engine is never consulted to answer a customer', () => {
+    // SHADOW runs beside the production path, not in front of it. If the booking
+    // service ever imported the resource engine, a configuration gap in a bay
+    // could start deciding what a real customer is offered.
+    for (const name of ['public-booking/public-booking.service.ts', 'public-booking/availability.engine.ts']) {
+      const src = readFileSync(join(API_SRC, 'modules', name), 'utf8');
+      expect(src).not.toContain('resource-capacity.engine');
+      expect(src).not.toContain('ResourceAvailabilityService');
+      expect(src).not.toContain('ShadowComparisonService');
+    }
   });
 });
 
 // ---------------------------------------------------------------------------
-describe('hold 3 — durations stay on DEFAULT', () => {
+describe('invariant 3 — the duration source is configuration, never code', () => {
   it('no code switches the duration source', () => {
     const writers = ALL_SOURCES.filter(
       ({ src }) =>
@@ -95,7 +127,7 @@ describe('hold 3 — durations stay on DEFAULT', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('hold 4 — the pilot services are not withdrawn from the stale inventory', () => {
+describe('invariant 4 — the public catalogue is never changed by a capacity reading', () => {
   it('nothing in the application sets bookableOnline', () => {
     // The pilot is configured by an explicit, reviewed script run by a person —
     // never as a side effect of a request, and never from a capacity reading.
@@ -111,27 +143,40 @@ describe('hold 4 — the pilot services are not withdrawn from the stale invento
 });
 
 // ---------------------------------------------------------------------------
-describe('hold 8 — the CLEANING capability is proposed, never applied', () => {
+/**
+ * §15 — CLEANING is now assignable, because a wash bay has to be configurable
+ * BEFORE CLEAN-01 can be remapped to require it. What must NOT happen is the
+ * remap: changing what a public service requires is a catalogue decision.
+ */
+describe('invariant 8 — CLEANING is assignable, the CLEAN-01 remap is not automatic', () => {
   const summary = readFileSync(join(__dirname, '..', 'reconciliation-summary.service.ts'), 'utf8');
 
-  it('nothing remaps CLEAN-01 or writes a required capability', () => {
-    for (const { src } of ALL_SOURCES) {
-      expect(src).not.toMatch(/requiredBayType:\s*'CLEANING'/);
-      expect(src).not.toMatch(/serviceType\.update\w*\([\s\S]{0,300}?requiredBayType/);
+  it('nothing in the application remaps a service to a different required capability', () => {
+    for (const { file, src } of ALL_SOURCES) {
+      expect(src, file).not.toMatch(/requiredBayType:\s*'CLEANING'/);
+      expect(src, file).not.toMatch(/serviceType\.update\w*\([\s\S]{0,300}?requiredBayType/);
     }
   });
 
-  it('CLEANING is not seeded into the capability vocabulary ahead of approval', () => {
-    // The vocabulary is derived from what the catalogue asks for, so an unapproved
-    // capability cannot appear in the UI as an assignable option.
+  it('extending the vocabulary is configuration, not a code edit', () => {
     const admin = readFileSync(join(API_SRC, 'modules', 'resources', 'resource-admin.service.ts'), 'utf8');
+    expect(admin).toContain("RESOURCE_EXTRA_CAPABILITIES_KEY = 'resource_additional_capabilities'");
     const body = admin.slice(admin.indexOf('async capabilityVocabulary'));
     const method = body.slice(0, body.search(/\n {2}(async |private |public |\/\*\*)/));
-    expect(method).not.toContain('CLEANING');
+    // Read from a rule row, not hard-coded into the method.
+    expect(method).toContain('RESOURCE_EXTRA_CAPABILITIES_KEY');
     expect(method).toContain('requiredBayType');
   });
 
-  it('the finding stays open for management rather than being auto-resolved', () => {
+  it('assigning CLEANING changes no availability while no service requires it', () => {
+    // The solver matches a job's required capability against a resource's list.
+    // A capability nothing asks for can never appear on the left-hand side.
+    const engine = readFileSync(join(API_SRC, 'modules', 'scheduling', 'availability', 'resource-capacity.engine.ts'), 'utf8');
+    expect(engine).toContain('job.requiredCapability && !r.capabilities.includes(job.requiredCapability)');
+    expect(engine).not.toContain('CLEANING');
+  });
+
+  it('the physical-confirmation question stays open for management', () => {
     expect(summary).toContain('AWAITING_PHYSICAL_CONFIRMATION');
     expect(summary).toContain('NOT implemented');
     expect(summary).toContain('after physical confirmation');
@@ -139,7 +184,7 @@ describe('hold 8 — the CLEANING capability is proposed, never applied', () => 
 });
 
 // ---------------------------------------------------------------------------
-describe('hold 5 — UNVERIFIED resources are never auto-classified', () => {
+describe('invariant 5 — a resource is never auto-classified', () => {
   /**
    * The guarantee is structural rather than textual: exactly ONE file in the
    * application writes a WorkResource at all, and it is the audited, permission-
@@ -172,7 +217,7 @@ describe('hold 5 — UNVERIFIED resources are never auto-classified', () => {
 });
 
 // ---------------------------------------------------------------------------
-describe('hold 6 — WorkResource and WorkBay are never linked automatically', () => {
+describe('invariant 6 — the legacy bridge is never inferred', () => {
   it('the bridge is written in exactly one place, from an id the caller chose', () => {
     const writes = ALL_SOURCES.flatMap(({ file, src }) =>
       [...src.matchAll(/data:\s*\{[^}]*legacyBayId[^}]*\}/g)].map((m) => ({ file, text: m[0] })),
@@ -215,7 +260,24 @@ describe('hold 6 — WorkResource and WorkBay are never linked automatically', (
 });
 
 // ---------------------------------------------------------------------------
-describe('hold 7 — no ResourceReservation rows are created yet', () => {
+/**
+ * §17 — a reservation holds "one compatible ALIGNMENT position", not ALIGN-01.
+ * Forcing a concrete bay at booking time would hand a dispatch decision to a
+ * customer picking a time three weeks out, and then break the moment that bay
+ * went into maintenance.
+ */
+describe('invariant 7 — reservations are abstract, not a bay assignment', () => {
+  const schema = readFileSync(join(REPO, 'prisma', 'schema.prisma'), 'utf8');
+  const model = (() => {
+    const m = schema.slice(schema.indexOf('model ResourceReservation'));
+    return m.slice(0, m.indexOf('\n}'));
+  })();
+
+  it('the resource is still optional, and the capability says what it must be compatible with', () => {
+    expect(model).toMatch(/resourceId\s+String\?/);
+    expect(model).toContain('requiredCapability String?');
+  });
+
   it('nothing in the resource module writes a reservation', () => {
     for (const { file, src } of ALL_SOURCES) {
       if (!file.includes(join('modules', 'resources'))) continue;
@@ -223,12 +285,13 @@ describe('hold 7 — no ResourceReservation rows are created yet', () => {
     }
   });
 
-  it('the capability question is recorded as open rather than answered in schema', () => {
-    const schema = readFileSync(join(REPO, 'prisma', 'schema.prisma'), 'utf8');
-    const model = schema.slice(schema.indexOf('model ResourceReservation'));
-    const body = model.slice(0, model.indexOf('\n}'));
-    // Adding this column IS the Stage 5C decision. It must not appear early.
-    expect(body).not.toContain('requiredCapability');
+  it('no reservation is created with a concrete resource id by the booking path', () => {
+    for (const { file, src } of ALL_SOURCES) {
+      const matches = [...src.matchAll(/resourceReservation\.create\w*\(([\s\S]{0,400}?)\}\s*\)/g)];
+      for (const m of matches) {
+        expect(m[1], `${file} pins a specific bay at booking time`).not.toMatch(/resourceId:\s*(?!null)/);
+      }
+    }
   });
 });
 

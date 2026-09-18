@@ -15,6 +15,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ResourcesService } from './resources.service';
 import { ResourceTruthAuditService } from './resource-truth-audit.service';
 import { ReconciliationSummaryService } from './reconciliation-summary.service';
+import { ResourceReadinessService } from './resource-readiness.service';
 import { ResourceAdminService, type ResourceWriteModel } from './resource-admin.service';
 import { AssignResourceDto } from './dto/assign-resource.dto';
 import { SetOperationalStatusDto } from './dto/set-operational-status.dto';
@@ -38,6 +39,7 @@ export class ResourcesController {
     private audit: AuditService,
     private readonly truthAuditService: ResourceTruthAuditService,
     private readonly summaryService: ReconciliationSummaryService,
+    private readonly readinessService: ResourceReadinessService,
   ) {}
 
   /**
@@ -77,6 +79,26 @@ export class ResourcesController {
   @ApiOperation({ summary: 'Reconciliation summary — the Stage 5C readiness gate (read-only)' })
   reconciliationSummary(@Query('siteId') siteId?: string) {
     return this.summaryService.summary(siteId);
+  }
+
+  /**
+   * CR-2026-108 Stage 5C §13/§14 — two readiness questions, not one. "Can we
+   * learn something from a shadow comparison" is a much lower bar than "would it
+   * be safe for this engine to decide what a customer is offered".
+   */
+  @Get('readiness')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Shadow readiness and resource-aware production preflight (read-only)' })
+  readiness(@Query('siteId') siteId?: string) {
+    return this.readinessService.assess(siteId);
+  }
+
+  /** CR-2026-108 §22 — the capacity strip on Resources & Bays. */
+  @Get('capacity-summary')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Resource configuration and capability availability summary' })
+  capacitySummary(@Query('siteId') siteId?: string) {
+    return this.readinessService.capacityDashboard(siteId);
   }
 
   @Get('board')
@@ -138,6 +160,14 @@ export class ResourcesController {
     return this.prisma.workResource.findMany({
       where: { siteId },
       orderBy: [{ displayOrder: 'asc' }, { code: 'asc' }],
+      // CR-2026-108 §21 — the screen shows what work each position can take, so
+      // the list has to carry it. `include` rather than `select`: every existing
+      // field the page already reads must keep arriving.
+      include: {
+        operationalStatus: true,
+        occupancy: true,
+        serviceCapabilities: { select: { capability: true }, orderBy: { capability: 'asc' } },
+      },
     });
   }
 

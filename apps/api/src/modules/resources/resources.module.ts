@@ -4,6 +4,7 @@ import { ResourcesService } from './resources.service';
 import { ResourceAdminService } from './resource-admin.service';
 import { ResourceTruthAuditService } from './resource-truth-audit.service';
 import { ReconciliationSummaryService } from './reconciliation-summary.service';
+import { ResourceReadinessService } from './resource-readiness.service';
 import { ResourcesController } from './resources.controller';
 
 // CR-2026-105b — SchedulingModule supplies EtaService (dispatch estimates) and
@@ -11,7 +12,7 @@ import { ResourcesController } from './resources.controller';
 @Module({
   imports: [SchedulingModule],
   controllers: [ResourcesController],
-  providers: [ResourcesService, ResourceAdminService, ResourceTruthAuditService, ReconciliationSummaryService],
-  exports: [ResourcesService, ResourceAdminService, ResourceTruthAuditService, ReconciliationSummaryService],
+  providers: [ResourcesService, ResourceAdminService, ResourceTruthAuditService, ReconciliationSummaryService, ResourceReadinessService],
+  exports: [ResourcesService, ResourceAdminService, ResourceTruthAuditService, ReconciliationSummaryService, ResourceReadinessService],
 })
 export class ResourcesModule {}

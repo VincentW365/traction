@@ -60,6 +60,13 @@ export type SlotReasonCode =
   | 'REQUIRED_RESOURCE_UNAVAILABLE'
   /** No available resource supports this vehicle's class (Stage 5). */
   | 'VEHICLE_CLASS_NOT_SUPPORTED'
+  /**
+   * Stage 5C — not enough resource configuration exists to answer. Deliberately
+   * NOT a kind of "no": a pool of zero because nobody has classified the bays is
+   * a fact about the spreadsheet, and reporting it as a capacity limit would make
+   * an unfinished inventory look like an operational constraint.
+   */
+  | 'RESOURCE_CONFIGURATION_INCOMPLETE'
   // --- service/booking rules (Stage 4 / confirm-time) ---
   /** The service is not marked bookable online (Stage 4). */
   | 'SERVICE_NOT_BOOKABLE_ONLINE'
@@ -75,6 +82,7 @@ export const OPERATIONAL_REASON_CODES: readonly SlotReasonCode[] = [
   'RESOURCE_CAPACITY_REACHED',
   'REQUIRED_RESOURCE_UNAVAILABLE',
   'VEHICLE_CLASS_NOT_SUPPORTED',
+  'RESOURCE_CONFIGURATION_INCOMPLETE',
 ] as const;
 
 /** Capacity arithmetic behind one slot decision. Internal only. */

@@ -362,6 +362,7 @@ model Site {
   technicians          Technician[]
   businessRules        BusinessRuleConfig[]
   resourceReservations ResourceReservation[]
+  shadowComparisons    BookingShadowComparison[] // CR-2026-108 Stage 5C
   scheduleHolds        ScheduleHold[] // CR-2026-026 — advisory schedule holds
   complaints           Complaint[] // CR-2026-032 — customer complaints
   inspections          VehicleInspection[] // CR-2026-034 — visual inspections
@@ -2049,6 +2050,11 @@ model ResourceReservation {
   id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   siteId         String    @map("site_id") @db.Uuid
   resourceId     String?   @map("resource_id") @db.Uuid // null = "any compatible resource"
+  /// CR-2026-108 Stage 5C — WHICH compatible resource. `resourceId` already said
+  /// "any", but nothing said what it had to be compatible WITH, so an abstract
+  /// reservation could not be counted against a pool. A booking reserves
+  /// "one ALIGNMENT position", not ALIGN-01; dispatch picks the actual bay later.
+  requiredCapability String? @map("required_capability")
   appointmentId  String    @map("appointment_id") @db.Uuid
   serviceVisitId String?   @map("service_visit_id") @db.Uuid
   reservedFrom   DateTime  @map("reserved_from") @db.Timestamptz
@@ -2064,7 +2070,58 @@ model ResourceReservation {
 
   @@index([siteId, status])
   @@index([appointmentId])
+  // Name pinned and kept short: Postgres truncates identifiers at 63 bytes, and a
+  // truncated name reads as permanent schema drift on every deploy check.
+  @@index([siteId, status, reservedFrom, reservedUntil], map: "resource_reservations_overlap_idx")
   @@map("resource_reservations")
+}
+
+/// CR-2026-108 Stage 5C — what the resource-aware engine would have decided.
+///
+/// SHADOW mode exists to answer one question before customers are exposed to it:
+/// where would the resource model have disagreed with the fixed limit, and was it
+/// right to? That question cannot be answered from logs after the fact, because
+/// the resource configuration changes underneath — hence `configFingerprint`.
+///
+/// DELIBERATELY FREE OF PII. No customer, no vehicle, no plate, no appointment id,
+/// no manage token. A disagreement is a fact about the shop's capacity, not about
+/// a person, and this table is read by analysts who have no business seeing either.
+/// Only MEANINGFUL DIFFERENCES are written: agreement is the expected case and
+/// storing it would bury the signal in millions of rows.
+model BookingShadowComparison {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  siteId                String   @map("site_id") @db.Uuid
+  observedAt            DateTime @default(now()) @map("observed_at") @db.Timestamptz
+  /// PUBLIC_AVAILABILITY | STAFF_AVAILABILITY | SIMULATOR | VALIDATION
+  evaluationSource      String   @map("evaluation_source")
+  /// Service codes, not names: codes are stable and carry no customer wording.
+  serviceCodes          String[] @map("service_codes")
+  requiredCapability    String?  @map("required_capability")
+  slotStartAt           DateTime @map("slot_start_at") @db.Timestamptz
+  slotEndAt             DateTime @map("slot_end_at") @db.Timestamptz
+  plannedMinutes        Int      @map("planned_minutes")
+  /// SEDAN_CLASS / SUV_CLASS when the request carried one. A vehicle CLASS is not
+  /// identifying; a plate would be, and is never stored here.
+  vehicleClass          String?  @map("vehicle_class")
+  fixedAvailable        Boolean  @map("fixed_available")
+  fixedReasonCode       String   @map("fixed_reason_code")
+  resourceAvailable     Boolean  @map("resource_available")
+  resourceReasonCode    String   @map("resource_reason_code")
+  /// AVAILABLE | BLOCKED | INCOMPLETE — INCOMPLETE is not a third kind of "no".
+  resourceStatus        String   @map("resource_status")
+  eligiblePositions     Int      @map("eligible_positions")
+  remainingPositions    Int      @map("remaining_positions")
+  configurationComplete Boolean  @map("configuration_complete")
+  /// Digest of the resource configuration that produced this row, so a finding
+  /// can be tied to the inventory it was measured against rather than to today's.
+  configFingerprint     String   @map("config_fingerprint")
+
+  site Site @relation(fields: [siteId], references: [id])
+
+  @@index([siteId, observedAt])
+  @@index([observedAt])
+  @@index([requiredCapability, observedAt])
+  @@map("booking_shadow_comparisons")
 }
 
 // =========================

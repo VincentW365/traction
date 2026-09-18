@@ -13,6 +13,8 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { BookingAvailabilityService, type BookingAudience } from '../scheduling/availability/booking-availability.service';
 import type { AvailabilityDecision } from '../scheduling/availability/slot-decision';
+import { ResourceAvailabilityService, primaryCapability } from '../scheduling/availability/resource-availability.service';
+import { ShadowComparisonService, type ShadowComparisonRun } from '../scheduling/availability/shadow-comparison.service';
 import { AuditService } from '../audit/audit.service';
 import {
   signUatLaunchToken,
@@ -24,21 +26,8 @@ import {
   type UatLaunchRejection,
 } from './uat-session';
 
-/**
- * Which capacity model produced a column.
- *
- * SHADOW is declared now and reports NOT_YET_AVAILABLE until Stage 5 builds the
- * resource-aware engine. Populating it with a half-built pseudo-calculation would
- * be worse than an empty column: it would look like evidence, and the entire
- * point of shadow mode is to decide whether to trust the real one.
- */
+/** Which capacity model produced a column. */
 export type CapacityModelName = 'FIXED' | 'SHADOW' | 'RESOURCE_AWARE';
-
-export interface ShadowComparison {
-  status: 'NOT_YET_AVAILABLE' | 'AVAILABLE';
-  /** Why there is nothing to compare against yet. */
-  note?: string;
-}
 
 export interface SimulationResult {
   site: { id: string; code: string; name: string; timezone: string };
@@ -46,10 +35,25 @@ export interface SimulationResult {
   plannedMinutes: number;
   latestStartLabel: string | null;
   range: { from: string; to: string };
-  services: Array<{ code: string; name: string; baseDurationMinutes: number | null }>;
+  services: Array<{ code: string; name: string; baseDurationMinutes: number | null; requiredBayType: string | null }>;
   /** The model that decided what a real customer sees right now. */
   productionModel: CapacityModelName;
-  shadow: ShadowComparison;
+  /**
+   * CR-2026-108 Stage 5C — the real resource-aware comparison, slot by slot.
+   *
+   * Both columns describe the SAME request: the shadow run is given the decision
+   * the fixed model already produced rather than recomputing it, because two
+   * independently derived columns would be comparing two guesses.
+   */
+  shadow: ShadowComparisonRun;
+  /** What the resource model was looking at, so a disagreement can be explained. */
+  resourceConfiguration: {
+    verifiedActivePositions: number;
+    unverifiedResources: number;
+    capabilityPositions: Record<string, number>;
+    fingerprint: string;
+    requiredCapability: string | null;
+  };
   /** The rich, unprojected decision — admin-only by construction of the caller. */
   decision: AvailabilityDecision;
 }
@@ -62,6 +66,8 @@ export class BookingSimulatorService {
     private readonly prisma: PrismaService,
     private readonly availability: BookingAvailabilityService,
     private readonly audit: AuditService,
+    private readonly resources: ResourceAvailabilityService,
+    private readonly shadow: ShadowComparisonService,
   ) {}
 
   private async resolveSite() {
@@ -79,6 +85,11 @@ export class BookingSimulatorService {
     days?: number;
     audience?: BookingAudience;
     excludeAppointmentId?: string | null;
+    /** SEDAN_CLASS / SUV_CLASS — restrictions only bite once a class is known. */
+    vehicleClass?: string | null;
+    /** Persist the disagreements this run found. Off by default: opening the
+     *  screen should not fill the evidence table with duplicates of one question. */
+    record?: boolean;
   }): Promise<SimulationResult> {
     const site = await this.resolveSite();
     const audience: BookingAudience = opts.audience ?? 'CUSTOMER';
@@ -87,7 +98,7 @@ export class BookingSimulatorService {
     if (codes.length === 0) throw new BadRequestException('Choose at least one service to simulate.');
     const services = await this.prisma.serviceType.findMany({
       where: { code: { in: codes } },
-      select: { code: true, name: true, baseDurationMinutes: true },
+      select: { code: true, name: true, baseDurationMinutes: true, requiredBayType: true },
     });
     if (services.length === 0) throw new BadRequestException(`No service matched: ${codes.join(', ')}`);
 
@@ -100,6 +111,33 @@ export class BookingSimulatorService {
       rules,
     });
 
+    // --- the shadow column ----------------------------------------------------
+    // One snapshot for the whole grid: re-reading per slot would turn this into a
+    // hundred queries and let the configuration shift mid-comparison.
+    const bounds = slotBounds(decision);
+    const snapshot = await this.resources.snapshot(
+      site.id,
+      bounds ?? { from: new Date(), to: new Date() },
+      {
+        defaultDurationMinutes: rules.eta.defaultDurationMinutes,
+        excludeAppointmentId: opts.excludeAppointmentId ?? null,
+      },
+    );
+    const requiredCapability = primaryCapability(services.map((s) => s.requiredBayType));
+    const vehicleClass = opts.vehicleClass ?? null;
+    const shadow = this.shadow.compare(decision, snapshot, { requiredCapability, vehicleClass }, {
+      excludeAppointmentId: opts.excludeAppointmentId ?? null,
+    });
+
+    if (opts.record) {
+      await this.shadow.record(site.id, shadow, {
+        serviceCodes: services.map((s) => s.code),
+        plannedMinutes: context.plannedMinutes,
+        vehicleClass,
+        source: 'SIMULATOR',
+      });
+    }
+
     return {
       site,
       audience,
@@ -107,14 +145,16 @@ export class BookingSimulatorService {
       latestStartLabel: context.latestStartLabel,
       range: context.range,
       services,
-      // Stage 5 will switch this to whatever `booking_capacity_model` says.
-      productionModel: 'FIXED',
-      shadow: {
-        status: 'NOT_YET_AVAILABLE',
-        note:
-          'The resource-aware model is Stage 5 and is not built yet. This column stays empty on purpose: ' +
-          'a partial calculation shown here would look like evidence, and shadow mode exists precisely to decide ' +
-          'whether the real one can be trusted.',
+      // Production is whatever the rule says. It is FIXED, and Stage 5C does not
+      // change that — the resource model runs beside it, not in front of it.
+      productionModel: rules.eta.capacityMode === 'RESOURCES' ? 'RESOURCE_AWARE' : 'FIXED',
+      shadow,
+      resourceConfiguration: {
+        verifiedActivePositions: snapshot.activePositions,
+        unverifiedResources: snapshot.unverifiedResourceCount,
+        capabilityPositions: snapshot.capabilityPositions,
+        fingerprint: snapshot.fingerprint,
+        requiredCapability,
       },
       decision,
     };
@@ -224,4 +264,23 @@ export class BookingSimulatorService {
 
     return { ok: true, context, cookieValue: value, expiresAt };
   }
+}
+
+/**
+ * The earliest and latest instants any slot in a decision touches.
+ *
+ * Used to bound the appointment read behind the shadow snapshot. Returns null
+ * when a decision produced no slots at all (every day closed), in which case
+ * there is nothing to compare and the snapshot window does not matter.
+ */
+export function slotBounds(decision: AvailabilityDecision): { from: Date; to: Date } | null {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const day of decision.days) {
+    for (const slot of day.slots) {
+      min = Math.min(min, new Date(slot.startAt).getTime());
+      max = Math.max(max, new Date(slot.endAt).getTime());
+    }
+  }
+  return Number.isFinite(min) ? { from: new Date(min), to: new Date(max) } : null;
 }

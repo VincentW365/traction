@@ -1,12 +1,21 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { ResourceReadinessService } from '../resources/resource-readiness.service';
+
+/**
+ * CR-2026-108 Stage 5C §14 — the values of `booking_capacity_mode` that hand
+ * customer-facing decisions to the resource model. Reaching one of these is
+ * guarded by a preflight; everything else about this service is unchanged.
+ */
+const RESOURCE_AWARE_MODES = ['RESOURCE_AWARE', 'RESOURCES'];
 
 @Injectable()
 export class ConfigService {
   constructor(
     private prisma: PrismaService,
     private auditService: AuditService,
+    private readonly readiness: ResourceReadinessService,
   ) {}
 
   async listRules(siteId?: string) {
@@ -36,6 +45,22 @@ export class ConfigService {
     effectiveFrom?: string,
     notes?: string,
   ) {
+    // CR-2026-108 §14 — handing customer-facing capacity decisions to the resource
+    // model is the one config change that can strand a real vehicle, so it is the
+    // one that has to earn it. Everything else on this path is unchanged.
+    if (ruleKey === 'booking_capacity_mode' && typeof value === 'string' && RESOURCE_AWARE_MODES.includes(value)) {
+      const blockers = await this.readiness.productionActivationBlockers(siteId);
+      if (blockers.length > 0) {
+        throw new BadRequestException({
+          code: 'RESOURCE_AWARE_PREFLIGHT_FAILED',
+          message:
+            `The resource-aware model cannot decide what customers are offered yet — ${blockers.length} preflight check(s) fail. ` +
+            'Production stays on the fixed limit until they pass.',
+          blockers,
+        });
+      }
+    }
+
     // Find current active rule
     const now = new Date();
     const current = await this.prisma.businessRuleConfig.findFirst({

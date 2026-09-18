@@ -176,7 +176,10 @@ describe('BookingSimulatorService — minting and redeeming', () => {
         return d;
       }),
     };
-    const service = new BookingSimulatorService(prisma as never, {} as never, audit as never);
+    // The UAT-session paths touch neither the resource snapshot nor the shadow
+    // comparison, so those two collaborators stay unstubbed on purpose: a stub
+    // here would quietly start passing if a session path grew a dependency on them.
+    const service = new BookingSimulatorService(prisma as never, {} as never, audit as never, {} as never, {} as never);
     return { service, prisma, audits, redeemed };
   }
 

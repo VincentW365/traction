@@ -8,6 +8,7 @@ import { useSiteId } from '../../../../hooks/use-site';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { EmptyState } from '../../../../components/ui/empty-state';
+import { CapacitySummary } from '../../../../components/resources/capacity-summary';
 
 /**
  * CR-2026-095 — Resources & Bays, the authoritative operational configuration area.
@@ -40,6 +41,8 @@ interface WorkResource {
   notes: string | null;
   /** CR-2026-108 Stage 5B — every row starts UNVERIFIED and counts for nothing. */
   capacityRole?: string;
+  /** CR-2026-108 §21 — the kinds of work that can happen here. */
+  serviceCapabilities?: Array<{ capability: string }>;
   retiredAt: string | null;
   retireReason: string | null;
   updatedAt: string;
@@ -85,6 +88,37 @@ const CATEGORY_LABEL: Record<string, string> = {
   LIGHT_SLOT: 'Light Slot',
   POWER_WASH: 'Power Wash',
   EXTERNAL: 'External',
+};
+
+/**
+ * CR-2026-108 §21 — "does this count as an independent vehicle work position?"
+ * in shop words. UNVERIFIED and equipment both contribute nothing, and the
+ * difference between them is a decision versus the absence of one.
+ */
+const ROLE_LABEL: Record<string, string> = {
+  UNVERIFIED: 'Not confirmed — counts for nothing',
+  PRIMARY_SERVICE_POSITION: 'Work position',
+  OVERFLOW_SERVICE_POSITION: 'Overflow position',
+  SUPPORT_EQUIPMENT: 'Equipment — not a position',
+  PLACEHOLDER: 'Planned — not built',
+};
+
+const ROLE_BADGE: Record<string, string> = {
+  UNVERIFIED: 'bg-amber-50 text-amber-700 border border-amber-200',
+  PRIMARY_SERVICE_POSITION: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  OVERFLOW_SERVICE_POSITION: 'bg-teal-50 text-teal-700 border border-teal-200',
+  SUPPORT_EQUIPMENT: 'bg-slate-100 text-slate-600 border border-slate-200',
+  PLACEHOLDER: 'bg-slate-100 text-slate-500 border border-slate-200',
+};
+
+const WORK_LABEL: Record<string, string> = {
+  ALIGNMENT: 'Alignment',
+  DIAGNOSTIC: 'Diagnostics',
+  GENERAL: 'General repair',
+  INSPECTION: 'Inspection',
+  LUBE: 'Oil & lube',
+  TIRE: 'Tires',
+  CLEANING: 'Cleaning',
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -287,6 +321,11 @@ export default function ResourcesAdminPage() {
         }
       />
 
+      {/* CR-2026-108 §22 — what the shop can actually work on, and whether the
+          resource-aware model is safe to switch on. Above the operational strip
+          because it answers the question a manager opens this screen to ask. */}
+      <CapacitySummary siteId={siteId} />
+
       {/* Operational overview — counts a manager acts on, not analytics */}
       {o && (
         <div className="grid grid-cols-3 md:grid-cols-9 gap-2 mb-4">
@@ -466,7 +505,22 @@ function ResourceCard({
           </span>
         </div>
 
+        {/*
+          CR-2026-108 §21 — does this count as an independent vehicle work
+          position, and what work can happen on it? Shown on the card because a
+          bay that contributes nothing looks identical to one that does until you
+          say so, and "we opened Bay 6 but the board never changed" is exactly the
+          confusion that costs an afternoon.
+        */}
         <div className="flex flex-wrap items-center gap-1.5 mt-2">
+          <span className={`badge text-[10px] ${ROLE_BADGE[r.capacityRole ?? 'UNVERIFIED'] ?? 'bg-slate-100 text-slate-600'}`}>
+            {ROLE_LABEL[r.capacityRole ?? 'UNVERIFIED'] ?? r.capacityRole}
+          </span>
+          {(r.serviceCapabilities ?? []).map((c) => (
+            <span key={c.capability} className="badge bg-sky-50 text-sky-700 text-[10px] border border-sky-200">
+              {WORK_LABEL[c.capability] ?? c.capability}
+            </span>
+          ))}
           <span className="badge bg-indigo-50 text-indigo-700 text-[10px]">{vehicleClassLabel(r)}</span>
           {caps.split(' · ').map((cap) => (
             <span key={cap} className="badge bg-slate-50 text-slate-600 text-[10px] border border-slate-200">{cap}</span>

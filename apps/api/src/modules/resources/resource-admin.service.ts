@@ -69,6 +69,20 @@ const CAPACITY_ROLES = [
 const BAY_DISPOSITIONS = ['UNRESOLVED', 'HISTORICAL_ONLY', 'REPLACED', 'RETIRED'];
 
 /**
+ * CR-2026-108 §15 — capabilities assignable before any service requires them.
+ *
+ * `capability` is a plain text column, so extending the vocabulary needs no enum
+ * migration and carries no schema risk. CLEANING ships here because giving a wash
+ * bay that capability must be possible BEFORE CLEAN-01 is remapped to require it —
+ * and that remap changes the public catalogue, so it stays management's decision.
+ * Until then, assigning CLEANING records a fact and changes no availability.
+ *
+ * Editable as a business rule, so a future capability needs no deployment either.
+ */
+export const RESOURCE_EXTRA_CAPABILITIES_KEY = 'resource_additional_capabilities';
+export const RESOURCE_EXTRA_CAPABILITIES_DEFAULT = ['CLEANING'];
+
+/**
  * Does someone still have to say what this is?
  *
  * Retired rows are out of the conversation, and an EXTERNAL row is excluded from
@@ -470,17 +484,28 @@ export class ResourceAdminService {
    * would be a typo that silently excluded a resource from every pool.
    */
   async capabilityVocabulary(): Promise<string[]> {
-    const [fromServices, fromBays] = await Promise.all([
+    const [fromServices, fromBays, extra] = await Promise.all([
       this.prisma.serviceType.findMany({
         where: { requiredBayType: { not: null } },
         distinct: ['requiredBayType'],
         select: { requiredBayType: true },
       }),
       this.prisma.workBay.findMany({ distinct: ['bayType'], select: { bayType: true } }),
+      this.prisma.businessRuleConfig.findFirst({
+        where: { ruleKey: RESOURCE_EXTRA_CAPABILITIES_KEY, effectiveTo: null },
+        select: { valueJson: true },
+      }),
     ]);
     const all = new Set<string>();
     for (const s of fromServices) if (s.requiredBayType) all.add(s.requiredBayType);
     for (const b of fromBays) all.add(b.bayType);
+    // CR-2026-108 §15 — capabilities the shop can assign BEFORE any service asks
+    // for them. CLEANING is the case this exists for: a dedicated wash position
+    // has to be configurable before CLEAN-01 can be remapped to require it, and
+    // the remap is a separate public-catalogue decision. Assigning a capability
+    // nothing requires changes no availability — it just records a fact.
+    const configured = Array.isArray(extra?.valueJson) ? (extra.valueJson as unknown[]) : RESOURCE_EXTRA_CAPABILITIES_DEFAULT;
+    for (const c of configured) if (typeof c === 'string' && c.trim()) all.add(c.trim().toUpperCase());
     return [...all].sort();
   }
 
