@@ -31,6 +31,19 @@
 /** The vehicle classes that change a duration. `null` = not classified. */
 export type VehicleClass = 'SEDAN_CLASS' | 'SUV_CLASS' | null;
 
+/**
+ * Normalise a stored `VehicleServiceClass` into the resolver's input.
+ *
+ * The enum has THREE values — SEDAN_CLASS, SUV_CLASS and UNKNOWN_REQUIRES_REVIEW —
+ * and 5,000+ vehicles carry the third. Casting it straight to `VehicleClass` made
+ * the type a lie: behaviour happened to be right (anything not sedan/SUV falls to
+ * the longest duration) but only by accident. This makes the intent explicit:
+ * anything that is not a known class is UNKNOWN, and unknown is planned conservatively.
+ */
+export function toVehicleClass(raw: string | null | undefined): VehicleClass {
+  return raw === 'SEDAN_CLASS' || raw === 'SUV_CLASS' ? raw : null;
+}
+
 /** What scheduling is currently instructed to plan with. */
 export type DurationPolicy = 'DEFAULT' | 'CATALOGUE';
 

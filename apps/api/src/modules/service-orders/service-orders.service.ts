@@ -13,6 +13,7 @@ import { resolvePlannedMinutes } from '../scheduling/eta/eta.model';
 import {
   catalogueMinutesFor,
   SERVICE_DURATION_SELECT,
+  toVehicleClass,
   variesByVehicleClass,
   type VehicleClass,
 } from '../scheduling/availability/service-duration';
@@ -207,7 +208,7 @@ export class ServiceOrdersService {
      * Null (unclassified) resolves to the longest configured duration, exactly as
      * everywhere else.
      */
-    const vehicleClass = (visit.vehicle?.serviceClass ?? null) as VehicleClass;
+    const vehicleClass = toVehicleClass(visit.vehicle?.serviceClass);
 
     // 3. Create ServiceOrder + ServiceOrderItems in a transaction
     const order = await this.prisma.$transaction(async (tx) => {
@@ -333,7 +334,7 @@ export class ServiceOrdersService {
       where: { id: serviceVisitId },
       select: { vehicle: { select: { serviceClass: true } } },
     });
-    return (visit?.vehicle?.serviceClass ?? null) as VehicleClass;
+    return toVehicleClass(visit?.vehicle?.serviceClass);
   }
 
   private assertEditableStatus(status: string, verb: 'edit' | 'delete') {

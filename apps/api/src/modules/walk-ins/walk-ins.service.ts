@@ -14,7 +14,7 @@ import { StatusHistoryService } from '../audit/status-history.service';
 import {
   catalogueMinutesFor,
   SERVICE_DURATION_SELECT,
-  type VehicleClass,
+  toVehicleClass,
 } from '../scheduling/availability/service-duration';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { CreateWalkInDto } from './dto/create-walk-in.dto';
@@ -324,7 +324,7 @@ export class WalkInsService {
                   // CR-2026-111c — the configured duration for THIS vehicle, from the
                   // one shared resolver. An unclassified walk-in takes the longest
                   // configured figure, exactly as a booking would.
-                  estimateMinutes: catalogueMinutesFor(st, (vehicle.serviceClass ?? null) as VehicleClass),
+                  estimateMinutes: catalogueMinutesFor(st, toVehicleClass(vehicle.serviceClass)),
                 };
               }),
             },

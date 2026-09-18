@@ -27,7 +27,7 @@ import {
 } from './engine/parts-readiness.checker';
 import { EtaService } from './eta/eta.service';
 import { resolvePlannedMinutes, type EtaWaitingVisit } from './eta/eta.model';
-import type { VehicleClass } from './availability/service-duration';
+import { toVehicleClass } from './availability/service-duration';
 
 @Injectable()
 export class SchedulingService {
@@ -192,7 +192,7 @@ export class SchedulingService {
               // CR-2026-111b — the waiting vehicle's own class. A queue ETA built
               // on the sedan figure for an SUV is wrong for that customer and for
               // everyone behind them in the queue.
-              vehicleClass: (sv?.vehicle?.serviceClass ?? null) as VehicleClass,
+              vehicleClass: toVehicleClass(sv?.vehicle?.serviceClass),
             },
             etaRules.defaultDurationMinutes,
           );

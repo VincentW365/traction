@@ -44,6 +44,7 @@ import {
 import { toCustomerAvailability, type AvailabilityDecision } from './slot-decision';
 import {
   resolveAppointmentDuration,
+  toVehicleClass,
   type DurationResolution,
   type MeasurableService,
   type VehicleClass,
@@ -202,7 +203,7 @@ export class BookingAvailabilityService {
       where: { id: vehicleId },
       select: { serviceClass: true },
     });
-    return (vehicle?.serviceClass as VehicleClass) ?? null;
+    return toVehicleClass(vehicle?.serviceClass);
   }
 
   // ---------------------------------------------------------------------------
