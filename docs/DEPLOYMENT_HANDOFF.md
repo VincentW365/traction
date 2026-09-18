@@ -170,3 +170,34 @@ These cannot be done from the repository; each is a Render dashboard setting or 
    "Would be created" > 0 means the deployed database is missing those rows: run `pnpm customers:import:commit -- --file …` and read the post-commit table. Admin → Deployment shows the last run under **Last customer import**. The 1,653 Peachtree-only customers are a separate decision (docs/121 §F6).
 5. **Booking rules.** Settings → Booking & ETA: `customer_booking_latest_start` (15:00), `staff_latest_start_enforced` (off), `booking_share_message_template`. The seed creates them; they are editable there.
 6. **Prove it from outside Bert's network.** On a phone on mobile data (Wi-Fi off): open a customer status link from a ticket, open the booking link from a customer page ("Send booking link" → WhatsApp), book a slot, receive the confirmation, open the manage link. A link that works on the office PC proves nothing about customer reach.
+
+
+## CR-2026-108 — resource capacity (owner steps)
+
+The scheduling platform now works capacity out from the bays you have configured
+rather than from a stored number. Full handbook: **`docs/124_Resource_Capacity_Operations.md`**.
+
+Production is deliberately left on the safe settings — online catalogue ON with six
+services, standard 80-minute appointments, a fixed limit of 2 overlapping bookings,
+and the resource-aware model running for diagnostics only. Leave them there until
+the steps below are done and separately approved.
+
+1. **Assign the three outstanding kinds of work.** Setup → Resources & Bays →
+   Confirm Work Positions. Oil Change needs a bay marked *Oil & lube*, Wheel
+   Alignment needs *Wheel alignment*, Pre-Purchase Inspection needs *Inspection*.
+   One bay each is enough if one is what exists.
+2. **Tick off the eight heavy-lift bays** as you check each one in the building.
+   The count of eight is confirmed; which record is which bay is currently a
+   reasonable guess and is labelled as such. Nothing is blocked while they are
+   outstanding.
+3. **Re-run the shadow check** after any of that: `pnpm booking:shadow-validate`.
+   Target: 0 oversold, 0 incomplete.
+4. **Bring the readiness result back for a decision** before switching
+   `booking_capacity_mode` to `RESOURCE_AWARE`. Do not change
+   `appointment_duration_source` at the same time — one change at a time.
+5. **Classify the seven optional resources** (overflow slots, light-task slots, the
+   wash bay, the two jacks) whenever you know what they are. They contribute zero
+   until then, which is safe — it can only understate capacity, never overstate it.
+
+Adding a bay, taking one out for maintenance or changing what work it can do all
+take effect immediately and need no deployment.

@@ -43,9 +43,39 @@ interface SimulationResult {
   range: { from: string; to: string };
   services: Array<{ code: string; name: string; baseDurationMinutes: number | null }>;
   productionModel: 'FIXED' | 'SHADOW' | 'RESOURCE_AWARE';
-  shadow: { status: 'NOT_YET_AVAILABLE' | 'AVAILABLE'; note?: string };
+  shadow: {
+    requiredCapability: string | null;
+    configurationComplete: boolean;
+    unverifiedResourceCount: number;
+    fingerprint: string;
+    summary: { slotsCompared: number; agree: number; oversold: number; undersold: number; incomplete: number; eligiblePositions: number };
+    days: Array<{ date: string; slots: ShadowSlot[] }>;
+    headline: string;
+  };
+  resourceConfiguration: {
+    verifiedActivePositions: number;
+    unverifiedResources: number;
+    capabilityPositions: Record<string, number>;
+    requiredCapability: string | null;
+  };
   decision: { nextAvailable: SlotDecision | null; days: DayDecision[] };
 }
+/** CR-2026-108 Stage 5C — one slot, as the resource-aware model saw it. */
+interface ShadowSlot {
+  startAt: string;
+  fixed: { available: boolean; reasonCode: string };
+  shadow: {
+    status: 'AVAILABLE' | 'BLOCKED' | 'INCOMPLETE';
+    available: boolean;
+    label: string;
+    detail: string;
+    eligiblePositions: number;
+    remainingPositions: number;
+    eligibleCodes: string[];
+  };
+  agrees: boolean;
+}
+
 interface ServiceOption { code: string; name: string }
 interface UatSession {
   token: string; runLabel: string; testDataRunId: string;
@@ -188,10 +218,27 @@ export default function BookingSimulatorPage() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-wide text-slate-500">Shadow model</p>
-                <p className="mt-1 text-lg font-bold text-slate-500">
-                  {data.shadow.status === 'NOT_YET_AVAILABLE' ? 'Not yet available' : 'Resource-aware'}
+                <p className="mt-1 text-lg font-bold text-slate-900">RESOURCE_AWARE</p>
+                <p className="text-xs text-slate-600">
+                  What the resource model would have said. It decides nothing — production is above.
                 </p>
-                {data.shadow.note && <p className="text-xs text-slate-600">{data.shadow.note}</p>}
+              </div>
+              <div className="sm:col-span-2 border-t border-slate-100 pt-3">
+                <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs">
+                  <Metric label="Compared" value={data.shadow.summary.slotsCompared} />
+                  <Metric label="Agree" value={data.shadow.summary.agree} tone="good" />
+                  <Metric label="Offered but no bay free" value={data.shadow.summary.oversold} tone={data.shadow.summary.oversold ? 'bad' : undefined} />
+                  <Metric label="Refused but bays free" value={data.shadow.summary.undersold} tone={data.shadow.summary.undersold ? 'warn' : undefined} />
+                  <Metric label="Cannot tell" value={data.shadow.summary.incomplete} tone={data.shadow.summary.incomplete ? 'warn' : undefined} />
+                </div>
+                <p className="mt-2 text-xs text-slate-700">{data.shadow.headline}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Needs <strong>{data.resourceConfiguration.requiredCapability ?? 'no particular bay'}</strong>
+                  {data.resourceConfiguration.requiredCapability && <> — {data.shadow.summary.eligiblePositions} position(s) can do it</>}
+                  . {data.resourceConfiguration.verifiedActivePositions} confirmed position(s) available
+                  {data.resourceConfiguration.unverifiedResources > 0 && <>, {data.resourceConfiguration.unverifiedResources} unclassified so these are a lower bound</>}
+                  .
+                </p>
               </div>
             </div>
           </div>
@@ -221,8 +268,9 @@ export default function BookingSimulatorPage() {
                   <table className="table text-xs">
                     <thead>
                       <tr>
-                        <th>Time</th><th>Decision</th><th>Why</th>
-                        <th>Capacity before</th><th>After</th><th>Limit</th><th>Rule</th>
+                        <th>Time</th><th>Now</th><th>Why</th>
+                        <th>Resource-aware</th>
+                        <th>Before</th><th>After</th><th>Limit</th><th>Rule</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -237,6 +285,9 @@ export default function BookingSimulatorPage() {
                           <td>
                             <div className="text-slate-800">{REASON_LABEL[s.reasonCode] ?? s.reasonCode}</div>
                             <div className="font-mono text-[10px] text-slate-400">{s.reasonCode}</div>
+                          </td>
+                          <td>
+                            <ShadowCell slot={shadowFor(data, d.date, s.startAt)} />
                           </td>
                           <td className="text-center">{s.capacity.before}</td>
                           <td className="text-center">{s.capacity.after}</td>
@@ -300,5 +351,56 @@ export default function BookingSimulatorPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * CR-2026-108 Stage 5C — the resource-aware verdict for one slot.
+ *
+ * Only slots where the fixed model reached a CAPACITY decision are compared: the
+ * resource model has no opinion about what time it is, so a slot rejected for
+ * being in the past simply has no shadow row.
+ */
+function shadowFor(data: SimulationResult, date: string, startAt: string): ShadowSlot | null {
+  return data.shadow.days.find((d) => d.date === date)?.slots.find((s) => s.startAt === startAt) ?? null;
+}
+
+function ShadowCell({ slot }: { slot: ShadowSlot | null }) {
+  if (!slot) return <span className="text-[10px] text-slate-300">not compared</span>;
+  const { shadow } = slot;
+  // "Cannot tell" is amber, not red. A capability nobody has assigned is a
+  // configuration gap, and showing it as a capacity failure would make an
+  // unfinished spreadsheet look like a full workshop.
+  const chip =
+    shadow.status === 'AVAILABLE'
+      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+      : shadow.status === 'INCOMPLETE'
+        ? 'bg-amber-50 text-amber-800 border-amber-200'
+        : 'bg-red-50 text-red-700 border-red-200';
+  const word = shadow.status === 'AVAILABLE' ? 'AVAILABLE' : shadow.status === 'INCOMPLETE' ? 'CANNOT TELL' : 'BLOCKED';
+
+  return (
+    <div className={slot.agrees ? '' : 'font-medium'}>
+      <span className={`badge border text-[10px] ${chip}`}>{word}</span>
+      {shadow.label !== 'AVAILABLE' && (
+        <div className="font-mono text-[10px] text-slate-400 mt-0.5">{shadow.label}</div>
+      )}
+      {shadow.status === 'AVAILABLE' && (
+        <div className="text-[10px] text-slate-500 mt-0.5">
+          {shadow.remainingPositions} of {shadow.eligiblePositions} free
+        </div>
+      )}
+      {!slot.agrees && <div className="text-[10px] text-amber-700 mt-0.5">disagrees with production</div>}
+    </div>
+  );
+}
+
+function Metric({ label, value, tone }: { label: string; value: number; tone?: 'good' | 'warn' | 'bad' }) {
+  const color =
+    tone === 'good' ? 'text-emerald-700' : tone === 'warn' ? 'text-amber-700' : tone === 'bad' ? 'text-red-700' : 'text-slate-900';
+  return (
+    <span>
+      <strong className={color}>{value}</strong> <span className="text-slate-500">{label}</span>
+    </span>
   );
 }

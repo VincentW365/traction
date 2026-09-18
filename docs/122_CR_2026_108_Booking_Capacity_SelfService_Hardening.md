@@ -6,6 +6,10 @@ booking IS an `Appointment` with `sourceChannel = CUSTOMER_SELF_SERVICE`, which 
 follows the normal Appointment → ServiceVisit → Queue → ServiceOrder → Dispatch →
 Completion workflow.
 
+> **Operating the finished system: `docs/124_Resource_Capacity_Operations.md`.**
+> That is the handbook for the manager — what is configured, what still needs their
+> input, and how to add or take out a bay. This document is the engineering record.
+
 Delivered in stages, each with tests:
 
 | Stage | Scope | Status |
