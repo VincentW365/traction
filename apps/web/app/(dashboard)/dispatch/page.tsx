@@ -13,6 +13,7 @@ import { PageHeader } from '../../../components/ui/page-header';
 import { LoadingState } from '../../../components/ui/loading-state';
 import { KpiStrip, type LiveKpi } from '../../../components/kpi-strip';
 import { PAUSE_REASONS } from '../../../lib/service-order-actions';
+import { resourceStatusView } from '../../../lib/resource-status';
 
 /* ---------- Read-model types (mirror GET /resources/overview, CR-2026-080) ---------- */
 
@@ -47,8 +48,15 @@ interface ResourceItem {
   liftType: string | null;
   hasAlignment: boolean;
   hasDiagnostics: boolean;
+  // CR-2026-111e — two independent facts, and the words overlap. `isOperational` /
+  // `operationalState` say whether the resource CAN take work; `status` says whether
+  // something is in it. Both use "AVAILABLE" for their own meaning, so neither is
+  // rendered raw — see lib/resource-status.
   isOperational: boolean;
   operationalReason: string | null;
+  /** AVAILABLE | TEMPORARILY_UNAVAILABLE | MAINTENANCE | OUT_OF_SERVICE */
+  operationalState: string;
+  /** AVAILABLE | OCCUPIED | RESERVED — occupancy only. */
   status: string;
   currentJob: CurrentJob | null;
   nextReservation: {
@@ -905,42 +913,44 @@ function ResourceCard({
   const [showDownForm, setShowDownForm] = useState(false);
   const [downReason, setDownReason] = useState('');
 
-  const border =
-    !r.isOperational
-      ? 'border-l-red-500'
-      : r.status === 'OCCUPIED'
-        ? r.currentJob?.aging
-          ? 'border-l-rose-600'
-          : 'border-l-amber-500'
-        : r.status === 'RESERVED'
-          ? 'border-l-blue-500'
-          : 'border-l-emerald-500';
+  /**
+   * CR-2026-111e — occupancy and operational state are two different questions,
+   * and this card used to answer only the first. A bay in MAINTENANCE with nothing
+   * in it is `status: AVAILABLE`, so it rendered a green "Available" chip: the bay
+   * nobody could use looked like the best bay on the board.
+   *
+   * The state that matters now leads. Occupancy still shows, demoted to a
+   * secondary line, so an advisor can still see the bay is empty without that
+   * being mistaken for an invitation to use it.
+   */
+  const view = resourceStatusView({ isOperational: r.isOperational, operationalState: r.operationalState, occupancy: r.status });
 
-  const dot =
-    r.status === 'AVAILABLE'
-      ? { color: 'bg-emerald-500', label: 'Available' }
-      : r.status === 'OCCUPIED'
-        ? { color: 'bg-amber-500', label: 'Occupied' }
-        : r.status === 'RESERVED'
-          ? { color: 'bg-blue-500', label: 'Reserved' }
-          : { color: 'bg-slate-400', label: r.status };
+  const border = view.blocked
+    ? view.stripe
+    : r.status === 'OCCUPIED'
+      ? r.currentJob?.aging
+        ? 'border-l-rose-600'
+        : 'border-l-amber-500'
+      : r.status === 'RESERVED'
+        ? 'border-l-blue-500'
+        : 'border-l-emerald-500';
 
   return (
     <div className={`card border-l-4 ${border} overflow-hidden`}>
       <div className="p-4">
         <div className="flex items-center justify-between mb-1">
           <span className="font-mono text-sm font-bold text-slate-900">{r.code}</span>
-          <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
-            <span className={`w-2 h-2 rounded-full ${dot.color}`} />
-            {dot.label}
-          </span>
+          {/* The state that decides whether this bay can be used leads. */}
+          <span className={`badge text-[10px] shrink-0 ${view.lead.badge}`}>{view.lead.label}</span>
         </div>
-        <p className="text-xs text-slate-400 mb-2">{r.name}</p>
+        <p className="text-xs text-slate-400 mb-1">{r.name}</p>
+        {/* The other fact, kept visible but quiet — never as a green "Available". */}
+        <p className="text-[11px] text-slate-400 mb-2">{view.secondary.label}</p>
 
-        {!r.isOperational && (
-          <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5">
-            <p className="text-[11px] font-semibold text-red-700">● Down for maintenance</p>
-            {r.operationalReason && <p className="text-[10px] text-red-600 mt-0.5">{r.operationalReason}</p>}
+        {view.blocked && (
+          <div className="mb-2 rounded-md border border-orange-200 bg-orange-50 px-2 py-1.5">
+            <p className="text-[11px] font-semibold text-orange-800">Cannot take work — {view.lead.label}</p>
+            {r.operationalReason && <p className="text-[10px] text-orange-700 mt-0.5">{r.operationalReason}</p>}
           </div>
         )}
 

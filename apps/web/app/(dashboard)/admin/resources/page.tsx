@@ -8,6 +8,7 @@ import { useSiteId } from '../../../../hooks/use-site';
 import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { EmptyState } from '../../../../components/ui/empty-state';
+import { operationalChip } from '../../../../lib/resource-status';
 import { CapacitySummary } from '../../../../components/resources/capacity-summary';
 
 /**
@@ -135,18 +136,24 @@ const WORK_LABEL: Record<string, string> = {
   CLEANING: 'Cleaning',
 };
 
+/**
+ * CR-2026-111e — the OPERATIONAL state, worded from the shared module so this page
+ * and the dispatch board cannot drift apart. `AVAILABLE` reads "Operational" here:
+ * on this badge the word means "can take work", and it sat next to an occupancy
+ * indicator that uses the same word for "nothing is in it".
+ */
 const STATUS_LABEL: Record<string, string> = {
-  AVAILABLE: 'Available',
-  TEMPORARILY_UNAVAILABLE: 'Temporarily Unavailable',
-  MAINTENANCE: 'Maintenance',
-  OUT_OF_SERVICE: 'Out of Service',
+  AVAILABLE: operationalChip('AVAILABLE').label,
+  TEMPORARILY_UNAVAILABLE: operationalChip('TEMPORARILY_UNAVAILABLE').label,
+  MAINTENANCE: operationalChip('MAINTENANCE').label,
+  OUT_OF_SERVICE: operationalChip('OUT_OF_SERVICE').label,
 };
 
 const STATUS_BADGE: Record<string, string> = {
-  AVAILABLE: 'bg-emerald-50 text-emerald-700',
-  TEMPORARILY_UNAVAILABLE: 'bg-amber-50 text-amber-700',
-  MAINTENANCE: 'bg-orange-50 text-orange-700',
-  OUT_OF_SERVICE: 'bg-red-50 text-red-700',
+  AVAILABLE: operationalChip('AVAILABLE').badge,
+  TEMPORARILY_UNAVAILABLE: operationalChip('TEMPORARILY_UNAVAILABLE').badge,
+  MAINTENANCE: operationalChip('MAINTENANCE').badge,
+  OUT_OF_SERVICE: operationalChip('OUT_OF_SERVICE').badge,
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -506,12 +513,12 @@ function ResourceCard({
               <span className="font-mono text-[10px] font-semibold text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">
                 {r.code}
               </span>
-              {occupied && (
-                <span className="flex items-center gap-1 text-[10px] font-semibold text-blue-700">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                  In use
-                </span>
-              )}
+              {/* CR-2026-111e — occupancy, always shown and always named, so the
+                  badge on the right is unambiguously the OPERATIONAL state. */}
+              <span className={`flex items-center gap-1 text-[10px] font-semibold ${occupied ? 'text-blue-700' : 'text-slate-400'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${occupied ? 'bg-blue-500 animate-pulse' : 'bg-slate-300'}`} />
+                {occupied ? 'In use' : 'Not occupied'}
+              </span>
             </div>
             <div className="text-sm font-semibold text-slate-900 mt-1 truncate">{r.name}</div>
           </div>

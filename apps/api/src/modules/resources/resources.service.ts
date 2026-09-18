@@ -106,6 +106,15 @@ export class ResourcesService {
           requiresMechanic: r.requiresMechanic,
           isOperational: r.operationalStatus?.isOperational ?? true,
           operationalReason: r.operationalStatus?.reason ?? null,
+          // CR-2026-111e — the GRADED operational word (AVAILABLE / TEMPORARILY_UNAVAILABLE /
+          // MAINTENANCE / OUT_OF_SERVICE), projected from the relation this query already
+          // loads. Without it the board could only say "not operational" and had to guess
+          // the reason, which is how every downed resource read as "Down for maintenance".
+          //
+          // Note the word AVAILABLE means different things in the two fields below, which is
+          // the ambiguity itself: here it means CAN ACCEPT WORK; in `status` it means
+          // NOT OCCUPIED. Presentation must never print either raw.
+          operationalState: r.operationalStatus?.status ?? 'AVAILABLE',
           status: isOccupied ? 'OCCUPIED' : nextReservation ? 'RESERVED' : 'AVAILABLE',
           currentJob: isOccupied && occ.serviceVisit
             ? {
@@ -631,6 +640,15 @@ export class ResourcesService {
         requiresMechanic: r.requiresMechanic,
         isOperational: r.operationalStatus?.isOperational ?? true,
         operationalReason: r.operationalStatus?.reason ?? null,
+        // CR-2026-111e — the GRADED operational word (AVAILABLE / TEMPORARILY_UNAVAILABLE /
+        // MAINTENANCE / OUT_OF_SERVICE), projected from the relation this query already
+        // loads. Without it the board could only say "not operational" and had to guess
+        // the reason, which is how every downed resource read as "Down for maintenance".
+        //
+        // Note the word AVAILABLE means different things in the two fields below, which is
+        // the ambiguity itself: here it means CAN ACCEPT WORK; in `status` it means
+        // NOT OCCUPIED. Presentation must never print either raw.
+        operationalState: r.operationalStatus?.status ?? 'AVAILABLE',
         status: isOccupied ? 'OCCUPIED' : nextReservation ? 'RESERVED' : 'AVAILABLE',
         currentJob:
           isOccupied && sv
