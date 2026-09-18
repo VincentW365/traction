@@ -575,9 +575,12 @@ export class AppointmentsService {
         ? new Date(data.scheduledStartAt)
         : existing.scheduledStartAt;
 
+      // CR-2026-111c — changing the services on an appointment recomputes its end,
+      // and that recomputation must honour the vehicle class like every other
+      // duration path. Editing an SUV general service must not shrink it to 90.
       const totalDuration = data.serviceTypes.reduce((sum, s) => {
         const st = serviceTypeMap.get(s.serviceTypeCode);
-        return sum + (st?.baseDurationMinutes ?? 0) * (s.qty ?? 1);
+        return sum + (st ? catalogueMinutesFor(st, rescheduleVehicleClass) : 0) * (s.qty ?? 1);
       }, 0);
 
       updateData.scheduledEndAt = new Date(
@@ -1109,6 +1112,12 @@ export class AppointmentsService {
       where: { id: appointmentId },
       include: { services: true },
     });
+    // CR-2026-111c — merging services into an appointment recomputes its end, so
+    // the vehicle class applies here too.
+    const mergeVehicleClass = await this.resolveVehicleClass(
+      existing.vehicleId,
+      [...serviceTypeMap.values()],
+    );
 
     const existingTypeIds = new Set(existing.services.map((s) => s.serviceTypeId));
 
@@ -1133,7 +1142,7 @@ export class AppointmentsService {
       });
 
       const totalDuration = allServices.reduce(
-        (sum, s) => sum + s.serviceType.baseDurationMinutes * s.qty,
+        (sum, s) => sum + catalogueMinutesFor(s.serviceType, mergeVehicleClass) * s.qty,
         0,
       );
 

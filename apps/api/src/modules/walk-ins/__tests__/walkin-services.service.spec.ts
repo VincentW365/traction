@@ -40,8 +40,8 @@ function build() {
     },
     serviceType: {
       findMany: vi.fn(async () => [
-        { id: 'st-oil', code: 'OIL-01', baseDurationMinutes: 30, requiresMileage: true },
-        { id: 'st-tyre', code: 'TYRE-01', baseDurationMinutes: 20, requiresMileage: false },
+        { id: 'st-oil', code: 'OIL-01', baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null, requiresMileage: true },
+        { id: 'st-tyre', code: 'TYRE-01', baseDurationMinutes: 20, sedanDurationMinutes: null, suvDurationMinutes: null, requiresMileage: false },
       ]),
     },
     serviceVisit: { findFirst: vi.fn(async () => null) },

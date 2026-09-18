@@ -95,6 +95,10 @@ export class JobTimesService {
       include: {
         items: {
           select: {
+            // CR-2026-111c — the line estimate is the vehicle-class-aware figure written
+            // when the order was raised; the report must not quote a different number
+            // from the work order it is reporting on.
+            estimateMinutes: true,
             serviceType: { select: { id: true, code: true, name: true, baseDurationMinutes: true } },
           },
         },
@@ -169,7 +173,7 @@ export class JobTimesService {
         // inflate vehicle counts) and booked-time targets ride the row.
         serviceVisitId: o.serviceVisitId,
         expectedMinutes: o.items.reduce(
-          (sum, i) => sum + (i.serviceType.baseDurationMinutes ?? 0),
+          (sum, i) => sum + (i.estimateMinutes ?? i.serviceType.baseDurationMinutes ?? 0),
           0,
         ),
         serviceCodes: o.items.map((i) => i.serviceType.code),

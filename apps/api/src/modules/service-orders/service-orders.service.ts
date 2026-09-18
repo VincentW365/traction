@@ -10,6 +10,12 @@ import {
 import { EtaService } from '../scheduling/eta/eta.service';
 import { ETA_DEFAULTS, type EtaRuleValues } from '../scheduling/eta/eta.config';
 import { resolvePlannedMinutes } from '../scheduling/eta/eta.model';
+import {
+  catalogueMinutesFor,
+  SERVICE_DURATION_SELECT,
+  variesByVehicleClass,
+  type VehicleClass,
+} from '../scheduling/availability/service-duration';
 import { presentEta } from '../../common/helpers/eta-presentation';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
@@ -118,6 +124,19 @@ const RECOMPUTE_TRIGGERS = new Set<ServiceOrderStatus>([
   'CLOSED' as ServiceOrderStatus,
 ]);
 
+/**
+ * CR-2026-111c — a service type as an order line needs to see it: the shared
+ * duration shape plus the id the line is written with. The class columns are
+ * REQUIRED, so a query that forgets them does not compile.
+ */
+interface OrderMeasurableService {
+  id: string;
+  code: string;
+  baseDurationMinutes: number | null;
+  sedanDurationMinutes: number | null;
+  suvDurationMinutes: number | null;
+}
+
 @Injectable()
 export class ServiceOrdersService {
   private readonly logger = new Logger(ServiceOrdersService.name);
@@ -162,6 +181,10 @@ export class ServiceOrdersService {
     // 1. Validate the service visit exists and is in a valid state
     const visit = await this.prisma.serviceVisit.findUnique({
       where: { id: data.serviceVisitId },
+      // CR-2026-111c — the vehicle's class comes along, because the line estimates
+      // below depend on it. Reading the column costs nothing here and saves a
+      // second round trip inside the transaction.
+      include: { vehicle: { select: { serviceClass: true } } },
     });
 
     if (!visit) {
@@ -174,6 +197,17 @@ export class ServiceOrdersService {
     const serviceTypeMap = await this.resolveServiceTypeCodes(
       data.items.map((item) => item.serviceTypeCode),
     );
+
+    /**
+     * CR-2026-111c — the vehicle's class, for the line estimates.
+     *
+     * This is the SERVICE ESTIMATE, not the booking reservation. The calendar may
+     * still hold 80 minutes under the DEFAULT booking policy; once the order
+     * exists, what the work actually takes is a separate and more specific fact.
+     * Null (unclassified) resolves to the longest configured duration, exactly as
+     * everywhere else.
+     */
+    const vehicleClass = (visit.vehicle?.serviceClass ?? null) as VehicleClass;
 
     // 3. Create ServiceOrder + ServiceOrderItems in a transaction
     const order = await this.prisma.$transaction(async (tx) => {
@@ -191,8 +225,11 @@ export class ServiceOrdersService {
               const serviceType = serviceTypeMap.get(item.serviceTypeCode)!;
               return {
                 serviceTypeId: serviceType.id,
+                // CR-2026-111c — the configured duration for THIS vehicle, from the
+                // one shared resolver. An explicit estimate from the advisor still
+                // wins: they are looking at the car.
                 estimateMinutes:
-                  item.estimateMinutes ?? serviceType.baseDurationMinutes,
+                  item.estimateMinutes ?? catalogueMinutesFor(serviceType, vehicleClass),
                 notes: item.notes,
                 // CR-2026-090 — see ServiceOrderItemDto: brake lines carry no axle
                 // in the service code, so it is captured on the line itself.
@@ -277,6 +314,28 @@ export class ServiceOrdersService {
   // ---------------------------------------------------------------------------
 
   /** Only DRAFT/APPROVED orders (before a technician is assigned) may be edited/deleted. */
+  /**
+   * CR-2026-111c — the class of the vehicle a visit is for.
+   *
+   * One column read, not a second copy of anything: the sedan/SUV rule itself lives
+   * in `service-duration.ts` and is applied by `catalogueMinutesFor`. Unclassified
+   * returns null, which that resolver treats as "assume the longest".
+   *
+   * Skipped entirely when no service on the order varies by class — most of the
+   * catalogue — so the common path costs no extra query.
+   */
+  private async vehicleClassOfVisit(
+    serviceVisitId: string,
+    services: Array<{ sedanDurationMinutes: number | null; suvDurationMinutes: number | null }>,
+  ): Promise<VehicleClass> {
+    if (!services.some(variesByVehicleClass)) return null;
+    const visit = await this.prisma.serviceVisit.findUnique({
+      where: { id: serviceVisitId },
+      select: { vehicle: { select: { serviceClass: true } } },
+    });
+    return (visit?.vehicle?.serviceClass ?? null) as VehicleClass;
+  }
+
   private assertEditableStatus(status: string, verb: 'edit' | 'delete') {
     if (!['DRAFT', 'APPROVED'].includes(status)) {
       throw new BadRequestException(
@@ -302,11 +361,16 @@ export class ServiceOrdersService {
     this.assertEditableStatus(order.status, 'edit');
 
     let resolved: Awaited<ReturnType<typeof this.resolveServiceTypeCodes>> | null = null;
+    // CR-2026-111c — editing the lines re-resolves their estimates, so the same
+    // vehicle class applies here as at creation. Rewriting an order must not be a
+    // way to lose the SUV duration.
+    let vehicleClass: VehicleClass = null;
     if (dto.items) {
       if (dto.items.length === 0) {
         throw new BadRequestException('A service order must have at least one item.');
       }
       resolved = await this.resolveServiceTypeCodes(dto.items.map((i) => i.serviceTypeCode));
+      vehicleClass = await this.vehicleClassOfVisit(order.serviceVisitId, [...resolved.values()]);
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -318,7 +382,7 @@ export class ServiceOrdersService {
             return {
               serviceOrderId: id,
               serviceTypeId: serviceType.id,
-              estimateMinutes: item.estimateMinutes ?? serviceType.baseDurationMinutes,
+              estimateMinutes: item.estimateMinutes ?? catalogueMinutesFor(serviceType, vehicleClass),
               notes: item.notes,
               axlePosition: (item.axlePosition ?? null) as never,
             };
@@ -911,8 +975,12 @@ export class ServiceOrdersService {
         // CR-2026-101 — anticipate and prioritise: expected time from the booked
         // services, the appointment slot, walk-in/appointment source, an open
         // rework flag, and the customer's stated concern.
+        // CR-2026-111c — the LINE estimate, which is the vehicle-class-aware
+        // figure written when the order was raised. Re-summing the catalogue base
+        // here would show a Dispatch Board number that contradicts the order it
+        // is describing — 90 minutes beside a 120-minute SUV general service.
         expectedMinutes: order.items.reduce(
-          (sum, i) => sum + (i.serviceType.baseDurationMinutes ?? 0),
+          (sum, i) => sum + (i.estimateMinutes ?? i.serviceType.baseDurationMinutes ?? 0),
           0,
         ),
         // CR-2026-105b — planned time (KPI/estimate/catalogue/default order) and the
@@ -2342,8 +2410,10 @@ export class ServiceOrdersService {
       this.getWorkTiming(orderId),
     ]);
 
+    // CR-2026-111c — the LINE estimate (vehicle-class aware), not a fresh sum of
+    // catalogue base durations; see the Dispatch Board note above.
     const expectedMinutes = order.items.reduce(
-      (sum, i) => sum + (i.serviceType.baseDurationMinutes ?? 0),
+      (sum, i) => sum + (i.estimateMinutes ?? i.serviceType.baseDurationMinutes ?? 0),
       0,
     );
 
@@ -2383,7 +2453,8 @@ export class ServiceOrdersService {
         services: order.items.map((i) => ({
           code: i.serviceType.code,
           name: i.serviceType.name,
-          durationMinutes: i.serviceType.baseDurationMinutes,
+          // CR-2026-111c — what this line is estimated at on THIS vehicle.
+          durationMinutes: i.estimateMinutes ?? i.serviceType.baseDurationMinutes,
         })),
         expectedMinutes,
         plannedMinutes,
@@ -2591,22 +2662,27 @@ export class ServiceOrdersService {
    * Resolve service type codes to their database records.
    * Throws if any code is not found or not active.
    */
-  private async resolveServiceTypeCodes(
-    codes: string[],
-  ): Promise<
-    Map<string, { id: string; baseDurationMinutes: number }>
-  > {
+  private async resolveServiceTypeCodes(codes: string[]): Promise<Map<string, OrderMeasurableService>> {
     const uniqueCodes = [...new Set(codes)];
 
     const serviceTypes = await this.prisma.serviceType.findMany({
       where: { code: { in: uniqueCodes }, isActive: true },
-      select: { id: true, code: true, baseDurationMinutes: true },
+      // CR-2026-111c — the shared duration select. An order line's estimate is a
+      // duration like any other, so it is loaded the same way; naming the columns
+      // by hand here is what left General Servicing at 90 minutes for an SUV.
+      select: SERVICE_DURATION_SELECT,
     });
 
     const map = new Map(
       serviceTypes.map((st) => [
         st.code,
-        { id: st.id, baseDurationMinutes: st.baseDurationMinutes },
+        {
+          id: st.id,
+          code: st.code,
+          baseDurationMinutes: st.baseDurationMinutes,
+          sedanDurationMinutes: st.sedanDurationMinutes,
+          suvDurationMinutes: st.suvDurationMinutes,
+        },
       ]),
     );
 

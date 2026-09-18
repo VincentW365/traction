@@ -11,6 +11,11 @@ import { publicUrl } from '../../common/helpers/public-url';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { StatusHistoryService } from '../audit/status-history.service';
+import {
+  catalogueMinutesFor,
+  SERVICE_DURATION_SELECT,
+  type VehicleClass,
+} from '../scheduling/availability/service-duration';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { CreateWalkInDto } from './dto/create-walk-in.dto';
 import { generateTicketNumber } from '../../common/helpers/ticket-generator';
@@ -96,6 +101,8 @@ export class WalkInsService {
           make: true,
           model: true,
           modelYear: true,
+          // CR-2026-111c — the class the order-line estimates below depend on.
+          serviceClass: true,
         },
       }),
     ]);
@@ -127,7 +134,10 @@ export class WalkInsService {
 
     const serviceTypes = await this.prisma.serviceType.findMany({
       where: { code: { in: uniqueCodes }, isActive: true },
-      select: { id: true, code: true, baseDurationMinutes: true, requiresMileage: true },
+      // CR-2026-111c — the shared duration select. A walk-in is not a different
+      // duration policy: an SUV General Servicing takes 120 minutes whether it was
+      // booked online, booked by an advisor, or driven in off the street.
+      select: { ...SERVICE_DURATION_SELECT, requiresMileage: true },
     });
 
     const serviceTypeMap = new Map(
@@ -311,7 +321,10 @@ export class WalkInsService {
                 const st = serviceTypeMap.get(code)!;
                 return {
                   serviceTypeId: st.id,
-                  estimateMinutes: st.baseDurationMinutes,
+                  // CR-2026-111c — the configured duration for THIS vehicle, from the
+                  // one shared resolver. An unclassified walk-in takes the longest
+                  // configured figure, exactly as a booking would.
+                  estimateMinutes: catalogueMinutesFor(st, (vehicle.serviceClass ?? null) as VehicleClass),
                 };
               }),
             },

@@ -489,6 +489,51 @@ describe('§3 the queue ETA uses the same class rule', () => {
   });
 });
 
+/**
+ * CR-2026-111c — two appointment paths that CR-2026-111b missed.
+ *
+ * Changing the services on an existing appointment, and merging services into one,
+ * both recompute `scheduledEndAt` — and both did it from `baseDurationMinutes × qty`
+ * with no knowledge of the vehicle. Editing an SUV general service would have
+ * shrunk it from 120 minutes back to 90, which is the very defect the parity work
+ * set out to remove.
+ */
+describe('§ changing the services on an appointment keeps the class duration', () => {
+  /**
+   * Staff edit an existing appointment's service list.
+   *
+   * Changing only the services leaves the start where it was, so the update carries
+   * a new `scheduledEndAt` and no `scheduledStartAt`; the length is measured against
+   * the appointment's existing start.
+   */
+  async function editedServicesMinutes(serviceClass: Cls): Promise<number> {
+    const h = build({ serviceClass });
+    await h.staff.update('appt-existing', { serviceTypes: [{ serviceTypeCode: 'GEN-SERV-01' }] } as any, 'user-1');
+    const call = (h.tx.appointment.update.mock.calls as any[]).find((c) => c[0]?.data?.scheduledEndAt);
+    const data = call[0].data;
+    const start: Date = data.scheduledStartAt ?? h.existingAppt.scheduledStartAt;
+    return Math.round((data.scheduledEndAt.getTime() - start.getTime()) / MIN);
+  }
+
+  it('an SUV general service stays 120 when its services are edited', async () => {
+    expect(await editedServicesMinutes('SUV_CLASS')).toBe(120);
+  });
+
+  it('a sedan general service stays 90', async () => {
+    expect(await editedServicesMinutes('SEDAN_CLASS')).toBe(90);
+  });
+
+  it('an unclassified vehicle still takes the longest configured duration', async () => {
+    expect(await editedServicesMinutes(null)).toBe(120);
+  });
+
+  it('editing the services never changes the length it was created with', async () => {
+    for (const serviceClass of ['SEDAN_CLASS', 'SUV_CLASS', null] as const) {
+      expect(await editedServicesMinutes(serviceClass), `class ${serviceClass}`).toBe(await staffCreateMinutes(build({ serviceClass })));
+    }
+  });
+});
+
 describe('variesByVehicleClass', () => {
   it('is true only for a service with a class-specific figure', () => {
     expect(variesByVehicleClass(GEN_SERV)).toBe(true);

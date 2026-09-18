@@ -8,7 +8,7 @@ function build() {
   const prisma: any = {
     serviceType: {
       findMany: vi.fn(async ({ where }: any) =>
-        (where.code.in as string[]).map((code) => ({ id: `st-${code}`, code, baseDurationMinutes: 30 })),
+        (where.code.in as string[]).map((code) => ({ id: `st-${code}`, code, baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null })),
       ),
     },
     serviceOrderItem: {
