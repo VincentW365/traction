@@ -21,9 +21,12 @@ describe('CR-2026-105c — customer self-service booking', () => {
     expect(book).not.toContain('sessionStorage');
   });
 
+  // CR-2026-111 renamed the steps and added one: identify/details/service/slot/
+  // confirm became customer/vehicle/service/details/appointment/review. The
+  // capability this guards is unchanged — every stage of the journey still exists.
   it('the wizard covers identify → vehicle → service → time → confirm, and the confirmed page names every required fact', () => {
     const book = read('app/book/page.tsx');
-    for (const s of ["'identify'", "'details'", "'service'", "'slot'", "'confirm'", "'done'"]) expect(book).toContain(s);
+    for (const s of ["'customer'", "'vehicle'", "'service'", "'details'", "'appointment'", "'review'", "'done'"]) expect(book).toContain(s);
     for (const label of ['Appointment Confirmed', 'Date & arrival time', 'Vehicle', 'Service', 'Expected service time', 'Service centre', 'View, move or cancel']) {
       expect(book).toContain(label);
     }

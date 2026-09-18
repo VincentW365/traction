@@ -234,18 +234,75 @@ export class CheckInService {
         // asking the customer again. Staff bookings carry no such note.
         const bookingNote = (appointment as { notes?: string | null }).notes ?? null;
         const reportedMileage = (appointment as { customerReportedMileage?: number | null }).customerReportedMileage ?? null;
-        if (appointment.sourceChannel === 'CUSTOMER_SELF_SERVICE' && (bookingNote?.startsWith('[Customer booking]') || reportedMileage != null)) {
-          const text = [
-            bookingNote ? bookingNote.replace(/^\[Customer booking\]\s*/, '') : null,
-            reportedMileage != null && !(bookingNote ?? '').includes('Reported mileage') ? `Reported mileage: ${reportedMileage.toLocaleString('en-US')}` : null,
-          ]
-            .filter(Boolean)
-            .join(' | ');
+        // CR-2026-111 — the structured intake, when the booking carried one.
+        const bookingIntake = await tx.bookingIntake.findUnique({
+          where: { appointmentId: appointment.id },
+          select: { category: true, customerConcern: true, symptoms: true, additionalComments: true },
+        });
+
+        if (
+          appointment.sourceChannel === 'CUSTOMER_SELF_SERVICE' &&
+          (bookingNote?.startsWith('[Customer booking]') || reportedMileage != null || bookingIntake)
+        ) {
+          // CR-2026-111 — the customer's own sentence leads, because that is the
+          // part with diagnostic value. The composed note stays as the fallback
+          // for bookings taken before the structured intake existed.
+          const text = bookingIntake
+            ? [
+                bookingIntake.customerConcern,
+                bookingIntake.symptoms.length ? `Reported: ${bookingIntake.symptoms.map(readableSymptom).join(', ')}` : null,
+                bookingIntake.additionalComments,
+                reportedMileage != null ? `Reported mileage: ${reportedMileage.toLocaleString('en-US')}` : null,
+              ]
+                .filter(Boolean)
+                .join(' | ')
+            : [
+                bookingNote ? bookingNote.replace(/^\[Customer booking\]\s*/, '') : null,
+                reportedMileage != null && !(bookingNote ?? '').includes('Reported mileage')
+                  ? `Reported mileage: ${reportedMileage.toLocaleString('en-US')}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' | ');
+
+          if (text) {
+            await tx.visitNote.create({
+              data: {
+                serviceVisitId: serviceVisit.id,
+                kind: 'CUSTOMER_CONCERN',
+                text: `From the online booking: ${text}`,
+                authorUserId: userId,
+                authorRole: 'CUSTOMER_BOOKING',
+                requiresAttention: false,
+              },
+            });
+          }
+        }
+
+        // CR-2026-111 §6 — the customer typed their odometer reading during
+        // booking; the Job Sheet reads `mileageIn`. Nothing joined the two, so an
+        // advisor retyped a number the customer had already given us.
+        //
+        // Only fills a BLANK value. A reading taken at the desk is a physical
+        // observation and a customer's recollection is not, so a staff-entered
+        // figure always wins — this can promote a customer's number to the visit,
+        // never demote a verified one.
+        //
+        // Gated on the channel because the note it writes STATES where the number
+        // came from. Only a self-service booking populates this column today, but
+        // the provenance of a figure on a Job Sheet is not a thing to assert from
+        // an assumption that could quietly stop being true.
+        if (
+          appointment.sourceChannel === 'CUSTOMER_SELF_SERVICE' &&
+          reportedMileage != null &&
+          serviceVisit.mileageIn == null
+        ) {
+          await tx.serviceVisit.update({ where: { id: serviceVisit.id }, data: { mileageIn: reportedMileage } });
           await tx.visitNote.create({
             data: {
               serviceVisitId: serviceVisit.id,
               kind: 'CUSTOMER_CONCERN',
-              text: `From the online booking: ${text}`,
+              text: `Mileage ${reportedMileage.toLocaleString('en-US')} is the customer's own reading from the online booking, not a workshop measurement.`,
               authorUserId: userId,
               authorRole: 'CUSTOMER_BOOKING',
               requiresAttention: false,
@@ -253,7 +310,7 @@ export class CheckInService {
           });
         }
 
-                // 5. Allocate the ticket identifiers (CR-2026-089).
+        // 5. Allocate the ticket identifiers (CR-2026-089).
         //
         // checkinSequence is still generated because the FIFO scheduler orders the
         // queue by it; the v2 identifiers are what people actually read. The two
@@ -479,4 +536,41 @@ export class CheckInService {
       customerStatusPath: `/status/${result.statusToken}`,
     };
   }
+}
+
+/**
+ * CR-2026-111 — a ticked symptom code in words.
+ *
+ * Symptoms are stored as codes so they can be counted and filtered; they are read
+ * by an advisor, who should never have to parse BRAKE_NOISE. An unrecognised code
+ * degrades to its own words rather than disappearing — losing what a customer
+ * reported because a list was not updated would be worse than showing it plainly.
+ */
+export function readableSymptom(code: string): string {
+  const known: Record<string, string> = {
+    // Battery
+    BATTERY_SLOW_START: 'difficult or slow starting',
+    BATTERY_REPEATEDLY_FLAT: 'battery keeps going flat',
+    BATTERY_WARNING_LIGHT: 'battery warning light',
+    BATTERY_REPLACEMENT_REQUESTED: 'asked for a replacement battery',
+    // Brakes
+    BRAKE_NOISE: 'brake noise',
+    BRAKE_VIBRATION: 'brake vibration',
+    BRAKE_WARNING_LIGHT: 'brake warning light',
+    BRAKE_REDUCED_PERFORMANCE: 'reduced braking performance',
+    BRAKE_PAD_REPLACEMENT_REQUESTED: 'asked for brake pad replacement',
+    // Tyres and alignment
+    ALIGN_PULLS_LEFT: 'pulls to the left',
+    ALIGN_PULLS_RIGHT: 'pulls to the right',
+    ALIGN_UNEVEN_TYRE_WEAR: 'uneven tyre wear',
+    ALIGN_WHEEL_OFF_CENTRE: 'steering wheel off-centre',
+    ALIGN_VIBRATION: 'vibration',
+    // Cooling
+    COOLING_OVERHEATING: 'overheating',
+    COOLING_COOLANT_CONCERN: 'coolant concern',
+    COOLING_LEAK: 'suspected leak',
+    // Shared
+    NOT_SURE: 'not sure',
+  };
+  return known[code] ?? code.toLowerCase().replace(/_/g, ' ');
 }

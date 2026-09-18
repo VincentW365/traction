@@ -76,3 +76,6 @@ artifacts/
 # CR-2026-093 — locally stored inspection photographs (customer property, never committed)
 .data/
 scripts/tmp-*
+
+# Visual QA screenshots (CR-2026-109/111) — generated, never committed
+.visual-qa/

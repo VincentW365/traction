@@ -295,6 +295,30 @@ export class ServiceVisitCompletionController {
             },
           },
         },
+        // CR-2026-111 §5/§13 — what the CUSTOMER asked for, kept distinct from
+        // what staff concluded. The sheet used to show only `serviceOrders.notes`,
+        // which is a staff directive, so the sentence the customer actually wrote
+        // never reached the person holding the clipboard and an advisor retyped it.
+        //
+        // Read from the appointment's intake where there is one, and fall back to
+        // the CUSTOMER_CONCERN visit note for bookings taken before it existed.
+        appointment: {
+          select: {
+            sourceChannel: true,
+            customerReportedMileage: true,
+            services: {
+              select: { serviceType: { select: { code: true, name: true, customerFacingName: true } } },
+            },
+            bookingIntake: {
+              select: { category: true, customerConcern: true, symptoms: true, additionalComments: true, createdAt: true },
+            },
+          },
+        },
+        visitNotes: {
+          where: { kind: 'CUSTOMER_CONCERN' },
+          orderBy: { createdAt: 'asc' },
+          select: { text: true, createdAt: true, authorRole: true },
+        },
         // The saved sheet, when one exists — the page restores it over the prefill.
         jobSheetDraft: {
           select: { data: true, signatureImage: true, updatedAt: true },

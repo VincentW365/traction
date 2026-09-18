@@ -44,6 +44,20 @@ interface JobSheetData {
     serviceClass: 'SEDAN_CLASS' | 'SUV_CLASS' | 'UNKNOWN_REQUIRES_REVIEW' | null;
   } | null;
   queueTicket: { ticketNumber: string } | null;
+  /** CR-2026-111 — what the customer asked for when they booked. */
+  appointment: {
+    sourceChannel: string | null;
+    customerReportedMileage: number | null;
+    services: Array<{ serviceType: { code: string; name: string; customerFacingName: string | null } }>;
+    bookingIntake: {
+      category: string;
+      customerConcern: string | null;
+      symptoms: string[];
+      additionalComments: string | null;
+    } | null;
+  } | null;
+  /** Fallback for bookings taken before the structured intake existed. */
+  visitNotes: Array<{ text: string; createdAt: string; authorRole: string | null }>;
   jobSheetDraft: {
     data: {
       fields?: Record<string, string>;
@@ -223,6 +237,7 @@ export default function JobSheetPage() {
 
   const c = d.customer;
   const v = d.vehicle;
+  const intake = customerIntake(d);
   const togglePair = (group: string[], key: string) => {
     setDirty(true);
     return setPair((p) => {
@@ -357,6 +372,53 @@ export default function JobSheetPage() {
             </div>
           )}
 
+          {/*
+            CR-2026-111 §13 — three different things, kept apart.
+
+            "Customer requested" is what they picked. "Customer concern" is what
+            they wrote, verbatim. The directive below is what STAFF conclude. The
+            first two are read-only here on purpose: an advisor editing the
+            customer's own words would destroy the only record of what was
+            actually reported, and "vibrates when braking above 80" is worth more
+            to a technician than any tidied-up version of it.
+          */}
+          {intake && (
+            <div className="mt-1 border border-slate-300 print:border-slate-400">
+              <div className="bg-slate-100 px-2 py-1 text-[10px] font-extrabold tracking-wide text-slate-700">
+                FROM THE CUSTOMER&apos;S BOOKING
+              </div>
+              <div className="px-2 py-1.5 space-y-1">
+                {intake.requested && (
+                  <p className="text-[11px] text-slate-900">
+                    <span className="font-extrabold">REQUESTED: </span>
+                    {intake.requested}
+                  </p>
+                )}
+                {intake.concern && (
+                  <p className="text-[11px] text-slate-900 leading-snug">
+                    <span className="font-extrabold">CONCERN: </span>
+                    <span className="italic">&ldquo;{intake.concern}&rdquo;</span>
+                  </p>
+                )}
+                {intake.symptoms.length > 0 && (
+                  <p className="text-[11px] text-slate-900">
+                    <span className="font-extrabold">REPORTED: </span>
+                    {intake.symptoms.join(', ')}
+                  </p>
+                )}
+                {intake.comments && (
+                  <p className="text-[11px] text-slate-900 leading-snug">
+                    <span className="font-extrabold">ALSO: </span>
+                    {intake.comments}
+                  </p>
+                )}
+                <p className="text-[9px] text-slate-500 print:hidden">
+                  The customer&apos;s own words, kept as submitted. Your conclusions go in the directive below.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="mt-1">
             <div className="text-[11px] font-extrabold text-slate-900 mb-0.5">CUSTOMER&apos;S DIRECTIVE</div>
             <textarea
@@ -443,4 +505,68 @@ export default function JobSheetPage() {
       </p>
     </div>
   );
+}
+
+/**
+ * CR-2026-111 — what the customer said, assembled for the sheet.
+ *
+ * Prefers the structured intake and falls back to the CUSTOMER_CONCERN note, so a
+ * booking taken before this CR still shows its concern rather than a blank panel.
+ * Returns null when there is genuinely nothing — an empty bordered box on a
+ * printed card is worse than no box.
+ */
+function customerIntake(d: JobSheetData): {
+  requested: string | null;
+  concern: string | null;
+  symptoms: string[];
+  comments: string | null;
+} | null {
+  const a = d.appointment;
+  const requested =
+    a?.services.map((s) => s.serviceType.customerFacingName?.trim() || s.serviceType.name).join(', ') || null;
+
+  if (a?.bookingIntake) {
+    const i = a.bookingIntake;
+    return {
+      requested,
+      concern: i.customerConcern,
+      symptoms: i.symptoms.map(readableSymptom),
+      comments: i.additionalComments,
+    };
+  }
+
+  // Older bookings: the concern survives only as a visit note.
+  const note = d.visitNotes.find((n) => n.authorRole === 'CUSTOMER_BOOKING')?.text ?? null;
+  if (!note && !requested) return null;
+  return {
+    requested,
+    concern: note ? note.replace(/^From the online booking:s*/, '') : null,
+    symptoms: [],
+    comments: null,
+  };
+}
+
+/** A ticked symptom code in words. Mirrors the API's vocabulary. */
+function readableSymptom(code: string): string {
+  const known: Record<string, string> = {
+    BATTERY_SLOW_START: 'difficult or slow starting',
+    BATTERY_REPEATEDLY_FLAT: 'battery keeps going flat',
+    BATTERY_WARNING_LIGHT: 'battery warning light',
+    BATTERY_REPLACEMENT_REQUESTED: 'asked for a replacement battery',
+    BRAKE_NOISE: 'brake noise',
+    BRAKE_VIBRATION: 'brake vibration',
+    BRAKE_WARNING_LIGHT: 'brake warning light',
+    BRAKE_REDUCED_PERFORMANCE: 'reduced braking performance',
+    BRAKE_PAD_REPLACEMENT_REQUESTED: 'asked for brake pad replacement',
+    ALIGN_PULLS_LEFT: 'pulls to the left',
+    ALIGN_PULLS_RIGHT: 'pulls to the right',
+    ALIGN_UNEVEN_TYRE_WEAR: 'uneven tyre wear',
+    ALIGN_WHEEL_OFF_CENTRE: 'steering wheel off-centre',
+    ALIGN_VIBRATION: 'vibration',
+    COOLING_OVERHEATING: 'overheating',
+    COOLING_COOLANT_CONCERN: 'coolant concern',
+    COOLING_LEAK: 'suspected leak',
+    NOT_SURE: 'not sure',
+  };
+  return known[code] ?? code.toLowerCase().replace(/_/g, ' ');
 }

@@ -115,12 +115,26 @@ describe('CR-2026-106 — customer booking (public page)', () => {
     expect(src).not.toMatch(/identify',\s*\{\s*firstName/);
   });
 
+  /**
+   * CR-2026-111 moved these onto their own Details step and reworded them into
+   * questions a customer can answer: the "Reason for visit" dropdown became the
+   * service card they tap, and "Main concern" became "What would you like us to
+   * check or service?". The facts captured for the Job Sheet are the same, plus
+   * symptoms.
+   */
   it('captures reason / concern / description / mileage for Job Sheet preparation and shows them on review', () => {
     const src = read('app/book/page.tsx');
-    expect(src).toContain('service-request');
-    for (const s of ['Reason for visit', 'Main concern', 'Anything else we should know', 'Current mileage']) expect(src).toContain(s);
+    expect(src).toContain('details-step');
+    for (const s of [
+      'What would you like us to check or service?',
+      'Anything else we should know?',
+      'Current mileage',
+    ]) {
+      expect(src).toContain(s);
+    }
     expect(src).toContain('serviceRequest:');
-    expect(src).toContain('label="Your concern"');
+    expect(src).toContain('reasonForVisit: category?.title');
+    expect(src).toContain('label="Your request"');
     // Not a mechanic Job Sheet: no checklist/inspection fields on the customer page.
     expect(src).not.toContain('/inspections');
   });

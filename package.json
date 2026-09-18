@@ -23,15 +23,18 @@
     "booking:duration-impact": "tsx scripts/booking-duration-impact.ts",
     "resources:summary": "tsx scripts/resource-reconciliation-summary.ts",
     "resources:baseline": "tsx scripts/configure-resource-baseline.ts",
+    "booking:customer-catalogue": "tsx scripts/configure-customer-service-catalogue.ts",
     "booking:shadow-validate": "tsx scripts/shadow-validate.ts",
     "booking:duration-impact-resource": "tsx scripts/booking-duration-impact-resource.ts",
     "customers:import": "tsx apps/api/scripts/import-customers.ts",
     "customers:import:commit": "tsx apps/api/scripts/import-customers.ts --commit",
-  "customers:reconcile": "tsx apps/api/scripts/import-customers.ts --reconcile",
-  "customers:reconcile:master": "tsx apps/api/scripts/reconcile-master-list.ts",
+    "customers:reconcile": "tsx apps/api/scripts/import-customers.ts --reconcile",
+    "customers:reconcile:master": "tsx apps/api/scripts/reconcile-master-list.ts",
     "customers:verify": "node scripts/customers-verify.mjs",
     "jobs:import": "tsx apps/api/scripts/import-jobs.ts",
-    "jobs:import:commit": "tsx apps/api/scripts/import-jobs.ts --commit"
+    "jobs:import:commit": "tsx apps/api/scripts/import-jobs.ts --commit",
+    "booking:demonstrate": "tsx scripts/demonstrate-booking-to-job-sheet.ts",
+    "booking:visual-qa": "tsx scripts/visual-qa-booking.ts"
   },
   "devDependencies": {
     "playwright": "^1.59.0",

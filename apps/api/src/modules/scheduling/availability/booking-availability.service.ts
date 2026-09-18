@@ -45,6 +45,32 @@ import { toCustomerAvailability, type AvailabilityDecision } from './slot-decisi
 
 export type BookingAudience = 'CUSTOMER' | 'STAFF';
 
+/**
+ * A service, as the duration calculation needs to see it. The two class-specific
+ * columns are optional so every existing caller keeps compiling — and so that a
+ * service which takes the same time on everything says nothing at all rather than
+ * repeating one number three times.
+ */
+export interface DurationCandidate {
+  baseDurationMinutes: number | null;
+  sedanDurationMinutes?: number | null;
+  suvDurationMinutes?: number | null;
+}
+
+/**
+ * CR-2026-111 — how long one service takes on THIS vehicle.
+ *
+ * An unknown class deliberately gets `baseDurationMinutes`, which for a
+ * class-split service is the sedan figure. That is the shorter promise, and the
+ * asymmetry is on purpose: a slot that finishes early is an inconvenience, a slot
+ * that overruns holds a bay the next customer was booked into.
+ */
+export function serviceMinutes(s: DurationCandidate, vehicleClass?: string | null): number {
+  if (vehicleClass === 'SUV_CLASS' && s.suvDurationMinutes && s.suvDurationMinutes > 0) return s.suvDurationMinutes;
+  if (vehicleClass === 'SEDAN_CLASS' && s.sedanDurationMinutes && s.sedanDurationMinutes > 0) return s.sedanDurationMinutes;
+  return s.baseDurationMinutes && s.baseDurationMinutes > 0 ? s.baseDurationMinutes : 0;
+}
+
 export interface BookingRuleSet {
   booking: BookingRules;
   eta: EtaRuleValues;
@@ -120,22 +146,42 @@ export class BookingAvailabilityService {
     return rules.booking.staffLatestStartEnforced ? v : null;
   }
 
-  /** Assumption 2 (docs/120): management's 80 minutes unless the catalogue is explicitly enabled. */
-  plannedMinutes(services: Array<{ baseDurationMinutes: number | null }>, rules: BookingRuleSet): number {
+  /**
+   * Assumption 2 (docs/120): management's 80 minutes unless the catalogue is
+   * explicitly enabled.
+   *
+   * CR-2026-111 — a service may declare that it takes longer on a bigger vehicle
+   * (General Servicing is 90 for a sedan and 120 for an SUV, per the standard
+   * management approved). That split is honoured when the class is known; an
+   * unknown class falls back to `baseDurationMinutes`, which is deliberately the
+   * SHORTER of the two. Under-promising a slot is recoverable; over-promising one
+   * leaves a vehicle occupying a bay somebody else was booked into.
+   *
+   * None of this is in force while `appointment_duration_source` is DEFAULT,
+   * which is production today — every booking is planned at the standard length
+   * whatever the service. The capability exists so the switch, when it is taken,
+   * does not also need this built underneath it.
+   */
+  plannedMinutes(services: DurationCandidate[], rules: BookingRuleSet, vehicleClass?: string | null): number {
     if (rules.booking.durationSource === 'CATALOGUE') {
-      const sum = services.reduce((s, t) => s + (t.baseDurationMinutes && t.baseDurationMinutes > 0 ? t.baseDurationMinutes : 0), 0);
+      const sum = services.reduce((s, t) => s + Math.max(0, serviceMinutes(t, vehicleClass)), 0);
       if (sum > 0) return sum;
     }
     return rules.eta.defaultDurationMinutes;
   }
 
-  slotRules(services: Array<{ baseDurationMinutes: number | null }>, rules: BookingRuleSet, audience: BookingAudience): SlotRules {
+  slotRules(
+    services: DurationCandidate[],
+    rules: BookingRuleSet,
+    audience: BookingAudience,
+    vehicleClass?: string | null,
+  ): SlotRules {
     return {
       slotIntervalMinutes: rules.booking.slotIntervalMinutes,
       minNoticeMinutes: audience === 'STAFF' ? 0 : rules.booking.minNoticeMinutes,
       sameDayAllowed: audience === 'STAFF' ? true : rules.booking.sameDayAllowed,
       capacity: rules.eta.capacity,
-      durationMinutes: this.plannedMinutes(services, rules),
+      durationMinutes: this.plannedMinutes(services, rules, vehicleClass),
       defaultDurationMinutes: rules.eta.defaultDurationMinutes,
     };
   }
@@ -201,8 +247,8 @@ export class BookingAvailabilityService {
 
   async availability(
     site: SiteLike,
-    services: Array<{ baseDurationMinutes: number | null }>,
-    opts: { from?: string; days?: number; audience: BookingAudience; excludeAppointmentId?: string | null; now?: Date; rules?: BookingRuleSet },
+    services: DurationCandidate[],
+    opts: { from?: string; days?: number; audience: BookingAudience; excludeAppointmentId?: string | null; now?: Date; rules?: BookingRuleSet; vehicleClass?: string | null },
   ): Promise<AvailabilityView> {
     const { decision, ...context } = await this.availabilityDecision(site, services, opts);
     // CR-2026-108 Stage 2 — the public/staff surfaces get the customer-safe
@@ -221,14 +267,14 @@ export class BookingAvailabilityService {
    */
   async availabilityDecision(
     site: SiteLike,
-    services: Array<{ baseDurationMinutes: number | null }>,
-    opts: { from?: string; days?: number; audience: BookingAudience; excludeAppointmentId?: string | null; now?: Date; rules?: BookingRuleSet },
+    services: DurationCandidate[],
+    opts: { from?: string; days?: number; audience: BookingAudience; excludeAppointmentId?: string | null; now?: Date; rules?: BookingRuleSet; vehicleClass?: string | null },
   ): Promise<AvailabilityContext & { decision: AvailabilityDecision }> {
     const rules = opts.rules ?? (await this.loadRules(site.id));
     const now = opts.now ?? new Date();
     const dayInputs = this.dayInputs(site, rules, opts.audience, opts.from, opts.days, now);
     const existing = await this.existingBookings(site.id, dayInputs, this.prisma, opts.excludeAppointmentId ?? null);
-    const slotRules = this.slotRules(services, rules, opts.audience);
+    const slotRules = this.slotRules(services, rules, opts.audience, opts.vehicleClass);
     const decision = computeAvailabilityDecision(now, dayInputs, existing, slotRules);
     return {
       plannedMinutes: slotRules.durationMinutes,

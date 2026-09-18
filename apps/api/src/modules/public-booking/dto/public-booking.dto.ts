@@ -56,6 +56,19 @@ export class AvailabilityQueryDto {
   @ApiPropertyOptional({ description: 'Days to show (capped by the advance window)', default: 14 })
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(60)
   days?: number;
+
+  /**
+   * CR-2026-111 — which of the customer's vehicles the quote is for.
+   *
+   * The server reads the vehicle's service class from the record to resolve the
+   * duration (General Servicing is 90 for a sedan, 120 for an SUV). The caller
+   * supplies the id, never the class, so nobody can claim "sedan" to shorten the
+   * slot. An id that is unknown simply yields the base duration — the response
+   * reveals only slot times, which are public anyway.
+   */
+  @ApiPropertyOptional({ description: "The customer's vehicle, so the quoted length matches the vehicle class" })
+  @IsOptional() @IsUUID()
+  vehicleId?: string;
 }
 
 export class NewCustomerDto {
@@ -109,6 +122,24 @@ export class ServiceRequestDto {
   @ApiPropertyOptional({ description: 'Current odometer reading as the customer reads it' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(9_999_999)
   mileage?: number;
+
+  // --- CR-2026-111 — structured intake -------------------------------------
+
+  @ApiPropertyOptional({
+    description:
+      'The customer-facing card they chose (GENERAL_SERVICING, OIL_CHANGE, BATTERY, BRAKES, TIRES, INSPECTION, CLEANING, OTHER). ' +
+      'Kept alongside the resolved service codes because "what they asked for" and "what it mapped to" are different questions.',
+  })
+  @IsOptional() @IsString() @MaxLength(40)
+  category?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Symptom codes the customer ticked, e.g. BRAKE_NOISE. Intake information only — nothing downstream may read these as a diagnosis.',
+    type: [String],
+  })
+  @IsOptional() @IsArray() @IsString({ each: true }) @MaxLength(40, { each: true }) @ArrayMaxSize(12)
+  symptoms?: string[];
 }
 
 export class ConfirmBookingDto {

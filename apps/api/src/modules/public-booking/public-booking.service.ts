@@ -256,16 +256,44 @@ export class PublicBookingService {
   // Step 4 — availability
   // ---------------------------------------------------------------------------
 
-  async availability(serviceCodes: string[], from: string | undefined, days: number | undefined, clientKey: string) {
+  async availability(
+    serviceCodes: string[],
+    from: string | undefined,
+    days: number | undefined,
+    clientKey: string,
+    vehicleId?: string,
+  ) {
     const site = await this.resolveSite();
     const rules = await this.loadRules(site.id);
     this.assertEnabled(rules.booking);
     this.enforceRateLimit('availability', clientKey, rules.booking.rateLimitPer10Min * 3);
 
     const services = await this.resolveServices(serviceCodes, rules.booking);
+    const vehicleClass = await this.vehicleClassOf(vehicleId);
     // CR-2026-106 — the SAME engine and rules the staff wizard uses, with the
     // customer audience (min notice, advance window, closed dates, latest start).
-    return this.avail.availability(site, services, { from, days, audience: 'CUSTOMER', rules });
+    return this.avail.availability(site, services, { from, days, audience: 'CUSTOMER', rules, vehicleClass });
+  }
+
+  /**
+   * CR-2026-111 — the vehicle's service class, for duration resolution.
+   *
+   * General Servicing is approved at 90 minutes for a sedan and 120 for an SUV, so
+   * the duration cannot be known until the vehicle is. The class is read from the
+   * VEHICLE RECORD, never from the request: a public caller must not be able to
+   * assert "sedan" and buy itself a shorter slot than the work needs.
+   *
+   * Unknown (a vehicle being added for the first time, or one never classified)
+   * returns null, and the engine falls back to the service's base duration. That is
+   * the approved configuration's own default, not a guess made here.
+   */
+  private async vehicleClassOf(vehicleId?: string | null): Promise<string | null> {
+    if (!vehicleId) return null;
+    const vehicle = await this.prisma.vehicle.findUnique({
+      where: { id: vehicleId },
+      select: { serviceClass: true },
+    });
+    return vehicle?.serviceClass ?? null;
   }
 
   // ---------------------------------------------------------------------------
@@ -280,7 +308,12 @@ export class PublicBookingService {
 
     const services = await this.resolveServices(dto.serviceCodes, rules.booking);
     const start = this.parseSlot(dto.scheduledStartAt);
-    const slotRules = this.avail.slotRules(services, rules, 'CUSTOMER');
+    // CR-2026-111 — resolve the class BEFORE the duration, and only for a vehicle
+    // already on file. A vehicle being added in this same request has no class yet,
+    // so it plans at the base duration; classifying it from a typed make and model
+    // would be a guess, and the guess would set how long a bay is held.
+    const vehicleClass = await this.vehicleClassOf(dto.vehicleId);
+    const slotRules = this.avail.slotRules(services, rules, 'CUSTOMER', vehicleClass);
     const end = new Date(start.getTime() + slotRules.durationMinutes * MS);
     this.avail.assertSlotAllowed(start, end, site, rules, 'CUSTOMER');
     const serviceRequest = normaliseServiceRequest(dto.serviceRequest);
@@ -424,6 +457,23 @@ export class PublicBookingService {
           notes: serviceRequest.notes,
           customerReportedMileage: serviceRequest.mileage,
           services: { create: services.map((s) => ({ serviceTypeId: s.id, qty: 1, requestedNotes: serviceRequest.requestedNotes })) },
+          // CR-2026-111 — the structured intake, written in the SAME transaction
+          // as the appointment. A booking existing without the customer's own
+          // words is the failure this CR set out to end, so it must not be
+          // possible for one to commit without the other.
+          ...(serviceRequest.intake
+            ? {
+                bookingIntake: {
+                  create: {
+                    category: serviceRequest.intake.category,
+                    customerConcern: serviceRequest.intake.customerConcern,
+                    symptoms: serviceRequest.intake.symptoms,
+                    additionalComments: serviceRequest.intake.additionalComments,
+                    sourceChannel: SOURCE_CHANNEL,
+                  },
+                },
+              }
+            : {}),
         },
         include: this.appointmentInclude(),
       });
@@ -501,7 +551,9 @@ export class PublicBookingService {
     }
 
     const services = appt.services.map((s) => s.serviceType);
-    const slotRules = this.avail.slotRules(services, rules, 'CUSTOMER');
+    // CR-2026-111 — a move must hold the same length as the original booking, so the
+    // vehicle's class is resolved here too rather than silently reverting to base.
+    const slotRules = this.avail.slotRules(services, rules, 'CUSTOMER', await this.vehicleClassOf(appt.vehicleId));
     const start = this.parseSlot(dto.scheduledStartAt);
     const end = new Date(start.getTime() + slotRules.durationMinutes * MS);
     this.avail.assertSlotAllowed(start, end, site, rules, 'CUSTOMER');
@@ -607,7 +659,18 @@ export class PublicBookingService {
         isExternal: false,
         ...(rules.enforceOnlineBookable ? { bookableOnline: true } : {}),
       },
-      select: { id: true, code: true, name: true, customerFacingName: true, baseDurationMinutes: true },
+      // CR-2026-111 — the class-specific columns must be selected, or every lookup
+      // silently falls back to the base duration and the approved 90/120 split
+      // never applies to a single booking.
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        customerFacingName: true,
+        baseDurationMinutes: true,
+        sedanDurationMinutes: true,
+        suvDurationMinutes: true,
+      },
     });
     const missing = unique.filter((c) => !types.some((t) => t.code === c) || rules.excludedServiceCodes.includes(c));
     if (missing.length) throw new BadRequestException(`These services cannot be booked online: ${missing.join(', ')}`);
@@ -646,7 +709,16 @@ export class PublicBookingService {
 
   private appointmentInclude() {
     return {
-      services: { include: { serviceType: { select: { id: true, code: true, name: true, baseDurationMinutes: true } } } },
+      // CR-2026-111 — the class-specific columns travel with the appointment too, so
+      // a customer MOVING an SUV general service keeps its 120 minutes instead of
+      // silently shrinking back to the 90-minute base.
+      services: {
+        include: {
+          serviceType: {
+            select: { id: true, code: true, name: true, baseDurationMinutes: true, sedanDurationMinutes: true, suvDurationMinutes: true },
+          },
+        },
+      },
       customer: { select: { id: true, firstName: true, phone: true, email: true, notificationOptInSms: true, notificationOptInEmail: true } },
       vehicle: { select: { id: true, plateNumber: true, make: true, model: true, modelYear: true } },
     } satisfies Prisma.AppointmentInclude;
@@ -803,29 +875,54 @@ export function normaliseServiceRequest(sr: ServiceRequestDto | undefined | null
   notes: string | null;
   requestedNotes: string | undefined;
   mileage: number | null;
+  /** CR-2026-111 — the structured part, kept apart from the notes blob. */
+  intake: { category: string; customerConcern: string | null; symptoms: string[]; additionalComments: string | null } | null;
   view: { reasonForVisit: string | null; concern: string | null; description: string | null; mileage: number | null } | null;
 } {
   const reason = sr?.reasonForVisit?.trim() || null;
   const concern = sr?.concern?.trim() || null;
   const description = sr?.description?.trim() || null;
   const mileage = typeof sr?.mileage === 'number' && Number.isFinite(sr.mileage) && sr.mileage >= 0 ? Math.round(sr.mileage) : null;
-  if (!reason && !concern && !description && mileage === null) return { notes: null, requestedNotes: undefined, mileage: null, view: null };
+  const category = sr?.category?.trim().toUpperCase() || null;
+  const symptoms = [...new Set((sr?.symptoms ?? []).map((x) => x.trim().toUpperCase()).filter(Boolean))];
+
+  // The concern is what the customer WROTE; `reason` is a label they picked from
+  // a list. A sentence carries diagnostic context a category never will, so the
+  // sentence is preferred and the label is the fallback.
+  const intake =
+    category || concern || symptoms.length > 0 || description
+      ? {
+          category: category ?? 'UNSPECIFIED',
+          customerConcern: concern ?? reason,
+          symptoms,
+          additionalComments: description,
+        }
+      : null;
+
+  if (!reason && !concern && !description && mileage === null && !intake) {
+    return { notes: null, requestedNotes: undefined, mileage: null, intake: null, view: null };
+  }
   const lines: string[] = [];
   if (reason) lines.push(`Reason for visit: ${reason}`);
   if (concern) lines.push(`Customer concern: ${concern}`);
   if (description) lines.push(`Details: ${description}`);
   if (mileage !== null) lines.push(`Reported mileage: ${mileage.toLocaleString('en-US')}`);
   return {
-    notes: `[Customer booking] ${lines.join(' | ')}`,
+    notes: lines.length ? `[Customer booking] ${lines.join(' | ')}` : null,
     requestedNotes: [reason, concern].filter(Boolean).join(' — ') || undefined,
     mileage,
+    intake,
     view: { reasonForVisit: reason, concern, description, mileage },
   };
 }
 
 type AppointmentRow = Prisma.AppointmentGetPayload<{
   include: {
-    services: { include: { serviceType: { select: { id: true; code: true; name: true; baseDurationMinutes: true } } } };
+    services: {
+      include: {
+        serviceType: { select: { id: true; code: true; name: true; baseDurationMinutes: true; sedanDurationMinutes: true; suvDurationMinutes: true } };
+      };
+    };
     customer: { select: { id: true; firstName: true; phone: true; email: true; notificationOptInSms: true; notificationOptInEmail: true } };
     vehicle: { select: { id: true; plateNumber: true; make: true; model: true; modelYear: true } };
   };

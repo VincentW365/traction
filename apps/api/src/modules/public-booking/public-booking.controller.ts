@@ -53,7 +53,7 @@ export class PublicBookingController {
   @ApiOperation({ summary: 'Next available appointment and per-day slots (public)' })
   availability(@Query() q: AvailabilityQueryDto, @Req() req: Request) {
     const codes = q.serviceCodes.split(',').map((c) => c.trim()).filter(Boolean);
-    return this.booking.availability(codes, q.from, q.days, this.clientKey(req));
+    return this.booking.availability(codes, q.from, q.days, this.clientKey(req), q.vehicleId);
   }
 
   /**
