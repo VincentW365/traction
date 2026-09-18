@@ -109,7 +109,7 @@ async function main() {
           schedulingEnabled: true,
           capacity: 1,
           capacityRole: 'PRIMARY_SERVICE_POSITION',
-          notes: 'Confirmed heavy-lift bay (CR-2026-108 Stage 5C baseline).',
+          notes: 'PROVISIONAL — mapped to the confirmed eight-bay count, not yet checked in the building (CR-2026-108 §1).',
         },
         actor.id,
       );

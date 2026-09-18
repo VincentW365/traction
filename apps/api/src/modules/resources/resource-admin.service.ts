@@ -627,6 +627,49 @@ export class ResourceAdminService {
   }
 
   /**
+   * CR-2026-108 §1 — confirm that this record IS that physical bay.
+   *
+   * Management confirmed that eight heavy-lift bays exist. Nobody confirmed which
+   * database rows they are: that mapping was inferred from names, lift types and a
+   * code series, and an inference that looks identical to a verified fact is how a
+   * provisional label quietly becomes a business truth.
+   *
+   * Confirming changes NO capacity. The shop has the bays either way; what changes
+   * is what the readiness report is willing to claim about which row is which.
+   */
+  async setIdentityConfirmed(id: string, confirmed: boolean, actorUserId: string, note?: string) {
+    const resource = await this.prisma.workResource.findUnique({
+      where: { id },
+      select: { id: true, code: true, name: true, capacityRole: true, identityConfirmedAt: true, retiredAt: true },
+    });
+    if (!resource) throw new NotFoundException('Resource not found');
+    if (confirmed && resource.retiredAt) {
+      throw new BadRequestException('This resource is retired — there is nothing standing in the building to confirm.');
+    }
+    const already = resource.identityConfirmedAt != null;
+    if (already === confirmed) return { code: resource.code, confirmed, changed: false };
+
+    await this.prisma.workResource.update({
+      where: { id },
+      data: {
+        identityConfirmedAt: confirmed ? new Date() : null,
+        identityConfirmedByUserId: confirmed ? actorUserId : null,
+      },
+    });
+    await this.audit.log({
+      actorUserId,
+      action: confirmed ? 'RESOURCE_IDENTITY_CONFIRMED' : 'RESOURCE_IDENTITY_UNCONFIRMED',
+      entityType: 'WorkResource',
+      entityId: id,
+      beforeJson: { identityConfirmed: already },
+      afterJson: { identityConfirmed: confirmed, code: resource.code, name: resource.name },
+      notes: note,
+    });
+    this.logger.log(`Resource ${resource.code} identity ${confirmed ? 'confirmed' : 'unconfirmed'} by ${actorUserId}`);
+    return { code: resource.code, confirmed, changed: true };
+  }
+
+  /**
    * CR-2026-108 — resolve a legacy bay that has no current resource.
    *
    * The reconciliation gate used to demand a link for every legacy bay. On a floor
@@ -720,6 +763,7 @@ export class ResourceAdminService {
         select: {
           id: true, code: true, name: true, resourceCategory: true, capacity: true,
           capacityRole: true, isActive: true, retiredAt: true, schedulingEnabled: true,
+          identityConfirmedAt: true,
           legacyBayId: true,
           legacyBay: { select: { id: true, code: true, bayType: true } },
           operationalStatus: { select: { status: true } },
@@ -748,6 +792,9 @@ export class ResourceAdminService {
         category: String(r.resourceCategory),
         capacity: r.capacity,
         capacityRole: r.capacityRole,
+        // §1 — mapped from a name and a code series, or confirmed by somebody
+        // standing in front of it? Two different facts.
+        identityConfirmed: r.identityConfirmedAt != null,
         capabilities: r.serviceCapabilities.map((c) => c.capability),
         // Absence of a status row means AVAILABLE — `setStatus` upserts on change.
         operationalStatus: r.operationalStatus?.status ?? 'AVAILABLE',

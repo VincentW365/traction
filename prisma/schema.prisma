@@ -1980,6 +1980,16 @@ model WorkResource {
   /// it says what a thing is, not what it contributes — and `schedulingEnabled`
   /// means "may receive work", which a jack legitimately can.
   capacityRole        ResourceCapacityRole @default(UNVERIFIED) @map("capacity_role")
+  /// CR-2026-108 §1 — has a person confirmed that THIS ROW is THAT PHYSICAL BAY?
+  ///
+  /// Deliberately separate from `capacityRole`. The role says what kind of thing
+  /// it is; this says whether the identity was established by somebody standing in
+  /// front of it, or inferred from a name and a code series. Management confirmed
+  /// that eight heavy-lift bays exist — that is a fact — without confirming which
+  /// database rows they are. Treating the second as settled because the first is
+  /// would turn an inference into a business fact nobody checked.
+  identityConfirmedAt       DateTime? @map("identity_confirmed_at") @db.Timestamptz
+  identityConfirmedByUserId String?   @map("identity_confirmed_by_user_id") @db.Uuid
   /// CR-2026-108 Stage 5B — the legacy WorkBay this resource supersedes, when they
   /// are the same physical position. Set ONLY by explicit reconciliation: legacy
   /// BAY-01 is a GENERAL bay while resource BAY-01 is "Heavy Lift 1", so matching

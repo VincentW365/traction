@@ -296,6 +296,25 @@ export class ResourcesController {
     return this.admin.setLegacyBayDisposition(bayId, { disposition: body?.disposition ?? '', note: body?.note }, user.sub);
   }
 
+  /**
+   * CR-2026-108 §1 — confirm this record IS that physical bay.
+   *
+   * The COUNT of eight heavy-lift bays is management-confirmed. Which database
+   * rows they are was inferred, and an inference that looks like a verified fact
+   * is how a provisional label quietly becomes business truth. Confirming changes
+   * no capacity; it changes what the readiness report is willing to claim.
+   */
+  @Post(':id/confirm-identity')
+  @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
+  @ApiOperation({ summary: 'Confirm (or withdraw confirmation) that this record is the physical position it names' })
+  confirmIdentity(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { confirmed?: boolean; note?: string },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.admin.setIdentityConfirmed(id, body?.confirmed !== false, user.sub, body?.note);
+  }
+
   @Post(':id/retire')
   @RequirePermission(PERMISSIONS.RESOURCE_MANAGE)
   @ApiOperation({ summary: 'Retire a resource permanently. History is kept; new work is refused.' })

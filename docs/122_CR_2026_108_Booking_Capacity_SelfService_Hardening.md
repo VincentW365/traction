@@ -1959,3 +1959,146 @@ resource reservations          : 0
 ```
 
 `deploy:check` PASS — 25 ok, 1 warning, 0 failures.
+
+---
+
+## §P. Readiness refinements and close-out
+
+No new scheduling architecture. Four corrections to what the platform was willing
+to *claim* and what it was willing to *block on*.
+
+### P1. §1 — the count is confirmed; the identities are not
+
+Management confirmed that **eight heavy-lift bays exist**. Nobody confirmed that
+BAY-01/02/03/06/07/08/09/10 *are* those eight bays — that mapping was inferred
+from names, lift types and a code series. The platform had no way to tell those
+two facts apart, so a provisional mapping read exactly like a verified one.
+
+`WorkResource.identityConfirmedAt` / `identityConfirmedByUserId`, migration
+`20260918140000`, additive, every existing row NULL — which is the truthful answer.
+
+Deliberately separate from `capacityRole`: the role says what kind of thing it is,
+this says whether the identity was established by somebody standing in front of it.
+Confirming changes **no capacity** — the shop has the bays either way. What changes
+is what the readiness report claims.
+
+All eight currently report as **PROVISIONAL / REQUIRES PHYSICAL CONFIRMATION**, on
+the dashboard by code and on Confirm Work Positions as a tick-box. BAY-03 remains
+separately flagged: it is recorded as a `sedan` lift at STANDARD weight, not `heavy`.
+
+### P2. §3/§4 — blockers and warnings were conflated
+
+The earlier gate blocked production on *any* unclassified resource. That was wrong
+in a way that never resolves: an UNVERIFIED resource contributes **zero**, so
+ignoring it produces a **conservative** model. It cannot overbook anyone — the
+worst it can do is under-offer capacity the shop has. A jack nobody had labelled
+could veto a scheduling model that was already safe, forever.
+
+| | Meaning | Gates production? |
+| --- | --- | --- |
+| **BLOCKER** | A customer can book work the shop has no verified way to do | Yes |
+| **WARNING** | A resource contributes zero and no public service depends on it | **No** |
+
+Blockers now: any public service INCOMPLETE; contradictory configuration on a
+counted position; no active inventory; shadow validation missing or stale; a
+validation that found the shop oversold; a validation that could not evaluate every
+public service.
+
+Warnings: optional unclassified resources; provisional identities; single-position
+services. All loud, none blocking.
+
+`undersold` deliberately does not block. Refusing work the shop could have done is
+a lost opportunity, not a safety failure.
+
+**§4 — MSHOP-EXT.** EXTERNAL is now excluded from the unresolved *internal* total
+entirely, not merely exempted from blocking. It is somebody else's resource: it
+contributes zero internal capacity and is out of scope, so the count fell from 8 to
+**7 optional unverified + 1 external**. It was not reclassified as a bay to clear
+anything.
+
+### P3. §6/§8 — the gate is public-service fulfillability
+
+One verified position is a valid answer when one is what physically exists. A
+single position is reported as an operational risk, never as evidence a second
+ought to exist.
+
+The activation gate is now the service table:
+
+| Service | Needs | Verified positions | Status |
+| --- | --- | ---: | --- |
+| Tire Rotation | GENERAL | 8 | READY |
+| Brake Inspection | GENERAL | 8 | READY |
+| Vehicle Cleaning | GENERAL | 8 | READY |
+| Oil Change | LUBE | 0 | **INCOMPLETE** |
+| Wheel Alignment | ALIGNMENT | 0 | **INCOMPLETE** |
+| Pre-Purchase Inspection | INSPECTION | 0 | **INCOMPLETE** |
+
+### P4. A real hole closed: the stale-validation check never fired
+
+The `shadow-validated` check compared the recorded fingerprint against one supplied
+by the caller — and the endpoint supplied none, so `!fingerprint || …` passed
+unconditionally. A validation run from before a bay was commissioned would have
+counted as current.
+
+The readiness service now computes the current digest itself, using the same
+`fingerprintOf` the shadow run stamps with, over the same row set (all rows,
+retired included). Proven live: assigning three capabilities moved the fingerprint
+`f069c894ad034d0b → 62ca319fdef9a8b1` and the stale validation correctly became a
+blocker until re-run.
+
+### P5. Proven end to end, then rolled back
+
+```
+ 1. before: production NOT READY — 2 blockers, 2 warnings
+ 2. incomplete: INSP-01, OIL-01, TIR-02
+ 3. assigned BAY-01=LUBE, BAY-02=ALIGNMENT, BAY-03=INSPECTION — one position each
+ 4. services now: BRK-01:8 CLEAN-01:8 INSP-01:1 OIL-01:1 TIR-01:8 TIR-02:1
+ 5. production NOT READY — blockers are now only the stale validation
+ 6. fingerprint f069c894ad034d0b -> 62ca319fdef9a8b1
+ 7. re-validated: 1404 slots, 1404 agree, 0 oversold, 0 undersold, 0 incomplete
+ 8. production READY — 0 blockers, 3 warnings
+10. the guard would now permit RESOURCE_AWARE — NOT activated (§18)
+11. rolled back: 3 services incomplete again, GENERAL:8
+```
+
+That run also hits §15's target exactly: **oversold 0, incomplete 0**, every
+capability resolved. The shop was returned to its found state — those are
+management's decisions.
+
+### P6. Software completion (§17)
+
+| # | Requirement | Evidence |
+| --- | --- | --- |
+| 1 | Eight-bay baseline representable | `pnpm resources:baseline`, idempotent |
+| 2 | Identity mapping correctable | Confirm-identity control, audited |
+| 3 | Add resources without deployment | Proven: 8 → 9 positions |
+| 4 | Remove from service without deployment | Proven: maintenance 9 → 8 |
+| 5 | Change capabilities without deployment | Proven: alignment 0 → 1 position |
+| 6 | Unverified safely contribute zero | Solver + readiness tests |
+| 7 | Resource-aware SHADOW works | 1404 slots compared live |
+| 8 | Simulator compares both | `/admin/booking-simulator` |
+| 9 | Activation preflight | HTTP 400 with named blockers |
+| 10 | Public-service completeness evaluated | The §8 table is the gate |
+| 11 | Changes audited | Every write through the audited admin service |
+| 12 | Expansion is configuration | §23 acceptance, all five cases |
+| 13 | Tests and deploy checks pass | 1572 passed; `deploy:check` PASS |
+
+Exact overflow count is not a completion dependency (§10). Today: 0 verified
+overflow. Verify OVF-01 and capacity updates; verify OVF-02 and it updates again;
+add OVF-03 and it updates again. No deploy, no global capacity edit.
+
+### P7. Production state at completion (§18)
+
+```
+booking_enforce_online_bookable     : true, 6 pilot services
+appointment_duration_source         : DEFAULT
+booking_capacity_mode               : FIXED
+booking_max_concurrent_appointments : 2  (unchanged)
+RESOURCE_AWARE                      : SHADOW only
+resources                           : 8 PRIMARY (provisional identities)
+                                      4 SUPPORT_EQUIPMENT
+                                      7 UNVERIFIED (warnings)
+                                      1 EXTERNAL (out of scope)
+capabilities                        : GENERAL x8
+shadow validation                   : f069c894ad034d0b, 0 oversold, 702 incomplete
+```

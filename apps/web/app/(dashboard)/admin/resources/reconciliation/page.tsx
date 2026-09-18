@@ -35,6 +35,8 @@ interface ResourceRow {
   category: string;
   capacity: number;
   capacityRole: string;
+  /** §1 — confirmed in the building, or mapped from a name and a code series? */
+  identityConfirmed: boolean;
   capabilities: string[];
   operationalStatus: string;
   isActive: boolean;
@@ -200,6 +202,12 @@ export default function ResourceReconciliationPage() {
       api.post(`/resources/${id}/legacy-bay`, { legacyBayId }),
     onSuccess: refresh,
     onError: (e) => onError(e, 'Could not change that link.'),
+  });
+  const confirmIdentity = useMutation({
+    mutationFn: ({ id, confirmed }: { id: string; confirmed: boolean }) =>
+      api.post(`/resources/${id}/confirm-identity`, { confirmed }),
+    onSuccess: refresh,
+    onError: (e) => onError(e, 'Could not record that confirmation.'),
   });
   const setDisposition = useMutation({
     mutationFn: ({ bayId, disposition, note }: { bayId: string; disposition: string; note?: string }) =>
@@ -375,7 +383,8 @@ export default function ResourceReconciliationPage() {
                   onRole={(capacityRole) => setRole.mutate({ id: r.id, capacityRole })}
                   onCapabilities={(capabilities) => setCapabilities.mutate({ id: r.id, capabilities })}
                   onLink={(legacyBayId) => setLink.mutate({ id: r.id, legacyBayId })}
-                  busy={setRole.isPending || setCapabilities.isPending || setLink.isPending}
+                  onConfirmIdentity={(confirmed) => confirmIdentity.mutate({ id: r.id, confirmed })}
+                  busy={setRole.isPending || setCapabilities.isPending || setLink.isPending || confirmIdentity.isPending}
                 />
               ))
             )}
@@ -399,7 +408,8 @@ export default function ResourceReconciliationPage() {
                   onRole={(capacityRole) => setRole.mutate({ id: r.id, capacityRole })}
                   onCapabilities={(capabilities) => setCapabilities.mutate({ id: r.id, capabilities })}
                   onLink={(legacyBayId) => setLink.mutate({ id: r.id, legacyBayId })}
-                  busy={setRole.isPending || setCapabilities.isPending || setLink.isPending}
+                  onConfirmIdentity={(confirmed) => confirmIdentity.mutate({ id: r.id, confirmed })}
+                  busy={setRole.isPending || setCapabilities.isPending || setLink.isPending || confirmIdentity.isPending}
                 />
               ))
             )}
@@ -581,6 +591,7 @@ function ResourceCard({
   onRole,
   onCapabilities,
   onLink,
+  onConfirmIdentity,
   busy,
 }: {
   r: ResourceRow;
@@ -590,6 +601,7 @@ function ResourceCard({
   onRole: (role: string) => void;
   onCapabilities: (capabilities: string[]) => void;
   onLink: (legacyBayId: string | null) => void;
+  onConfirmIdentity: (confirmed: boolean) => void;
   busy: boolean;
 }) {
   const toggleCapability = (c: string) => {
@@ -662,6 +674,34 @@ function ResourceCard({
                 </label>
               ))}
             </div>
+          </fieldset>
+
+          {/*
+            §1 — the count of eight heavy-lift bays is management-confirmed. WHICH
+            row is WHICH bay was inferred from names and a code series, and an
+            inference that looks like a verified fact is how a provisional label
+            quietly becomes business truth. Confirming changes no capacity.
+          */}
+          <fieldset disabled={busy}>
+            <legend className="text-xs font-semibold text-slate-700 mb-1.5">Is this record really that bay?</legend>
+            <label className="flex items-start gap-2 p-2 rounded-lg hover:bg-white cursor-pointer border border-transparent hover:border-slate-200">
+              <input
+                type="checkbox"
+                checked={r.identityConfirmed}
+                onChange={(e) => onConfirmIdentity(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="text-sm font-medium text-slate-900">
+                  I have checked this in the building
+                </span>
+                <span className="block text-xs text-slate-500 leading-relaxed">
+                  {r.identityConfirmed
+                    ? 'Confirmed — this record is that physical position.'
+                    : 'Not yet checked. The record was matched from its name and code, which is a good guess, not a fact. It still counts toward capacity either way.'}
+                </span>
+              </span>
+            </label>
           </fieldset>
 
           <fieldset disabled={busy}>
