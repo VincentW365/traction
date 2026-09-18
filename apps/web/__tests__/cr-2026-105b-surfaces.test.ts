@@ -61,11 +61,16 @@ describe('CR-2026-105b — authoritative ETA surfaces', () => {
     }
   });
 
-  it('the ETA / capacity rules are editable under Settings → Booking & ETA', () => {
-    const src = read('app/(dashboard)/admin/settings/page.tsx');
-    expect(src).toContain("label: 'Booking & ETA'");
-    expect(src).toContain("'default_appointment_duration_minutes'");
-    expect(src).toContain("'booking_max_concurrent_appointments'");
-    expect(src).toContain("'overdue_job_minutes'");
+  it('the ETA / capacity rules are editable under Settings', () => {
+    // CR-2026-109 — the key list moved out of the page into the settings
+    // catalogue, which is now what decides where a rule appears and what it is
+    // called. The guarantee is the same one: these rules stay editable.
+    const src = read('lib/settings-catalogue.ts');
+    expect(src).toContain("key: 'default_appointment_duration_minutes'");
+    expect(src).toContain("key: 'booking_max_concurrent_appointments'");
+    expect(src).toContain("key: 'overdue_job_minutes'");
+    // ...and under a heading a manager can find, rather than a database term.
+    expect(src).toContain("title: 'Booking & Scheduling'");
+    expect(src).toContain("title: 'Scheduling model'");
   });
 });

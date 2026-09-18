@@ -56,7 +56,8 @@ describe('CR-2026-105c — customer self-service booking', () => {
     for (const s of ['Appointments & Bookings', 'No-show rate', 'Utilisation', 'Estimated vs actual completion', 'ExportMenu', 'Print Report']) expect(report).toContain(s);
     expect(read('components/sidebar.tsx')).toContain("href: '/reports/appointments'");
     expect(read('app/(dashboard)/reports/page.tsx')).toContain('href="/reports/appointments"');
-    const settings = read('app/(dashboard)/admin/settings/page.tsx');
-    for (const k of ["'booking_enabled'", "'booking_max_concurrent_appointments'", "'appointment_duration_source'", "'booking_closed_dates'"]) expect(settings).toContain(k);
+    // CR-2026-109 — the settings catalogue now owns which rules are editable.
+    const settings = read('lib/settings-catalogue.ts');
+    for (const k of ["key: 'booking_enabled'", "key: 'booking_max_concurrent_appointments'", "key: 'appointment_duration_source'", "key: 'booking_closed_dates'"]) expect(settings).toContain(k);
   });
 });

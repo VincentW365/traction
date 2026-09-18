@@ -124,6 +124,86 @@
     @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold tracking-wide;
   }
 
+  /* ----------------------------------------------------------------
+     CR-2026-109 — primitives shared by Settings and Resources & Bays.
+     Added to the ONE design system rather than a parallel set for the
+     admin console: two stylesheets drift, and then two screens that
+     should look identical quietly stop matching.
+     ---------------------------------------------------------------- */
+
+  /* A status chip. Always paired with a word — colour alone never carries
+     the meaning (a manager with a colour deficiency reads the same screen). */
+  .chip {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border;
+  }
+  .chip-neutral { @apply bg-slate-50 text-slate-700 border-slate-200; }
+  .chip-good    { @apply bg-emerald-50 text-emerald-700 border-emerald-200; }
+  .chip-warn    { @apply bg-amber-50 text-amber-800 border-amber-200; }
+  .chip-bad     { @apply bg-red-50 text-red-700 border-red-200; }
+  .chip-info    { @apply bg-blue-50 text-blue-700 border-blue-200; }
+
+  /* A settings surface: grouped rows with dividers, no border per input. */
+  .surface {
+    @apply bg-white rounded-xl border border-slate-200/80;
+  }
+  .surface-header {
+    @apply px-5 py-4 border-b border-slate-100;
+  }
+
+  /* One setting: label + help on the left, control on the right. Stacks on
+     narrow screens so a label never collides with its own input. */
+  .setting-row {
+    @apply px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-8;
+  }
+  .setting-label {
+    @apply text-sm font-medium text-slate-900;
+  }
+  .setting-help {
+    @apply text-sm text-slate-500 leading-relaxed mt-0.5;
+  }
+  .setting-control {
+    @apply shrink-0 sm:w-72;
+  }
+
+  /* Switch. A real checkbox underneath, so the keyboard, the label
+     association and the accessibility tree all work without extra code. */
+  .switch {
+    @apply relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full
+      border-2 border-transparent transition-colors duration-200
+      focus-within:ring-2 focus-within:ring-blue-500/50 focus-within:ring-offset-2;
+  }
+  .switch-on  { @apply bg-blue-600; }
+  .switch-off { @apply bg-slate-300; }
+  .switch-knob {
+    @apply pointer-events-none inline-block h-5 w-5 transform rounded-full
+      bg-white shadow ring-0 transition duration-200;
+  }
+
+  /* Segmented control for short enumerations. */
+  .segmented {
+    @apply inline-flex w-full rounded-lg bg-slate-100 p-1 gap-1;
+  }
+  .segmented-option {
+    @apply flex-1 rounded-md px-2 py-1.5 text-[13px] font-medium leading-tight text-slate-600
+      transition-colors cursor-pointer text-center
+      hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50;
+  }
+  .segmented-option-active {
+    @apply bg-white text-slate-900 shadow-sm;
+  }
+
+  /* Number + unit, so the unit is never guessed from the label. */
+  .input-with-unit {
+    @apply flex items-stretch rounded-md border border-slate-300 bg-white
+      focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-colors;
+  }
+  .input-with-unit input {
+    @apply w-full rounded-l-md px-3 py-2 text-sm text-slate-900 bg-transparent
+      focus:outline-none;
+  }
+  .input-with-unit .unit {
+    @apply flex items-center px-3 text-xs text-slate-500 bg-slate-50 border-l border-slate-200 rounded-r-md whitespace-nowrap;
+  }
 }
 
 /* CR-2026-100 §16 — print-optimised reports: A4, sane margins, no app chrome

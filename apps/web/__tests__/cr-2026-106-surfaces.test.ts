@@ -150,7 +150,8 @@ describe('CR-2026-106 — customer booking (public page)', () => {
     expect(review).toContain("decision: 'MERGE_INTO_EXISTING'");
     expect(review).toContain('Nothing is merged until you decide');
     expect(read('app/(dashboard)/check-in/page.tsx')).toContain('Use reported mileage');
-    const settings = read('app/(dashboard)/admin/settings/page.tsx');
-    for (const k of ["'customer_booking_latest_start'", "'staff_latest_start_enforced'", "'booking_share_message_template'"]) expect(settings).toContain(k);
+    // CR-2026-109 — the settings catalogue now owns which rules are editable.
+    const settings = read('lib/settings-catalogue.ts');
+    for (const k of ["key: 'customer_booking_latest_start'", "key: 'staff_latest_start_enforced'", "key: 'booking_share_message_template'"]) expect(settings).toContain(k);
   });
 });

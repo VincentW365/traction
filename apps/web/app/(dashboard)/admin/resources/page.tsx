@@ -43,6 +43,8 @@ interface WorkResource {
   capacityRole?: string;
   /** CR-2026-108 §21 — the kinds of work that can happen here. */
   serviceCapabilities?: Array<{ capability: string }>;
+  /** Null until somebody confirms this record IS that physical position. */
+  identityConfirmedAt?: string | null;
   retiredAt: string | null;
   retireReason: string | null;
   updatedAt: string;
@@ -96,11 +98,11 @@ const CATEGORY_LABEL: Record<string, string> = {
  * difference between them is a decision versus the absence of one.
  */
 const ROLE_LABEL: Record<string, string> = {
-  UNVERIFIED: 'Not confirmed — counts for nothing',
+  UNVERIFIED: 'Needs verification',
   PRIMARY_SERVICE_POSITION: 'Work position',
   OVERFLOW_SERVICE_POSITION: 'Overflow position',
-  SUPPORT_EQUIPMENT: 'Equipment — not a position',
-  PLACEHOLDER: 'Planned — not built',
+  SUPPORT_EQUIPMENT: 'Equipment',
+  PLACEHOLDER: 'Planned',
 };
 
 const ROLE_BADGE: Record<string, string> = {
@@ -110,6 +112,18 @@ const ROLE_BADGE: Record<string, string> = {
   SUPPORT_EQUIPMENT: 'bg-slate-100 text-slate-600 border border-slate-200',
   PLACEHOLDER: 'bg-slate-100 text-slate-500 border border-slate-200',
 };
+
+/** The sentence behind each short label, shown on hover and to screen readers. */
+const ROLE_HELP: Record<string, string> = {
+  UNVERIFIED: 'Nobody has confirmed what this is. It counts for nothing until someone does.',
+  PRIMARY_SERVICE_POSITION: 'A vehicle can be worked on here on its own. Counts as one position.',
+  OVERFLOW_SERVICE_POSITION: 'A genuine extra vehicle position, used in defined circumstances.',
+  SUPPORT_EQUIPMENT: 'A jack, a stand or a tool used AT a position. Counts for nothing, deliberately.',
+  PLACEHOLDER: 'Written down but not standing in the building yet.',
+};
+
+/** Roles that contribute to capacity, and so can be provisionally mapped. */
+const COUNTS_AS_POSITION = new Set(['PRIMARY_SERVICE_POSITION', 'OVERFLOW_SERVICE_POSITION']);
 
 const WORK_LABEL: Record<string, string> = {
   ALIGNMENT: 'Alignment',
@@ -219,11 +233,15 @@ export default function ResourcesAdminPage() {
   const resQuery = useQuery<WorkResource[]>({
     queryKey: ['resources-admin', siteId],
     queryFn: () => api.get(`/resources?siteId=${siteId}`),
+    // Until the session resolves, siteId is "" and the API is asked for an
+    // empty UUID. Waiting costs one render; not waiting costs a 500.
+    enabled: !!siteId,
     refetchInterval: 30_000,
   });
   const overviewQuery = useQuery<Overview>({
     queryKey: ['resources-overview', siteId],
     queryFn: () => api.get(`/resources/overview-admin?siteId=${siteId}`),
+    enabled: !!siteId,
     refetchInterval: 30_000,
   });
 
@@ -513,9 +531,23 @@ function ResourceCard({
           confusion that costs an afternoon.
         */}
         <div className="flex flex-wrap items-center gap-1.5 mt-2">
-          <span className={`badge text-[10px] ${ROLE_BADGE[r.capacityRole ?? 'UNVERIFIED'] ?? 'bg-slate-100 text-slate-600'}`}>
+          <span
+            className={`badge text-[10px] ${ROLE_BADGE[r.capacityRole ?? 'UNVERIFIED'] ?? 'bg-slate-100 text-slate-600'}`}
+            title={ROLE_HELP[r.capacityRole ?? 'UNVERIFIED']}
+          >
             {ROLE_LABEL[r.capacityRole ?? 'UNVERIFIED'] ?? r.capacityRole}
           </span>
+          {/* §21 — counted as capacity, but matched from its name rather than
+              checked in the building. The count is confirmed; this record's
+              identity is not, and the card should not imply otherwise. */}
+          {COUNTS_AS_POSITION.has(r.capacityRole ?? '') && !r.identityConfirmedAt && (
+            <span
+              className="badge bg-slate-100 text-slate-600 text-[10px] border border-slate-200"
+              title="Matched from its name and code, not yet checked in the building."
+            >
+              Provisional
+            </span>
+          )}
           {(r.serviceCapabilities ?? []).map((c) => (
             <span key={c.capability} className="badge bg-sky-50 text-sky-700 text-[10px] border border-sky-200">
               {WORK_LABEL[c.capability] ?? c.capability}
