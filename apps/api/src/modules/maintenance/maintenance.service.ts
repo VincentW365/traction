@@ -10,11 +10,11 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { MaintenanceReminderService } from './maintenance-reminder.service';
 import {
-  VehicleIdentityProvider,
+  type VehicleIdentityProvider,
   VEHICLE_IDENTITY_PROVIDER,
 } from './providers/vehicle-identity.provider.interface';
 import {
-  FluidSpecProvider,
+  type FluidSpecProvider,
   FLUID_SPEC_PROVIDER,
 } from './providers/fluid-spec.provider.interface';
 import {

@@ -8,9 +8,10 @@
     "start": "node dist/main",
     "start:prod": "node dist/main",
     "lint": "echo 'no lint configured yet — typecheck is the enforced gate (see CR-2026-094)'",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.portable.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck:portable": "tsc -p tsconfig.portable.json"
   },
   "dependencies": {
     "@bsop/config": "workspace:*",

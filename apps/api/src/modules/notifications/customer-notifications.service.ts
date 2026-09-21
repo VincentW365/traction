@@ -15,8 +15,8 @@ import { AuditService } from '../audit/audit.service';
 import {
   NOTIFICATION_CAPABILITIES,
   NOTIFICATION_PROVIDER,
-  NotificationCapabilities,
-  NotificationProvider,
+  type NotificationCapabilities,
+  type NotificationProvider,
 } from './providers/notification-provider.interface';
 import { deliveryDisplayState } from './notifications.service';
 import { NotificationTemplateStore } from './templates/template-store.service';

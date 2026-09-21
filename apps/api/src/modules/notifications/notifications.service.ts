@@ -4,8 +4,8 @@ import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import {
   NOTIFICATION_CAPABILITIES,
   NOTIFICATION_PROVIDER,
-  NotificationCapabilities,
-  NotificationProvider,
+  type NotificationCapabilities,
+  type NotificationProvider,
 } from './providers/notification-provider.interface';
 import { NotificationChannel, NotificationDeliveryStatus, NotificationReason } from '@prisma/client';
 import { renderEmailContent } from './templates/email-templates';

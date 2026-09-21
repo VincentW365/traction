@@ -1,0 +1,39 @@
+{
+  // CR-2026-115 — compile the API the way a BUNDLER would, as a guard.
+  //
+  // WHY THIS FILE EXISTS
+  //   The API ships as CommonJS (tsconfig.json, `module: commonjs`), and three
+  //   deploy attempts failed on errors that configuration cannot produce:
+  //
+  //     TS1272  "A type referenced in a decorated signature must be imported
+  //              with 'import type' … when 'isolatedModules' and
+  //              'emitDecoratorMetadata' are enabled"
+  //     TS2339  "Property 'id' does not exist on type 'never'"
+  //
+  //   Both are real, and both are invisible to `tsc --noEmit -p tsconfig.json`,
+  //   to `nest build`, and to `pnpm build`. They appear only when this source is
+  //   type-checked under ESM module settings — which is exactly what a Next.js
+  //   build does, and what happened when the API was built on Vercel.
+  //
+  //   Under `module: esnext`, TypeScript elides imports differently, so a type
+  //   used in a decorated signature must be imported with the `type` modifier or
+  //   the emitted decorator metadata would reference a binding that is gone.
+  //   Under `moduleResolution: bundler`, inference differs too, which is how a
+  //   bare `Promise.resolve([])` became `never[]` there and not here.
+  //
+  // WHAT TO DO WHEN IT FAILS
+  //   Fix the source, not this file. Both classes of failure have fixes that are
+  //   correct under every configuration: add the `type` modifier to an import
+  //   used only as a type, and give an empty-result branch the same declared row
+  //   type as the query it stands in for.
+  //
+  //   This config is a LINT, not a build target. Nothing is emitted from it and
+  //   the API is not shipped as ESM.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "noEmit": true
+  }
+}
