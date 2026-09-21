@@ -96,7 +96,9 @@ export class CustomersController {
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCustomerDto,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.customersService.update(id, dto);
+    // CR-2026-114 — a preference change is attributed to the person who made it.
+    return this.customersService.update(id, dto, user.sub);
   }
 }

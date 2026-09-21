@@ -25,28 +25,19 @@
  */
 import 'dotenv/config';
 import { PrismaClient, Prisma } from '@prisma/client';
+import {
+  pickupToCollection,
+  placeholderDrift,
+} from '../apps/api/src/modules/notifications/templates/wording-transform';
 
 const prisma = new PrismaClient();
 const COMMIT = process.argv.includes('--commit');
 
 /**
- * The one substitution: the WORD, in prose, with its case preserved.
- *
- * `{{placeholder}}` tokens are left strictly alone. They are an allow-listed
- * vocabulary, not wording: renaming `{{pickupDetails}}` to `{{collectionDetails}}`
- * would produce a template the engine cannot fill and a manager cannot save.
- * (Found exactly that way — the first version of this script did it.)
+ * CR-2026-114 §8 — the substitution now lives in a tested module that cannot
+ * touch a {{placeholder}}. See templates/wording-transform.ts for why.
  */
-function toCollection(text: string): string {
-  return text
-    .split(/(\{\{[^}]*\}\})/g)
-    .map((part) =>
-      part.startsWith('{{')
-        ? part
-        : part.replace(/Pickup/g, 'Collection').replace(/pickup/g, 'collection'),
-    )
-    .join('');
-}
+const toCollection = pickupToCollection;
 
 async function main(): Promise<void> {
   const rows = await prisma.notificationTemplate.findMany({
@@ -88,6 +79,15 @@ async function main(): Promise<void> {
     if (!COMMIT) {
       console.log('  (dry run — pass --commit to apply)');
       continue;
+    }
+
+    // CR-2026-114 §8 — refuse to write a change that altered the template's
+    // VOCABULARY. Renaming a placeholder is a migration, not a wording tweak.
+    const drift = placeholderDrift(row.body + (row.subject ?? ''), next.body + (next.subject ?? ''));
+    if (drift.added.length || drift.removed.length) {
+      throw new Error(
+        `Refusing to write ${row.key}: the transformation changed template variables (removed ${drift.removed.join(', ') || 'none'}, added ${drift.added.join(', ') || 'none'}). Placeholders are a registered vocabulary and are migrated deliberately, never as a side effect of wording.`,
+      );
     }
 
     await prisma.$transaction(async (tx) => {

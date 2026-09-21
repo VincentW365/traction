@@ -569,7 +569,9 @@ export default function BookPage() {
                 <label className="block">
                   <span className="input-label">Email</span>
                   <input value={email} onChange={(e) => setEmail(e.target.value)} className="input-field min-h-12" type="email" inputMode="email" autoComplete="email" required />
-                  <span className="mt-1 block text-xs text-slate-500">We email your confirmation and your link to change or cancel.</span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    Enter your email address to receive your booking confirmation and appointment updates.
+                  </span>
                 </label>
                 <div className="flex flex-wrap gap-x-4 text-sm text-slate-700">
                   <label className="flex min-h-11 cursor-pointer items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={emailOptIn} onChange={(e) => setEmailOptIn(e.target.checked)} /> Also email me service reminders and offers (optional)</label>

@@ -169,8 +169,10 @@ describe('CR-2026-112 §10/§12 — test safety and delivery honesty are unchang
 describe('CR-2026-112 §2 — the public booking page asks for what it needs', () => {
   const src = read('app/book/page.tsx');
 
+  // CR-2026-114 §5 rephrased the guidance in plainer words; the requirement
+  // itself is unchanged and is asserted in cr-2026-114-surfaces.
   it('requires an email and explains why', () => {
-    expect(src).toContain('We email your confirmation and your link to change or cancel.');
+    expect(src).toContain('Enter your email address to receive your booking confirmation and appointment updates.');
     expect(src).not.toContain('Email (optional)');
   });
 });

@@ -24,9 +24,11 @@ import { EMAIL_ONLY_RELEASE, NO_EMAIL_ON_FILE } from './notification-messages';
 import {
   decideConsent,
   MIN_OVERRIDE_REASON_LENGTH,
+  PREFERENCE_LABELS,
   purposeForReason,
   type CommunicationPurposeName,
 } from './consent-policy';
+import { CommunicationPreferenceService } from './communication-preference.service';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import {
   buildVehicleDescription,
@@ -104,6 +106,9 @@ export class CustomerNotificationsService {
     // CR-2026-112 — the shared template store: the composer and the automatic
     // flows now read the same manager-editable wording.
     private templates: NotificationTemplateStore,
+    // CR-2026-114 — what the customer has actually told us (UNKNOWN / ALLOWED /
+    // DECLINED), rather than a boolean that cannot tell the first two apart.
+    private preferences: CommunicationPreferenceService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -252,9 +257,10 @@ export class CustomerNotificationsService {
     // CR-2026-113 — what this message is FOR, and whether the customer's
     // optional-email preference stands in the way of it.
     const purpose = await this.purposeOf(input.reason);
+    const preference = await this.preferences.statusFor(c.id, purpose as never);
     const consent = decideConsent({
       purpose,
-      customerOptedIn: c.notificationOptInEmail,
+      preference,
       purposesRequiringConsent: await this.templates.purposesRequiringConsent(),
     });
 
@@ -284,7 +290,9 @@ export class CustomerNotificationsService {
       purpose,
       consent: {
         purpose,
-        optedIn: c.notificationOptInEmail,
+        /** CR-2026-114 — the recorded state, and how to say it to a person. */
+        preference,
+        preferenceLabel: PREFERENCE_LABELS[preference],
         requiresConsent: consent.requiresConsent,
         allowed: consent.allowed,
         blockedReason: consent.blockedReason,
@@ -390,9 +398,10 @@ export class CustomerNotificationsService {
     //     gated, and sending anyway is an exceptional, permissioned, reasoned,
     //     audited act.
     const purpose = await this.purposeOf(input.reason);
+    const preference = await this.preferences.statusFor(c.id, purpose as never);
     const consent = decideConsent({
       purpose,
-      customerOptedIn: c.notificationOptInEmail,
+      preference,
       purposesRequiringConsent: await this.templates.purposesRequiringConsent(),
     });
 
@@ -404,7 +413,7 @@ export class CustomerNotificationsService {
       if (!overrideRequested) {
         throw new ConflictException({
           message: consent.blockedReason ?? 'This customer has not opted in to optional emails.',
-          errors: { code: 'CONSENT_REQUIRED', channel: 'EMAIL', purpose },
+          errors: { code: 'CONSENT_REQUIRED', channel: 'EMAIL', purpose, preference },
         });
       }
       if (!actorPermissions.includes(PERMISSIONS.NOTIFY_CONSENT_OVERRIDE)) {
@@ -514,7 +523,8 @@ export class CustomerNotificationsService {
         simulated: routing.simulated,
         recipientOverridden: recipient.toLowerCase() !== (c.email ?? '').trim().toLowerCase(),
         purpose,
-        customerOptedIn: c.notificationOptInEmail,
+        // CR-2026-114 — what was actually on record when the override happened.
+        customerPreference: preference,
         consentOverridden,
         ...(consentOverridden ? { consentOverrideReason: overrideReason } : {}),
         edited: generated !== null && generated !== body,

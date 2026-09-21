@@ -40,17 +40,23 @@ describe('CR-2026-113 §1 — the composer knows what a message is FOR', () => {
     expect(src).toMatch(/recording why, against my name/i);
   });
 
+  // CR-2026-114 §wording — the advisor is still told a Manager authorises the
+  // exception, but the sentence no longer offers a phone call as a way around a
+  // recorded preference. The exact wording is asserted in cr-2026-114-surfaces.
   it('an advisor is told a manager can do it, instead of being given a dead button', () => {
     expect(src).toContain('consent-needs-manager');
     expect(src).toMatch(/canOverrideConsent = user\?\.roleCode === 'ADMIN'/);
-    expect(src).toMatch(/A manager can send it anyway/i);
+    expect(src).toMatch(/A Manager is required to authorize an exception/);
   });
 });
 
 describe('CR-2026-113 §1 — the preference is labelled for what it now governs', () => {
+  // CR-2026-114 §7 replaced the single consent line with the two-row
+  // communications section (asserted in cr-2026-114-surfaces). What must stay
+  // true here: the screen still says operational email is always sent.
   it('the customer profile says it covers optional email, and what is always sent', () => {
     const src = read('app/(dashboard)/customers/[id]/page.tsx');
-    expect(src).toContain('Service reminders &amp; offers');
+    expect(src).toContain('Optional outreach');
     expect(src).toMatch(/Booking confirmations, authorisation requests and[\s\S]*always sent/);
     // The bare "Email Notifications" label is gone: it read as "we can never
     // contact this customer", which was never what the flag meant.

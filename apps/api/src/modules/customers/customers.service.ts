@@ -14,6 +14,7 @@ import {
 } from '../../common/helpers/search-where';
 import { phoneForStorage } from '../../common/helpers/search-terms';
 import { normalizeCustomerEmail } from '../../common/helpers/customer-email';
+import { CommunicationPreferenceService } from '../notifications/communication-preference.service';
 import {
   toCustomerListItem,
   toCustomerDetail,
@@ -34,6 +35,10 @@ export class CustomersService {
     // CR-2026-106 — identity-review decisions are audited. Optional so the existing
     // one-argument spec construction keeps working.
     @Optional() private readonly audit?: AuditService,
+    // CR-2026-114 — records a preference change with its provenance, and owns the
+    // legacy opt-in column as a projection. Optional for the same reason: an
+    // absent service means the preference simply is not captured on this path.
+    @Optional() private readonly preferences?: CommunicationPreferenceService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -253,6 +258,24 @@ export class CustomersService {
         nextAppointment: { id: string; scheduledStartAt: Date } | null;
       };
       vehicleStats: Record<string, { visitsCount: number; lastServiceAt: Date | null }>;
+      /**
+       * CR-2026-114 §7 — the communication picture in the words the screen
+       * shows. Deliberately not the raw columns: staff should never have to
+       * translate `notificationOptInEmail = false` into what it means, least of
+       * all when it means "nobody has asked".
+       */
+      communications: {
+        transactional: { label: string; available: boolean; detail: string };
+        marketing: {
+          label: string;
+          status: 'UNKNOWN' | 'ALLOWED' | 'DECLINED';
+          statusLabel: string;
+          detail: string;
+          capturedAt: Date | null;
+          capturedBy: string | null;
+          source: string | null;
+        };
+      };
     }
   > {
     const customer = await this.prisma.customer.findUnique({
@@ -314,8 +337,44 @@ export class CustomersService {
       vehicleCount: customer._count.vehicles,
       includeImportMeta,
     });
+
+    // CR-2026-114 §7 — what staff need to understand without seeing a column
+    // name: whether we can reach this customer about their own work, and what
+    // they have actually said about optional outreach.
+    const marketing = this.preferences
+      ? (await this.preferences.describe(customer.id)).find((r) => r.purpose === 'MARKETING')
+      : undefined;
+    const marketingStatus = marketing?.status ?? 'UNKNOWN';
+    const communications = {
+      // Operational email is not a preference question — it needs an address.
+      transactional: {
+        label: 'Service & appointment updates',
+        available: !!customer.email,
+        detail: customer.email
+          ? 'Confirmations, authorisation requests and ready-for-collection notices are sent to this address.'
+          : 'No email address on file, so these cannot be sent.',
+      },
+      marketing: {
+        label: 'Optional outreach',
+        status: marketingStatus,
+        statusLabel:
+          marketingStatus === 'ALLOWED' ? 'Allowed' : marketingStatus === 'DECLINED' ? 'Declined' : 'Preference unknown',
+        detail:
+          marketingStatus === 'ALLOWED'
+            ? 'This customer agreed to service reminders and offers.'
+            : marketingStatus === 'DECLINED'
+              ? 'This customer asked not to receive service reminders or offers.'
+              : 'Nobody has asked this customer yet. It is not a refusal — ask when you next speak to them.',
+        // A backfilled row has no capture date, and does not pretend to.
+        capturedAt: marketing?.capturedAt ?? null,
+        capturedBy: marketing?.capturedBy ?? null,
+        source: marketing?.source ?? null,
+      },
+    };
+
     return {
       ...detail,
+      communications,
       stats: {
         totalVehicles: customer._count.vehicles,
         totalVisits: visitAgg._count,
@@ -424,11 +483,34 @@ export class CustomersService {
   /**
    * Partial update of a customer record.
    */
-  async update(id: string, data: UpdateCustomerDto) {
+  async update(id: string, data: UpdateCustomerDto, actorUserId?: string) {
     const existing = await this.prisma.customer.findUnique({ where: { id } });
     if (!existing) {
       throw new NotFoundException(`Customer with id "${id}" not found`);
     }
+
+    // CR-2026-114 — the optional-email preference is recorded with its
+    // provenance (who, when, from where) rather than flipped as a bare boolean.
+    // The service keeps the legacy column in step, so the write below must not
+    // also set it from a stale value.
+    const preference =
+      data.emailMarketingPreference ??
+      (data.notificationOptInEmail === undefined
+        ? undefined
+        : data.notificationOptInEmail
+          ? ('ALLOWED' as const)
+          : ('DECLINED' as const));
+    if (preference && this.preferences) {
+      await this.preferences.capture({
+        customerId: id,
+        purpose: 'MARKETING',
+        status: preference,
+        source: 'CUSTOMER_PROFILE',
+        actorUserId: actorUserId ?? null,
+        note: data.preferenceNote ?? null,
+      });
+    }
+
     return this.prisma.customer.update({
       where: { id },
       data: {
@@ -439,7 +521,9 @@ export class CustomersService {
         // CR-2026-050 — loyalty is a yes/no flag.
         ...(data.loyaltyMember !== undefined && { loyaltyMember: data.loyaltyMember }),
         ...(data.notificationOptInSms !== undefined && { notificationOptInSms: data.notificationOptInSms }),
-        ...(data.notificationOptInEmail !== undefined && { notificationOptInEmail: data.notificationOptInEmail }),
+        // CR-2026-114 — deliberately NOT written here: CommunicationPreferenceService
+        // owns this column as a projection of the recorded preference, and two
+        // writers would be two truths.
         // CR-2026-060 — editable staff notes; preserve any import tag verbatim so the
         // import rollback (which matches the tag as a substring) still works.
         ...(data.notes !== undefined && { notes: composeCustomerNotes(existing.notes, data.notes) }),

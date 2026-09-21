@@ -21,6 +21,7 @@ import { CreateWalkInDto } from './dto/create-walk-in.dto';
 import { generateTicketNumber } from '../../common/helpers/ticket-generator';
 import { allocateTicketIdentifiers } from '../../common/helpers/ticket-allocator';
 import { assertMileageGate } from '../../common/helpers/mileage-gate';
+import { CommunicationPreferenceService } from '../notifications/communication-preference.service';
 
 /**
  * Walk-in registration service.
@@ -45,6 +46,10 @@ export class WalkInsService {
     // CR-2026-105b — QUE-002: rank on registration. Optional so the existing specs'
     // three-argument construction keeps working.
     @Optional() private scheduling?: SchedulingService,
+    // CR-2026-114 — records the optional-email answer with its provenance.
+    // Optional for the same reason as above: absent means the tickbox still
+    // updates the legacy column and audit, just without the preference row.
+    @Optional() private preferences?: CommunicationPreferenceService,
   ) {}
 
   /** CR-2026-105b — see CheckInService.rankAndEstimate; same contract. */
@@ -396,6 +401,17 @@ export class WalkInsService {
         where: { id: data.customerId },
         data: optInUpdate,
       });
+      // CR-2026-114 — the same change, recorded as a preference WITH provenance.
+      // These callers only pass a value that actually changed, so an untouched
+      // box never becomes a decision the customer did not make.
+      if (optInUpdate.notificationOptInEmail !== undefined && this.preferences) {
+        await this.preferences.captureFromStaffTickbox({
+          customerId: data.customerId,
+          agreed: optInUpdate.notificationOptInEmail,
+          actorUserId: userId,
+          note: 'Captured at walk-in registration.',
+        });
+      }
       await this.audit.log({
         actorUserId: userId,
         action: AUDIT_ACTIONS.CUSTOMER_NOTIFICATION_OPTIN,

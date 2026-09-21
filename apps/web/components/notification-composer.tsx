@@ -89,7 +89,9 @@ interface ComposeResponse {
   purpose: CommunicationPurpose;
   consent: {
     purpose: CommunicationPurpose;
-    optedIn: boolean;
+    /** CR-2026-114 — what the customer actually told us, if anything. */
+    preference: 'UNKNOWN' | 'ALLOWED' | 'DECLINED';
+    preferenceLabel: string;
     requiresConsent: boolean;
     allowed: boolean;
     blockedReason: string | null;
@@ -461,7 +463,10 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
               {consentBlocked && (
                 <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2" data-testid="consent-block">
                   <p className="text-xs font-medium text-red-800">
-                    {data.consent.blockedReason ?? 'This customer has not opted in to optional emails.'}
+                    {data.consent.blockedReason ?? 'This customer has not agreed to optional emails.'}
+                  </p>
+                  <p className="mt-1 text-[11px] text-red-700" data-testid="consent-state">
+                    Recorded preference: {data.consent.preferenceLabel}
                   </p>
                   {canOverrideConsent ? (
                     <>
@@ -494,7 +499,9 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
                     </>
                   ) : (
                     <p className="mt-1 text-xs text-red-700" data-testid="consent-needs-manager">
-                      A manager can send it anyway if there is a reason to. You can also call the customer and log the call.
+                      A Manager is required to authorize an exception. Otherwise, use an approved
+                      customer-contact method in accordance with the customer&apos;s recorded
+                      communication preferences.
                     </p>
                   )}
                 </div>

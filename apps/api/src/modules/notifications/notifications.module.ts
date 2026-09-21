@@ -13,6 +13,7 @@ import { CustomerNotificationsService } from './customer-notifications.service';
 import { TestRecordResolver } from './test-record.resolver';
 import { StubNotificationProvider } from './providers/stub.provider';
 import { NotificationTemplateStore } from './templates/template-store.service';
+import { CommunicationPreferenceService } from './communication-preference.service';
 import {
   NOTIFICATION_CAPABILITIES,
   NOTIFICATION_PROVIDER,
@@ -94,12 +95,20 @@ function notificationCapabilitiesFactory(): NotificationCapabilities {
     CustomerNotificationsService,
     // CR-2026-112 — the one place customer-facing wording is resolved from.
     NotificationTemplateStore,
+    // CR-2026-114 — what the customer has actually told us, with provenance.
+    CommunicationPreferenceService,
     // CR-2026-108 Stage 1 — decides, per record, whether a message is about a
     // test run and must be captured rather than transmitted.
     TestRecordResolver,
     { provide: NOTIFICATION_PROVIDER, useFactory: notificationProviderFactory },
     { provide: NOTIFICATION_CAPABILITIES, useFactory: notificationCapabilitiesFactory },
   ],
-  exports: [NotificationsService, CustomerNotificationsService, TestRecordResolver, NotificationTemplateStore],
+  exports: [
+    NotificationsService,
+    CustomerNotificationsService,
+    TestRecordResolver,
+    NotificationTemplateStore,
+    CommunicationPreferenceService,
+  ],
 })
 export class NotificationsModule {}

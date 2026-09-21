@@ -384,7 +384,21 @@ export class PublicBookingService {
             email: sameEmail || null,
             // CR-2026-112 — the dormant SMS field keeps its schema default; nothing
             // reads it while email is the only channel (see docs/131 §4).
+            // CR-2026-114 — the boolean is the projection; the preference row
+            // written below carries the answer and where it came from.
             notificationOptInEmail: c.emailOptIn ?? true,
+            communicationPreferences: {
+              create: {
+                channel: 'EMAIL',
+                purpose: 'MARKETING',
+                // The customer ticked or unticked the box themselves, so either
+                // way this IS an answer — not the absence of one.
+                status: (c.emailOptIn ?? true) ? 'ALLOWED' : 'DECLINED',
+                source: 'ONLINE_BOOKING',
+                capturedAt: new Date(),
+                note: 'Captured from the optional-email tickbox on the public booking form.',
+              },
+            },
             notes: 'Created by customer self-service booking (CR-2026-105c).',
             ...(possibleDuplicate ? { identityReviewStatus: 'PENDING_REVIEW', possibleDuplicateOfId: possibleDuplicate.id } : {}),
             // CR-2026-108 — created inside a UAT session: tagged to the run, so its

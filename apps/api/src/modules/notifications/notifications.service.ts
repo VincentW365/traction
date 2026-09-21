@@ -13,6 +13,7 @@ import { NotificationTemplateStore } from './templates/template-store.service';
 import { buildVehicleDescription, type TemplateData } from './templates/template-engine';
 import { NO_EMAIL_ON_FILE, UNSUPPORTED_CHANNEL_REASON } from './notification-messages';
 import { purposeForTemplateKey, type CommunicationPurposeName } from './consent-policy';
+import { CommunicationPreferenceService } from './communication-preference.service';
 
 /**
  * CR-2026-106 — the ONE mapping from a NotificationLog row to what a person is
@@ -151,6 +152,10 @@ export class NotificationsService {
     // positional constructions keep working. Absent store = the code fallback
     // wording, which is what these flows used before this CR.
     @Optional() private templates?: NotificationTemplateStore,
+    // CR-2026-114 — the recorded preference for the MARKETING sweeps. @Optional
+    // and appended for the same reason; absent = fall back to the legacy boolean,
+    // which is exactly the pre-CR behaviour.
+    @Optional() private preferences?: CommunicationPreferenceService,
   ) {}
 
   /**
@@ -965,6 +970,7 @@ export class NotificationsService {
         serviceVisit: {
           select: {
             id: true,
+            customerId: true,
             customer: {
               select: { firstName: true, phone: true, email: true, notificationOptInEmail: true },
             },
@@ -998,8 +1004,14 @@ export class NotificationsService {
       // CR-2026-112 — email is the channel, so email consent and an address are
       // what decide whether this follow-up can go out at all.
       // CR-2026-113 — a thank-you after the visit is optional outreach, so the
-      // customer preference DOES gate it. Deliberately unchanged.
-      if (!customer.notificationOptInEmail || !customer.email) { skipped++; continue; }
+      // customer's preference DOES gate it.
+      // CR-2026-114 — and "opted in" now means an actual recorded ALLOWED, not
+      // the absence of a refusal. An automatic flow never overrides.
+      if (!customer.email) { skipped++; continue; }
+      const allowed = this.preferences
+        ? (await this.preferences.statusFor(visit.customerId, 'MARKETING')) === 'ALLOWED'
+        : customer.notificationOptInEmail;
+      if (!allowed) { skipped++; continue; }
 
       const vehicleDesc = [vehicle.modelYear, vehicle.make, vehicle.model].filter(Boolean).join(' ') || vehicle.plateNumber;
       const message = `Hi ${customer.firstName}! Your ${vehicleDesc} was completed this morning at Bert's. Thank you for choosing us — we hope everything's running smoothly, and we'll see you next service!`;

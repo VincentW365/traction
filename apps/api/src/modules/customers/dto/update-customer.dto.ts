@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsEmail, IsBoolean, ValidateIf } from 'class-validator';
+import { IsString, IsOptional, IsEmail, IsBoolean, IsIn, ValidateIf } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { isPlaceholderEmail } from '../../../common/helpers/customer-email';
 
@@ -41,12 +41,32 @@ export class UpdateCustomerDto {
   @IsBoolean()
   notificationOptInSms?: boolean;
 
-  @ApiPropertyOptional({
-    description: 'Opt-in for email notifications',
-  })
+  /**
+   * CR-2026-114 — DEPRECATED in favour of `emailMarketingPreference`. A boolean
+   * cannot say "we have never asked", which is the state 6,857 imported
+   * customers are actually in. Accepted for older clients: true → ALLOWED,
+   * false → DECLINED, because a person ticking or unticking a box on a screen
+   * IS making a decision. It is never used to infer UNKNOWN.
+   */
+  @ApiPropertyOptional({ deprecated: true, description: 'Deprecated — use emailMarketingPreference' })
   @IsOptional()
   @IsBoolean()
   notificationOptInEmail?: boolean;
+
+  /**
+   * CR-2026-114 — the customer's recorded wish about OPTIONAL email (service-due
+   * campaigns, offers). Operational email is never governed by this.
+   */
+  @ApiPropertyOptional({ enum: ['UNKNOWN', 'ALLOWED', 'DECLINED'], description: "Optional-email preference" })
+  @IsOptional()
+  @IsIn(['UNKNOWN', 'ALLOWED', 'DECLINED'])
+  emailMarketingPreference?: 'UNKNOWN' | 'ALLOWED' | 'DECLINED';
+
+  /** Why it changed, when a person has a reason worth recording. */
+  @ApiPropertyOptional({ description: 'Context for a preference change' })
+  @IsOptional()
+  @IsString()
+  preferenceNote?: string;
 
   @ApiPropertyOptional({ description: 'Internal notes about the customer' })
   @IsOptional()

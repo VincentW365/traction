@@ -35,7 +35,7 @@ describe('what needs consent', () => {
     ] as const) {
       const decision = decideConsent({
         purpose: purposeForReason(reason),
-        customerOptedIn: false,
+        preference: 'UNKNOWN',
         purposesRequiringConsent: POLICY,
       });
       expect(decision.allowed, `${reason} should not need consent`).toBe(true);
@@ -46,7 +46,7 @@ describe('what needs consent', () => {
   it('a reminder about an appointment the customer made is not optional outreach', () => {
     const decision = decideConsent({
       purpose: purposeForReason('APPOINTMENT_REMINDER'),
-      customerOptedIn: false,
+      preference: 'UNKNOWN',
       purposesRequiringConsent: POLICY,
     });
     expect(decision.allowed).toBe(true);
@@ -55,17 +55,17 @@ describe('what needs consent', () => {
   it('a service-due campaign IS optional outreach and is blocked without consent', () => {
     const decision = decideConsent({
       purpose: purposeForReason('SERVICE_DUE'),
-      customerOptedIn: false,
+      preference: 'UNKNOWN',
       purposesRequiringConsent: POLICY,
     });
     expect(decision.allowed).toBe(false);
     expect(decision.requiresConsent).toBe(true);
-    expect(decision.blockedReason).toMatch(/not opted in/i);
+    expect(decision.blockedReason).toMatch(/no recorded preference/i);
   });
 
   it('the same campaign goes to a customer who HAS opted in', () => {
     expect(
-      decideConsent({ purpose: 'MARKETING', customerOptedIn: true, purposesRequiringConsent: POLICY }).allowed,
+      decideConsent({ purpose: 'MARKETING', preference: 'ALLOWED', purposesRequiringConsent: POLICY }).allowed,
     ).toBe(true);
   });
 
@@ -78,11 +78,11 @@ describe('the policy is configuration, not a constant', () => {
   it('a business can require consent for reminders too', () => {
     const policy = parsePurposePolicy(['MARKETING', 'REMINDER']);
     expect(
-      decideConsent({ purpose: 'REMINDER', customerOptedIn: false, purposesRequiringConsent: policy }).allowed,
+      decideConsent({ purpose: 'REMINDER', preference: 'UNKNOWN', purposesRequiringConsent: policy }).allowed,
     ).toBe(false);
     // …and operational messages still are not gated.
     expect(
-      decideConsent({ purpose: 'TRANSACTIONAL', customerOptedIn: false, purposesRequiringConsent: policy }).allowed,
+      decideConsent({ purpose: 'TRANSACTIONAL', preference: 'UNKNOWN', purposesRequiringConsent: policy }).allowed,
     ).toBe(true);
   });
 

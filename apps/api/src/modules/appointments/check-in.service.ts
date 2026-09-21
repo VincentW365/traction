@@ -15,6 +15,7 @@ import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { generateTicketNumber } from '../../common/helpers/ticket-generator';
 import { allocateTicketIdentifiers } from '../../common/helpers/ticket-allocator';
 import { assertMileageGate } from '../../common/helpers/mileage-gate';
+import { CommunicationPreferenceService } from '../notifications/communication-preference.service';
 
 /**
  * Check-in service for appointment-based arrivals.
@@ -41,6 +42,10 @@ export class CheckInService {
     // CR-2026-105b — QUE-002: rank on check-in. Optional so the existing specs'
     // three-argument construction keeps working.
     @Optional() private scheduling?: SchedulingService,
+    // CR-2026-114 — records the optional-email answer with its provenance.
+    // Optional for the same reason as above: absent means the tickbox still
+    // updates the legacy column and audit, just without the preference row.
+    @Optional() private preferences?: CommunicationPreferenceService,
   ) {}
 
   /**
@@ -502,6 +507,17 @@ export class CheckInService {
         where: { id: appointment.customerId },
         data: optInUpdate,
       });
+      // CR-2026-114 — recorded as a preference with provenance too. Only a value
+      // that actually changed reaches here, so an untouched box never becomes a
+      // decision the customer did not make.
+      if (optInUpdate.notificationOptInEmail !== undefined && this.preferences) {
+        await this.preferences.captureFromStaffTickbox({
+          customerId: appointment.customerId,
+          agreed: optInUpdate.notificationOptInEmail,
+          actorUserId: userId,
+          note: 'Captured at check-in.',
+        });
+      }
       await this.auditService.log({
         actorUserId: userId,
         action: AUDIT_ACTIONS.CUSTOMER_NOTIFICATION_OPTIN,

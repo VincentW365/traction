@@ -186,6 +186,8 @@ export class MaintenanceReminderService {
 
       // Re-check opt-in. CR-2026-112 — email is the channel, so an opted-out
       // customer AND a customer with no address on file are both 'cannot send'.
+      // CR-2026-114 — the boolean is a projection of the recorded preference;
+      // only a genuine ALLOWED releases optional outreach.
       if (!customer.notificationOptInEmail || !customer.email) {
         this.logger.debug(`Skipping reminder ${reminder.id} — no email consent or no address on file`);
         skipped++;

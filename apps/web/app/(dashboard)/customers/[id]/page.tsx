@@ -46,6 +46,19 @@ interface CustomerDetail {
   email: string | null;
   hasLoyalty: boolean;
   notificationOptInEmail: boolean;
+  /** CR-2026-114 — the communication picture, already in the words to show. */
+  communications?: {
+    transactional: { label: string; available: boolean; detail: string };
+    marketing: {
+      label: string;
+      status: 'UNKNOWN' | 'ALLOWED' | 'DECLINED';
+      statusLabel: string;
+      detail: string;
+      capturedAt: string | null;
+      capturedBy: string | null;
+      source: string | null;
+    };
+  };
   staffNotes: string | null;
   vehicleCount: number;
   vehicles: Vehicle[];
@@ -112,14 +125,6 @@ function fmtMileage(inM: number | null, outM: number | null): string {
   return (outM ?? inM)!.toLocaleString();
 }
 
-function ConsentBadge({ on }: { on: boolean }) {
-  return on ? (
-    <span className="badge bg-emerald-50 text-emerald-700">Opted in</span>
-  ) : (
-    <span className="badge bg-slate-100 text-slate-500">Opted out</span>
-  );
-}
-
 export default function CustomerDetailPage() {
   const params = useParams();
   const customerId = params.id as string;
@@ -159,7 +164,9 @@ export default function CustomerDetailPage() {
   const [emailInput, setEmailInput] = useState('');
 
   const [editingConsent, setEditingConsent] = useState(false);
-  const [emailOptInInput, setEmailOptInInput] = useState(true);
+  // CR-2026-114 — three states, because "never asked" is not "said no".
+  const [marketingPreference, setMarketingPreference] = useState<'UNKNOWN' | 'ALLOWED' | 'DECLINED'>('UNKNOWN');
+  const [preferenceNote, setPreferenceNote] = useState('');
 
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesInput, setNotesInput] = useState('');
@@ -256,7 +263,8 @@ export default function CustomerDetailPage() {
   const updateConsentMutation = useMutation({
     mutationFn: () =>
       api.patch(`/customers/${customerId}`, {
-        notificationOptInEmail: emailOptInInput,
+        emailMarketingPreference: marketingPreference,
+        preferenceNote: preferenceNote.trim() || undefined,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customer', customerId] });
@@ -512,7 +520,11 @@ export default function CustomerDetailPage() {
             <h2 className="text-sm font-semibold text-slate-900">Preferences &amp; Consent</h2>
             {!editingConsent && (
               <button
-                onClick={() => { setEmailOptInInput(customer.notificationOptInEmail); setEditingConsent(true); }}
+                onClick={() => {
+                  setMarketingPreference(customer.communications?.marketing.status ?? 'UNKNOWN');
+                  setPreferenceNote('');
+                  setEditingConsent(true);
+                }}
                 className="text-xs text-blue-600 hover:underline font-medium"
               >
                 Edit
@@ -521,16 +533,34 @@ export default function CustomerDetailPage() {
           </div>
           {editingConsent ? (
             <div className="card-body space-y-3">
-              {/* CR-2026-112 — one channel, one consent question. */}
+              {/* CR-2026-112 — one channel. CR-2026-114 — three honest states. */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="input-label">Service reminders &amp; offers</label>
-                  <select value={emailOptInInput ? 'yes' : 'no'} onChange={(e) => setEmailOptInInput(e.target.value === 'yes')} className="input-field">
-                    <option value="yes">Opted in</option>
-                    <option value="no">Opted out</option>
+                  <label className="input-label">Optional outreach</label>
+                  <select
+                    value={marketingPreference}
+                    onChange={(e) => setMarketingPreference(e.target.value as 'UNKNOWN' | 'ALLOWED' | 'DECLINED')}
+                    className="input-field"
+                  >
+                    <option value="ALLOWED">Allowed — they agreed to reminders and offers</option>
+                    <option value="DECLINED">Declined — they asked not to receive them</option>
+                    <option value="UNKNOWN">Not recorded — nobody has asked yet</option>
                   </select>
                 </div>
+                <div>
+                  <label className="input-label">Note (optional)</label>
+                  <input
+                    value={preferenceNote}
+                    onChange={(e) => setPreferenceNote(e.target.value)}
+                    placeholder="e.g. Told us at the counter on 21 Sep"
+                    className="input-field"
+                  />
+                </div>
               </div>
+              <p className="text-[11px] text-slate-500">
+                This covers optional emails only. Booking confirmations, authorisation requests and
+                ready-for-collection notices are always sent to a customer with an email address.
+              </p>
               {updateConsentMutation.isError && (
                 <p className="text-xs text-red-600">{updateConsentMutation.error instanceof Error ? updateConsentMutation.error.message : 'Failed to update preferences'}</p>
               )}
@@ -542,22 +572,54 @@ export default function CustomerDetailPage() {
               </div>
             </div>
           ) : (
-            <div className="card-body grid grid-cols-2 gap-x-6 gap-y-3">
+            /* CR-2026-114 §7 — what is actually known, in plain words. No column
+               names, and "not recorded" is never dressed up as a decision. */
+            <div className="card-body space-y-3" data-testid="email-communications">
               <div>
-                <div className="input-label">Service reminders &amp; offers</div>
-                <ConsentBadge on={customer.notificationOptInEmail} />
-                {/* CR-2026-113 — say what the preference does and does not cover,
-                    so nobody reads "Opted out" as "we cannot contact them". */}
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Optional emails only. Booking confirmations, authorisation requests and
-                  ready-for-collection notices are always sent.
-                </p>
-              </div>
-              <div>
-                <div className="input-label">Email Address</div>
+                <div className="input-label">Email address</div>
                 {customer.email
                   ? <span className="text-sm text-slate-700">{customer.email}</span>
                   : <span className="text-sm text-red-600">{NO_EMAIL_SHORT}</span>}
+              </div>
+              <div className="border-t border-slate-100 pt-3">
+                <p className="text-[11px] uppercase tracking-wide text-slate-400 mb-2">Email communications</p>
+                <div className="space-y-2">
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="text-sm text-slate-700">
+                      {customer.communications?.transactional.label ?? 'Service & appointment updates'}
+                    </span>
+                    <span className={`text-sm font-medium ${customer.communications?.transactional.available === false ? 'text-red-600' : 'text-emerald-700'}`}>
+                      {customer.communications?.transactional.available === false ? 'Unavailable' : 'Available'}
+                    </span>
+                  </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <span className="text-sm text-slate-700">
+                      {customer.communications?.marketing.label ?? 'Optional outreach'}
+                    </span>
+                    <span
+                      className={`text-sm font-medium ${
+                        customer.communications?.marketing.status === 'ALLOWED'
+                          ? 'text-emerald-700'
+                          : customer.communications?.marketing.status === 'DECLINED'
+                            ? 'text-red-600'
+                            : 'text-slate-500'
+                      }`}
+                      data-testid="marketing-preference"
+                    >
+                      {customer.communications?.marketing.statusLabel ?? 'Preference unknown'}
+                    </span>
+                  </div>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-500">
+                  {customer.communications?.marketing.detail ??
+                    'Nobody has asked this customer yet. It is not a refusal — ask when you next speak to them.'}
+                </p>
+                {customer.communications?.marketing.capturedAt && (
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Recorded {new Date(customer.communications.marketing.capturedAt).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}
+                    {customer.communications.marketing.capturedBy ? ' by ' + customer.communications.marketing.capturedBy : ''}
+                  </p>
+                )}
               </div>
             </div>
           )}

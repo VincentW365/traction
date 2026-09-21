@@ -38,6 +38,8 @@ interface CustomerDetail {
   lastName: string;
   phones?: string[];
   phone?: string;
+  /** CR-2026-114 §5 — staff booking never requires one; the review says so. */
+  email?: string | null;
   vehicles: WizardVehicle[];
 }
 
@@ -520,6 +522,19 @@ export default function NewAppointmentPage() {
               <div className="flex justify-between gap-4"><span className="text-slate-500">Date &amp; time</span><span className="font-bold text-slate-900">{fmtWhen(state.slot.startAt, tz)}</span></div>
               <div className="flex justify-between gap-4"><span className="text-slate-500">Planned time</span><span className="text-slate-900">About {availabilityQuery.data?.plannedMinutes ?? '—'} minutes</span></div>
               {state.notes.trim() && <div className="flex justify-between gap-4"><span className="text-slate-500">Notes</span><span className="text-right text-slate-900">{state.notes}</span></div>}
+              {/* CR-2026-114 §5 — a staff booking is never blocked for want of an
+                  email, but the advisor is told plainly what the customer will
+                  not receive, while they still have them on the phone. */}
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-500">Email updates</span>
+                {customerDetailQuery.data?.email ? (
+                  <span className="text-right text-slate-900">{customerDetailQuery.data.email}</span>
+                ) : (
+                  <span className="text-right font-medium text-amber-700" data-testid="no-email-booking">
+                    No email on file — no confirmation or reminder will be sent
+                  </span>
+                )}
+              </div>
               <p className="pt-2 text-xs text-slate-500">Nothing is reserved until you press Confirm. The slot is re-checked at that moment.</p>
             </div>
           </div>

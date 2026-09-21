@@ -194,6 +194,33 @@ enum CommunicationPurpose {
   MARKETING
 }
 
+// CR-2026-114 — what we actually KNOW about a customer's wishes.
+//
+// The distinction that matters: "we have no record of their preference" is not
+// "they said no". The import left 6,857 customers with an opt-in boolean of
+// false, which recorded the absence of an answer, not a refusal — and a boolean
+// has nowhere to put that difference. Reading it as a refusal would turn
+// missing historical data into a customer decision they never made.
+enum CommunicationPreferenceStatus {
+  /// No preference has ever been captured. The default for imported records.
+  UNKNOWN
+  /// The customer agreed, and we know when and through which route.
+  ALLOWED
+  /// The customer actively declined. Never inferred — only ever recorded.
+  DECLINED
+}
+
+/// Where a preference came from, so "who says so?" is always answerable.
+enum CommunicationPreferenceSource {
+  ONLINE_BOOKING
+  CUSTOMER_PROFILE
+  STAFF_CAPTURED
+  /// Backfilled from an import that carried no affirmative answer → UNKNOWN.
+  IMPORTED_UNKNOWN
+  /// Backfilled from a pre-CR-2026-114 boolean that was permissive.
+  MIGRATED
+}
+
 // CR-2026-096 — why a customer notification was sent. Legacy rows (pre-CR) have null.
 // CR-2026-112 — the appointment and customer-action reasons join the same
 // template-driven pipeline, so every customer email (staff-initiated or
@@ -836,6 +863,7 @@ model UserAccount {
   queueEventActions       QueueEvent[]                @relation("QueueEventActor")
   initiatedNotifications  NotificationLog[]           @relation("NotificationInitiatedBy")
   notificationTemplates   NotificationTemplate[]      @relation("NotificationTemplateUpdatedBy") // CR-2026-096
+  capturedPreferences     CustomerCommunicationPreference[] @relation("CommunicationPreferenceCapturedBy") // CR-2026-114
   reviewedClassifications VehicleClassification[]     @relation("ClassificationReviewedBy") // CR-2026-008
 
   @@map("user_accounts")
@@ -863,6 +891,12 @@ model Customer {
   complaints           Complaint[] // CR-2026-032 — customer complaints
   inspections          VehicleInspection[] // CR-2026-034 — visual inspections
   notificationLogs     NotificationLog[]   @relation("CustomerNotifications") // CR-2026-096
+
+  // CR-2026-114 — what the customer has actually told us, per channel and
+  // purpose, with provenance. The boolean above is kept as a legacy projection
+  // of the EMAIL/MARKETING row (documented in docs/133 §3); this table is the
+  // truth, and it is the only place a status of UNKNOWN can be expressed.
+  communicationPreferences CustomerCommunicationPreference[]
 
   // CR-2026-020 — nullable test-data run tag (null for all real & imported rows)
   testDataRunId String?      @map("test_data_run_id") @db.Uuid
@@ -1894,6 +1928,40 @@ model NotificationTemplate {
 
   @@index([reason])
   @@map("notification_templates")
+}
+
+/// CR-2026-114 — one recorded answer, for one channel and one purpose, with the
+/// provenance that makes it meaningful: where it came from, when, and who
+/// captured it.
+///
+/// Rows exist per (customer, channel, purpose). A customer with no row for a
+/// purpose is UNKNOWN by definition — absence of a record is absence of an
+/// answer, which is exactly what the old boolean could not say.
+model CustomerCommunicationPreference {
+  id         String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId String                        @map("customer_id") @db.Uuid
+  channel    NotificationChannel
+  purpose    CommunicationPurpose
+  status     CommunicationPreferenceStatus @default(UNKNOWN)
+  source     CommunicationPreferenceSource
+
+  /// When the customer actually told us. NULL for an UNKNOWN/backfilled row:
+  /// an imported record must never carry a timestamp implying a decision.
+  capturedAt     DateTime? @map("captured_at") @db.Timestamptz
+  /// The staff member who recorded it, when a person did. NULL for the
+  /// customer's own action online, and for a backfill.
+  capturedByUserId String? @map("captured_by_user_id") @db.Uuid
+  /// Free-text context a person gave when capturing or changing it.
+  note       String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  customer   Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  capturedBy UserAccount? @relation("CommunicationPreferenceCapturedBy", fields: [capturedByUserId], references: [id])
+
+  @@unique([customerId, channel, purpose])
+  @@index([status])
+  @@map("customer_communication_preferences")
 }
 
 model PosReference {

@@ -99,14 +99,37 @@ export function parsePurposePolicy(value: unknown): CommunicationPurposeName[] {
   return valid.length ? [...new Set(valid)] : [...DEFAULT_PURPOSES_REQUIRING_CONSENT];
 }
 
+/** CR-2026-114 — what is actually recorded about the customer's wishes. */
+export type PreferenceStatusName = 'UNKNOWN' | 'ALLOWED' | 'DECLINED';
+
 export interface ConsentDecision {
-  /** May this message be sent without an explicit staff override? */
+  /** May this message be sent without an explicit manager authorisation? */
   allowed: boolean;
   /** Does this purpose require recorded consent under the current policy? */
   requiresConsent: boolean;
+  /** What the customer has actually told us about this kind of message. */
+  preference: PreferenceStatusName;
   /** Why it is blocked, in the words staff should read. */
   blockedReason: string | null;
 }
+
+/**
+ * CR-2026-113 §wording, CR-2026-114 — the two blocked states are NOT the same
+ * thing, and are never described as if they were.
+ *
+ * Neither message offers "call them instead" as a way around the restriction.
+ * Changing channel is not a way to get past a customer's recorded wishes, and a
+ * system that hints otherwise teaches staff that preferences are an obstacle to
+ * route around.
+ */
+const BLOCKED_BECAUSE_DECLINED =
+  'This customer has declined optional email outreach. A Manager is required to authorize an exception. ' +
+  "Otherwise, use an approved customer-contact method in accordance with the customer's recorded communication preferences.";
+
+const BLOCKED_BECAUSE_UNKNOWN =
+  'This customer has no recorded preference for optional email — nobody has asked them yet, so there is no agreement to rely on. ' +
+  'A Manager is required to authorize an exception. Otherwise, ask the customer and record their answer, or use an approved ' +
+  "customer-contact method in accordance with the customer's recorded communication preferences.";
 
 /**
  * The one consent decision. Both the staff composer and the automatic flows ask
@@ -114,20 +137,28 @@ export interface ConsentDecision {
  */
 export function decideConsent(input: {
   purpose: CommunicationPurposeName;
-  customerOptedIn: boolean;
+  /** CR-2026-114 — the recorded status, not a boolean that cannot say "unknown". */
+  preference: PreferenceStatusName;
   purposesRequiringConsent: CommunicationPurposeName[];
 }): ConsentDecision {
   const requiresConsent = input.purposesRequiringConsent.includes(input.purpose);
-  if (!requiresConsent || input.customerOptedIn) {
-    return { allowed: true, requiresConsent, blockedReason: null };
+  if (!requiresConsent || input.preference === 'ALLOWED') {
+    return { allowed: true, requiresConsent, preference: input.preference, blockedReason: null };
   }
   return {
     allowed: false,
     requiresConsent: true,
-    blockedReason:
-      'This customer has not opted in to optional emails, and this message is optional outreach rather than something they need to receive about a booking or a job in progress.',
+    preference: input.preference,
+    blockedReason: input.preference === 'DECLINED' ? BLOCKED_BECAUSE_DECLINED : BLOCKED_BECAUSE_UNKNOWN,
   };
 }
+
+/** How each state is described to staff. Never database terminology. */
+export const PREFERENCE_LABELS: Record<PreferenceStatusName, string> = {
+  UNKNOWN: 'Preference unknown',
+  ALLOWED: 'Allowed',
+  DECLINED: 'Declined',
+};
 
 /** The shortest reason a manager may give when overriding a preference. */
 export const MIN_OVERRIDE_REASON_LENGTH = 10;

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CustomerNotificationsService } from '../customer-notifications.service';
 import { NotificationTemplateStore } from '../templates/template-store.service';
+import { CommunicationPreferenceService } from '../communication-preference.service';
 import { PERMISSIONS } from '../../../common/constants/permissions';
 import type { NotificationCapabilities } from '../providers/notification-provider.interface';
 
@@ -107,6 +108,13 @@ function build(opts?: {
       // CR-2026-113 — no row: the store falls back to the factory policy.
       findFirst: vi.fn(async () => null),
     },
+    // CR-2026-114 — the RECORDED preference. `optedOutEmail` in these fixtures
+    // means a customer who actively declined; the absence of an answer is its
+    // own state and is covered in communication-preference.spec.ts.
+    customerCommunicationPreference: {
+      findUnique: vi.fn(async () => ({ status: opts?.optedOutEmail ? 'DECLINED' : 'ALLOWED' })),
+      findMany: vi.fn(async () => []),
+    },
     notificationLog: {
       findFirst: vi.fn(async () => opts?.existingLogs ?? null),
       findMany: vi.fn(async () => []),
@@ -144,6 +152,7 @@ function build(opts?: {
     provider as never,
     caps,
     new NotificationTemplateStore(prisma as never),
+    new CommunicationPreferenceService(prisma as never, audit as never),
   );
 
   return { service, prisma, provider, audit, createdLogs };
@@ -264,11 +273,11 @@ describe('send', () => {
    * campaign, so an opted-out customer is blocked; overriding is exceptional,
    * manager-only, reason-required and audited.
    */
-  it('blocks an optional campaign to a customer who has not opted in', async () => {
+  it('blocks an optional campaign to a customer who declined it', async () => {
     const { service, provider } = build({ optedOutEmail: true });
     await expect(
       service.send({ ...SEND_BASE, email: EMAIL('Hi.') }, 'user-1', [PERMISSIONS.NOTIFY_SEND]),
-    ).rejects.toThrow(/not opted in/i);
+    ).rejects.toThrow(/has declined optional email outreach/i);
     expect(provider.send).not.toHaveBeenCalled();
   });
 
