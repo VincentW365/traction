@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { EtaService } from '../scheduling/eta/eta.service';
 import { ETA_PRESENTATION_DEFAULTS } from '../scheduling/eta/eta.config';
@@ -22,6 +23,21 @@ export interface TimelineEvent {
   actor?: string | null;
   detail?: string | null;
 }
+
+/**
+ * The assignment fields the visit timeline reads, declared once so the query
+ * and its empty-result branch cannot describe different rows.
+ */
+const TIMELINE_ASSIGNMENT_SELECT = {
+  assignedAt: true,
+  endedAt: true,
+  isPrimary: true,
+  technician: { select: { userAccount: { select: { fullName: true } } } },
+  resource: { select: { name: true, code: true } },
+  bay: { select: { code: true } },
+} satisfies Prisma.TechnicianAssignmentSelect;
+
+type TimelineAssignment = Prisma.TechnicianAssignmentGetPayload<{ select: typeof TIMELINE_ASSIGNMENT_SELECT }>;
 
 @Injectable()
 export class VisitsService {
@@ -269,16 +285,13 @@ export class VisitsService {
       orderIds.length
         ? this.prisma.technicianAssignment.findMany({
             where: { serviceOrderId: { in: orderIds } },
-            select: {
-              assignedAt: true, endedAt: true, isPrimary: true,
-              technician: { select: { userAccount: { select: { fullName: true } } } },
-              resource: { select: { name: true, code: true } },
-              bay: { select: { code: true } },
-            },
+            select: TIMELINE_ASSIGNMENT_SELECT,
             orderBy: { assignedAt: 'asc' },
             take: 100,
           })
-        : Promise.resolve([]),
+        : // Typed for the same reason as the customer search (see there): an
+          // untyped empty array infers `never[]`, which some compilers keep.
+          Promise.resolve<TimelineAssignment[]>([]),
     ]);
 
     // CR-2026-098 — pause/waiting intervals with their measured durations. This is

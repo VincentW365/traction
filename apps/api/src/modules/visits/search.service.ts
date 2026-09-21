@@ -35,6 +35,21 @@ export interface SearchResults {
 
 const TAKE = 5;
 
+/**
+ * The customer fields the search returns, declared once so the query and its
+ * empty-result branch cannot describe different rows.
+ */
+const CUSTOMER_HIT_SELECT = {
+  id: true,
+  customerNumber: true,
+  firstName: true,
+  lastName: true,
+  phone: true,
+  email: true,
+} satisfies Prisma.CustomerSelect;
+
+type CustomerHit = Prisma.CustomerGetPayload<{ select: typeof CUSTOMER_HIT_SELECT }>;
+
 @Injectable()
 export class SearchService {
   constructor(private readonly prisma: PrismaService) {}
@@ -70,9 +85,15 @@ export class SearchService {
             where: customerWhere,
             take: TAKE,
             orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
-            select: { id: true, customerNumber: true, firstName: true, lastName: true, phone: true, email: true },
+            select: CUSTOMER_HIT_SELECT,
           })
-        : Promise.resolve([]),
+        : // The empty branch is typed from the SAME select as the query. A bare
+          // `Promise.resolve([])` infers `never[]`, and whether the union with the
+          // real result widens back to the row type or collapses to `never` turns
+          // out to depend on the compiler — which is how this reached a deploy as
+          // "Property 'id' does not exist on type 'never'" while building clean
+          // here. Stating the type removes the question.
+          Promise.resolve<CustomerHit[]>([]),
       this.prisma.vehicle.findMany({
         where: {
           customer: { testDataRunId: null },
