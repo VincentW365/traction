@@ -151,7 +151,7 @@ describe('UAT session cookie', () => {
 });
 
 describe('BookingSimulatorService — minting and redeeming', () => {
-  function build(over: { existingRun?: { id: string; status: string } | null; redeemedJtis?: string[]; runStatus?: string } = {}) {
+  function build(over: { existingRun?: { id: string; status: string } | null; redeemedJtis?: string[]; runStatus?: string; simulatorOff?: boolean } = {}) {
     const redeemed = new Set(over.redeemedJtis ?? []);
     const audits: Array<Record<string, unknown>> = [];
     const prisma = {
@@ -160,6 +160,10 @@ describe('BookingSimulatorService — minting and redeeming', () => {
           a.where.label !== undefined ? (over.existingRun ?? null) : { status: over.runStatus ?? 'ACTIVE' },
         ),
         create: vi.fn(async (a: { data: Record<string, unknown> }) => ({ id: 'run-new', status: 'ACTIVE', ...a.data })),
+      },
+      // CR-2026-116 — the simulator switch, read on every redemption.
+      businessRuleConfig: {
+        findFirst: vi.fn(async () => ({ valueJson: !over.simulatorOff })),
       },
       auditLog: {
         // Mirrors the real single-use check: has this jti already been redeemed?
@@ -246,6 +250,24 @@ describe('BookingSimulatorService — minting and redeeming', () => {
     const { token } = await h.service.startUatSession('admin-1', { label: 'uat-abc' });
     const r = await h.service.redeemUatLaunchToken(token);
     expect(r.ok).toBe(false);
+  });
+
+  /**
+   * CR-2026-116 — the simulator can be switched off between issuing a launch
+   * link and someone clicking it. A token outstanding at that moment must not
+   * still open a test session: "off" would otherwise hold everywhere except the
+   * one path that creates test customers and captures their messages.
+   */
+  it('refuses a still-valid launch token once the simulator is switched off', async () => {
+    const live = build();
+    const { token } = await live.service.startUatSession('admin-1', { label: 'uat-abc' });
+    // The same token, presented to a service whose switch is now off.
+    const off = build({ simulatorOff: true });
+    const r = await off.service.redeemUatLaunchToken(token);
+    expect(r.ok).toBe(false);
+    // Refused through the existing rejection route, so the tester is sent back
+    // to the simulator rather than silently dropped into a REAL booking.
+    expect(off.audits.some((a) => a.action === 'UAT_BOOKING_SESSION_REDEEMED')).toBe(false);
   });
 
   const badTokens: Array<[string, () => string]> = [

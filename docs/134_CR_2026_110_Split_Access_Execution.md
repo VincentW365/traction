@@ -107,8 +107,8 @@ Two changes, belt and braces:
 The remaining acceptance criteria cannot be met from this repository, and the
 directive is explicit that they cannot be claimed from localhost or the LAN.
 
-1. **Decide the deployment topology.** The audit assumed nothing about it, and
-   §5/§6 values depend on it. See the open question below.
+1. **Deployment topology is settled** — Render, both services, deployed by the
+   owner as before. See §5.
 2. **Set, in the deployed API environment:**
    - `PUBLIC_APP_URL` — the customer-facing https base (e.g.
      `https://service.bertsautoparts.com`)
@@ -119,29 +119,31 @@ directive is explicit that they cannot be claimed from localhost or the LAN.
 3. **Run the external UAT** — `docs/123_Booking_UAT_Checklist.md`, on a phone on
    mobile data with Wi-Fi off. Twelve steps, and §11 is not satisfied without it.
 
-## 5. Open question that blocks the deployment half
+## 5. Deployment topology — settled
 
-The directive was written for the Render deployment. Since then the platform was
-being deployed to **Vercel**, where a Next.js build was type-checking the NestJS
-API — which is what caused the last three build failures (CR-2026-115).
+**Vercel is not the target.** The owner deploys the platform himself, the way he
+has before: Render, as `render.yaml` and `DEPLOYMENT_HANDOFF.md` describe.
 
-That is not a detail: **Vercel runs Next.js, and this API is a long-running Nest
-server** with a Redis/BullMQ worker and hourly cron sweeps. It does not fit the
-Next builder. The two workable shapes are:
+That also closes out the three build failures of CR-2026-115. They happened
+because a Next.js build was type-checking the NestJS API under ESM settings —
+a shape that only arises on Vercel. It does not fit in any case: this API is a
+long-running Nest server with a Redis/BullMQ worker and hourly cron sweeps, not
+something the Next builder can host. The `tsconfig.portable.json` guard added in
+CR-2026-115 stays regardless — it costs one `tsc` run and it catches the class
+of error that produced those three failures.
 
-- **Web on Vercel, API stays on Render.** Set the Vercel project's Root
-  Directory to `apps/web`; the API keeps its current home. Then the frontend and
-  API sit on different public suffixes (`vercel.app` / `onrender.com`), so
-  `API_CORS_ORIGIN` must name the Vercel origin exactly, and any future cookie
-  work is genuinely cross-site.
-- **Both on Render** (what `render.yaml` and `DEPLOYMENT_HANDOFF.md` describe),
-  ideally under one parent domain — `service.bertsautoparts.com` and
-  `api.bertsautoparts.com` — which keeps same-site `Lax` behaviour available and
-  gives customers a link that looks like the business.
+So both services stay on Render, and this CR's configuration work is what it
+always was:
 
-I have not chosen for you, because the answer changes the values you set and the
-cookie posture you live with. Tell me which, and I will produce the exact
-environment configuration for it and re-run `deploy:check` against those values.
+- `PUBLIC_APP_URL` — the customer-facing https base
+- `API_CORS_ORIGIN` — the web service's exact origin, https, never `*`
+- `NODE_ENV=production`, `ALLOW_DEV_LOGIN=false`
+
+Ideally both under one parent domain — `service.bertsautoparts.com` and
+`api.bertsautoparts.com` — which keeps same-site `Lax` behaviour available and
+gives customers a link that looks like the business rather than like a host.
+`onrender.com` subdomains work today; they are on the Public Suffix List, so the
+UAT cookie work from CR-2026-108 Stage 3 already accounts for them.
 
 ## 6. Acceptance status
 

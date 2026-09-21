@@ -6,6 +6,9 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
+import { FeatureFlagGuard } from '../../common/guards/feature-flag.guard';
+import { RequireFeature } from '../../common/decorators/require-feature.decorator';
+import { FEATURES } from '../../common/constants/features';
 import { CurrentUser, type JwtPayload } from '../../common/decorators/current-user.decorator';
 import type { BookingAudience } from '../scheduling/availability/booking-availability.service';
 
@@ -16,10 +19,15 @@ import type { BookingAudience } from '../scheduling/availability/booking-availab
  * rule values and (from Stage 5) resource facts. That is precisely what the public
  * booking API must never return, so this controller is permission-gated on
  * BOOKING_SIMULATE and mounted under /admin, never under /public.
+ *
+ * CR-2026-116 — and the tool as a whole is a switch the business owns. While
+ * `booking_simulator_enabled` is off these routes refuse, so the feature being
+ * gone from the menu is the truth rather than the appearance of it.
  */
 @ApiTags('Booking Simulator')
 @Controller('admin/testing/booking')
-@UseGuards(JwtAuthGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, RbacGuard, FeatureFlagGuard)
+@RequireFeature(FEATURES.BOOKING_SIMULATOR)
 @ApiBearerAuth()
 export class BookingSimulatorController {
   constructor(

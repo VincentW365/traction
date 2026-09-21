@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../../../../../lib/api-client';
 import { PageHeader } from '../../../../../components/ui/page-header';
 import { LoadingState } from '../../../../../components/ui/loading-state';
+import { FEATURES, useFeatureEnabled } from '../../../../../hooks/use-feature';
 
 /**
  * CR-2026-108 Stage 3 — Setup → Testing → Booking Simulator.
@@ -129,9 +131,15 @@ export default function BookingSimulatorPage() {
   const [uatLabel, setUatLabel] = useState('');
   const [session, setSession] = useState<UatSession | null>(null);
 
+  // CR-2026-116 — the tool is a switch the business owns. The menu entry is
+  // already gone when it is off, but the address still works, so the page says
+  // so plainly instead of running queries the API will refuse.
+  const simulatorOn = useFeatureEnabled(FEATURES.BOOKING_SIMULATOR);
+
   const servicesQ = useQuery<{ services?: ServiceOption[] } | ServiceOption[]>({
     queryKey: ['sim-services'],
     queryFn: () => api.get('/public/booking/services'),
+    enabled: simulatorOn,
   });
   const serviceList: ServiceOption[] = Array.isArray(servicesQ.data)
     ? servicesQ.data
@@ -144,7 +152,7 @@ export default function BookingSimulatorPage() {
         `/admin/testing/booking/simulate?serviceCodes=${encodeURIComponent(serviceCodes)}` +
           `&days=${encodeURIComponent(days)}&audience=${audience}${from ? `&from=${from}` : ''}`,
       ),
-    enabled: ran && serviceCodes.length > 0,
+    enabled: simulatorOn && ran && serviceCodes.length > 0,
   });
 
   const startSession = useMutation<UatSession>({
@@ -154,6 +162,32 @@ export default function BookingSimulatorPage() {
 
   const data = simQ.data;
   const tz = data?.site.timezone ?? 'America/Jamaica';
+
+  if (!simulatorOn) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          title="Booking Simulator"
+          subtitle="This tool is switched off."
+          breadcrumbs={[{ label: 'Dashboard', href: '/' }, { label: 'Setup' }, { label: 'Testing' }, { label: 'Booking' }]}
+        />
+        <div className="card">
+          <div className="card-body space-y-3">
+            <p className="text-sm text-slate-700">
+              The Booking Simulator has been switched off for this site, so it is not available and no new
+              test bookings can be started.
+            </p>
+            <p className="text-sm text-slate-500">
+              Nothing customers see is affected, and any test records already created are kept.
+            </p>
+            <Link href="/admin/settings/booking" className="btn btn-primary inline-flex">
+              Turn it back on in Settings
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

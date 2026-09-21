@@ -16,6 +16,8 @@ import type { AvailabilityDecision } from '../scheduling/availability/slot-decis
 import { ResourceAvailabilityService, primaryCapability } from '../scheduling/availability/resource-availability.service';
 import { ShadowComparisonService, type ShadowComparisonRun } from '../scheduling/availability/shadow-comparison.service';
 import { AuditService } from '../audit/audit.service';
+import { FEATURES } from '../../common/constants/features';
+import { isFeatureOn } from '../../common/helpers/feature-flags';
 import {
   signUatLaunchToken,
   signUatSessionCookie,
@@ -228,6 +230,17 @@ export class BookingSimulatorService {
     | { ok: true; context: UatContext; cookieValue: string; expiresAt: Date }
     | { ok: false; reason: UatLaunchRejection | 'ALREADY_REDEEMED' }
   > {
+    // CR-2026-116 — the simulator can be switched off between issuing a launch
+    // link and someone clicking it. A token outstanding at that moment must not
+    // still open a test session: "off" would otherwise hold everywhere except
+    // the one path that creates test customers and captures their messages.
+    // Refused through the existing rejection route, so the tester is told to go
+    // back to the simulator rather than silently dropped into a real booking.
+    if (!(await isFeatureOn(this.prisma, FEATURES.BOOKING_SIMULATOR))) {
+      this.logger.warn('UAT launch token refused: the Booking Simulator is switched off.');
+      return { ok: false, reason: 'INCOMPLETE' };
+    }
+
     const verified = verifyUatLaunchToken(token);
     if (!verified.ok) {
       this.logger.warn(`UAT launch token refused: ${verified.reason}.`);

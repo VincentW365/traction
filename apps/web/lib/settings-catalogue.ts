@@ -68,7 +68,7 @@ export interface SettingsCategoryDef {
   icon: CategoryIcon;
   sections: SettingsSectionDef[];
   /** Related tools, as secondary actions rather than navigation clutter. */
-  links?: Array<{ label: string; href: string }>;
+  links?: Array<{ label: string; href: string; requiresRule?: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +113,7 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
     description: 'Appointment availability, online booking, notice periods and scheduling policies.',
     icon: 'calendar',
     links: [
-      { label: 'Open Booking Simulator', href: '/admin/testing/booking' },
+      { label: 'Open Booking Simulator', href: '/admin/testing/booking', requiresRule: 'booking_simulator_enabled' },
       { label: 'Manage services', href: '/admin/service-catalogue' },
     ],
     sections: [
@@ -309,6 +309,23 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
             help: 'Which kinds of resource are counted when capacity is worked out from the workshop. One per line.',
             control: 'list',
             advanced: true,
+          },
+        ],
+      },
+      {
+        // CR-2026-116 — the switch lives here, in the category the tool belongs
+        // to, and NEVER behind the tool it controls. A setting reachable only
+        // through the thing it can hide would be a one-way door.
+        title: 'Testing tools',
+        help: 'Tools for checking how booking behaves. They change nothing customers see.',
+        settings: [
+          {
+            key: 'booking_simulator_enabled',
+            label: 'Booking Simulator',
+            help: 'A Manager-only tool that explains why a time is or is not offered, and can make a test booking that is kept separate from real ones.',
+            control: 'toggle',
+            impact:
+              'Turning this off removes the Booking Simulator from Setup and stops new test bookings being started. Nothing a customer sees changes, and test records already created are kept.',
           },
         ],
       },
@@ -686,7 +703,7 @@ export const SETTINGS_LAUNCHPADS: Array<{
   title: string;
   description: string;
   icon: CategoryIcon;
-  links: Array<{ label: string; href: string; help: string }>;
+  links: Array<{ label: string; href: string; help: string; requiresRule?: string }>;
 }> = [
   {
     slug: 'services',
@@ -703,7 +720,7 @@ export const SETTINGS_LAUNCHPADS: Array<{
     description: 'Booking simulator, test bookings, resource reconciliation and deployment checks.',
     icon: 'flask',
     links: [
-      { label: 'Booking Simulator', href: '/admin/testing/booking', help: 'Why a time is or is not offered, and a safe way to make a test booking.' },
+      { label: 'Booking Simulator', href: '/admin/testing/booking', help: 'Why a time is or is not offered, and a safe way to make a test booking.', requiresRule: 'booking_simulator_enabled' },
       { label: 'Confirm Work Positions', href: '/admin/resources/reconciliation', help: 'Match bays to records and say what work each can take.' },
       { label: 'Deployment', href: '/admin/deployment', help: 'Whether this installation is configured correctly.' },
       { label: 'Audit Logs', href: '/admin/audit-logs', help: 'Who changed what, and when.' },
@@ -724,6 +741,25 @@ for (const category of SETTINGS_CATEGORIES) {
 
 export function findSetting(key: string): SettingDef | undefined {
   return BY_KEY.get(key)?.setting;
+}
+
+/**
+ * CR-2026-116 — should a link to a tool be offered at all?
+ *
+ * A link that leads to a feature management has switched off is a dead end, so
+ * it is not shown. `undefined` — no row for the rule in this deployment — counts
+ * as ON: introducing a switch must never be what removes a working tool.
+ *
+ * Pure, and takes the lookup as an argument, so the rule can be tested without
+ * a query client.
+ */
+export function linkIsAvailable(
+  link: { requiresRule?: string },
+  ruleValue: (key: string) => unknown,
+): boolean {
+  if (!link.requiresRule) return true;
+  const value = ruleValue(link.requiresRule);
+  return value === undefined ? true : value === true;
 }
 
 export function categoryFor(key: string): SettingsCategoryDef | undefined {

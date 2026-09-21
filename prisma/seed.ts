@@ -468,6 +468,10 @@ async function main() {
     // Settings once the readiness audit and preflight pass. Never a redeploy.
     { ruleKey: 'booking_enforce_online_bookable', valueJson: false, notes: 'CR-2026-108: when true, /book offers ONLY services with bookableOnline=true. False preserves the pre-CR behaviour (every active, non-external, non-excluded service). Activation is gated by a preflight — see docs/122 §E.' },
     { ruleKey: 'booking_share_message_template', valueJson: 'Hi! You can book your next service at {siteName} online here: {bookingUrl} — pick your vehicle, the service you need, and a time that suits you.', notes: 'CR-2026-106: the wording staff copy and pass on with the public booking link; {bookingUrl} and {siteName} are replaced.' },
+    // CR-2026-116 — the Booking Simulator is a tool the business switches on and
+    // off. Seeded TRUE so a fresh database behaves like the running one; the
+    // migration seeds the same value into deployments that already exist.
+    { ruleKey: 'booking_simulator_enabled', valueJson: true, notes: 'CR-2026-116: shows or hides Setup -> Booking Simulator and its test-booking sessions. Off also refuses the endpoints behind it, so the tool is genuinely gone rather than merely unlisted.' },
   ];
 
   for (const r of cr105cRules) {

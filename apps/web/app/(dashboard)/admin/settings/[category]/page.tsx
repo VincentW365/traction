@@ -23,6 +23,7 @@ import {
   catalogued,
   findCategory,
   humaniseDays,
+  linkIsAvailable,
   humaniseMinutes,
   to12Hour,
   type SettingDef,
@@ -93,6 +94,10 @@ export default function SettingsCategoryPage({ params }: { params: Promise<{ cat
 
   // --- the live value of a key, preferring an unsaved edit -------------------
   const current = (key: string) => (key in draft ? draft[key] : ruleValue(rules, key));
+  // CR-2026-116 — do not offer a way into a tool the business has switched off.
+  const offered = (l: { requiresRule?: string }) => linkIsAvailable(l, (k) => ruleValue(rules, k));
+  const launchpadLinks = (launchpad?.links ?? []).filter(offered);
+  const relatedLinks = (category?.links ?? []).filter(offered);
   const isModified = (key: string) =>
     key in draft && JSON.stringify(draft[key]) !== JSON.stringify(ruleValue(rules, key));
 
@@ -160,9 +165,9 @@ export default function SettingsCategoryPage({ params }: { params: Promise<{ cat
       )}
 
       {/* ---- a launchpad sends you to the tool, it does not fake a form --- */}
-      {launchpad && (
+      {launchpad && launchpadLinks.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {launchpad.links.map((l) => (
+          {launchpadLinks.map((l) => (
             <Link
               key={l.href}
               href={l.href}
@@ -221,10 +226,10 @@ export default function SettingsCategoryPage({ params }: { params: Promise<{ cat
            Suppressed on Capacity & Resources: the readiness panel above already
            carries both links, and repeating them under a "Related" heading
            three inches lower is clutter, not navigation. */}
-      {category?.links && category.links.length > 0 && slug !== 'capacity' && (
+      {relatedLinks.length > 0 && slug !== 'capacity' && (
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-1">
           <span className="text-sm text-slate-500">Related:</span>
-          {category.links.map((l) => (
+          {relatedLinks.map((l) => (
             <RelatedLink key={l.href} href={l.href}>
               {l.label}
             </RelatedLink>
