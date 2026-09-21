@@ -580,7 +580,7 @@ export default function ReportsPage() {
                     ['Jobs Started', r.flow.jobsStarted],
                     ['Jobs Completed', r.flow.jobsCompleted],
                     ['Visits Closed', r.flow.visitsCompleted],
-                    ['Ready for Pickup', r.flow.readyForPickup],
+                    ['Ready for Collection', r.flow.readyForPickup],
                   ].map(([label, value], i, arr) => (
                     <span key={label as string} className="flex items-center gap-1.5">
                       <span className="rounded-lg border border-slate-200 bg-white px-3 py-1.5">

@@ -13,6 +13,7 @@ import {
   CUSTOMER_SEARCH_TAKE,
 } from '../../common/helpers/search-where';
 import { phoneForStorage } from '../../common/helpers/search-terms';
+import { normalizeCustomerEmail } from '../../common/helpers/customer-email';
 import {
   toCustomerListItem,
   toCustomerDetail,
@@ -220,7 +221,9 @@ export class CustomersService {
           // CR-2026-106 — stored digits-only so "876-555-1234" and "8765551234" are
           // one number for search; display formatting is applied on read.
           phone: phoneForStorage(data.phone),
-          email: data.email,
+          // CR-2026-113 — placeholder text ("N/A", "none", blank) is stored as
+          // NULL, not as an address. Anything else must be a real address.
+          email: normalizeCustomerEmail(data.email) ?? null,
           // CR-2026-050 — loyalty is a yes/no flag (no number).
           loyaltyMember: data.loyaltyMember ?? false,
           notificationOptInSms: data.notificationOptInSms ?? true,
@@ -432,7 +435,7 @@ export class CustomersService {
         ...(data.firstName !== undefined && { firstName: data.firstName }),
         ...(data.lastName !== undefined && { lastName: data.lastName }),
         ...(data.phone !== undefined && { phone: phoneForStorage(data.phone) }),
-        ...(data.email !== undefined && { email: data.email }),
+        ...(data.email !== undefined && { email: normalizeCustomerEmail(data.email) ?? null }),
         // CR-2026-050 — loyalty is a yes/no flag.
         ...(data.loyaltyMember !== undefined && { loyaltyMember: data.loyaltyMember }),
         ...(data.notificationOptInSms !== undefined && { notificationOptInSms: data.notificationOptInSms }),

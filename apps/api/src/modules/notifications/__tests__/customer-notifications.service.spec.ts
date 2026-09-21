@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CustomerNotificationsService } from '../customer-notifications.service';
 import { NotificationTemplateStore } from '../templates/template-store.service';
+import { PERMISSIONS } from '../../../common/constants/permissions';
 import type { NotificationCapabilities } from '../providers/notification-provider.interface';
 
 /**
@@ -42,6 +43,8 @@ const TEMPLATE_EMAIL = {
   body: "Hi {{customerFirstName}}, your {{vehicleDescription}} ({{registrationNumber}}) is due for servicing at Bert's Service Centre. Please contact us or book your service at your convenience. Thank you.",
   enabled: true,
   version: 3,
+  // CR-2026-113 — SERVICE_DUE is a campaign: optional outreach.
+  purpose: 'MARKETING',
 };
 
 function build(opts?: {
@@ -81,13 +84,28 @@ function build(opts?: {
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     notificationTemplate: {
-      findFirst: vi.fn(async ({ where }: { where: { channel: string } }) =>
-        where.channel === 'EMAIL' ? TEMPLATE_EMAIL : null,
-      ),
+      // CR-2026-113 — honours the REASON as well as the channel: a mock that
+      // returned the service-due template for every reason would have made a
+      // ready-for-collection message look like a marketing campaign.
+      findFirst: vi.fn(async ({ where }: { where: { channel: string; reason?: string } }) => {
+        if (where.channel !== 'EMAIL') return null;
+        if (!where.reason || where.reason === 'SERVICE_DUE') return TEMPLATE_EMAIL;
+        return {
+          ...TEMPLATE_EMAIL,
+          id: `tpl-${where.reason}`,
+          key: `${where.reason}_EMAIL`,
+          reason: where.reason,
+          purpose: where.reason === 'APPOINTMENT_REMINDER' ? 'REMINDER' : 'TRANSACTIONAL',
+        };
+      }),
       findUnique: vi.fn(async () => null),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: 'tpl-new', version: 1, ...data })),
       findMany: vi.fn(async () => [TEMPLATE_EMAIL]),
       update: vi.fn(),
+    },
+    businessRuleConfig: {
+      // CR-2026-113 — no row: the store falls back to the factory policy.
+      findFirst: vi.fn(async () => null),
     },
     notificationLog: {
       findFirst: vi.fn(async () => opts?.existingLogs ?? null),
@@ -241,16 +259,78 @@ describe('send', () => {
     ).rejects.toThrow(/unfilled placeholders/);
   });
 
-  it('respects a recorded email opt-out unless staff explicitly confirm', async () => {
+  /**
+   * CR-2026-113 — consent applies to OPTIONAL outreach. SERVICE_DUE is a
+   * campaign, so an opted-out customer is blocked; overriding is exceptional,
+   * manager-only, reason-required and audited.
+   */
+  it('blocks an optional campaign to a customer who has not opted in', async () => {
     const { service, provider } = build({ optedOutEmail: true });
     await expect(
-      service.send({ ...SEND_BASE, email: EMAIL('Hi.') }, 'user-1'),
-    ).rejects.toThrow(/opted out/);
+      service.send({ ...SEND_BASE, email: EMAIL('Hi.') }, 'user-1', [PERMISSIONS.NOTIFY_SEND]),
+    ).rejects.toThrow(/not opted in/i);
     expect(provider.send).not.toHaveBeenCalled();
-
-    const ok = await service.send({ ...SEND_BASE, overrideOptOut: true, email: EMAIL('Hi.') }, 'user-1');
-    expect(ok.sent[0].status).toBe('SENT');
   });
+
+  it('an advisor cannot override it — the exception belongs to a manager', async () => {
+    const { service, provider } = build({ optedOutEmail: true });
+    await expect(
+      service.send(
+        { ...SEND_BASE, overrideOptOut: true, overrideReason: 'Customer asked by phone today', email: EMAIL('Hi.') },
+        'advisor-1',
+        [PERMISSIONS.NOTIFY_SEND],
+      ),
+    ).rejects.toThrow(/manager/i);
+    expect(provider.send).not.toHaveBeenCalled();
+  });
+
+  it('a manager must give a reason, and it is recorded against the message', async () => {
+    const manager = [PERMISSIONS.NOTIFY_SEND, PERMISSIONS.NOTIFY_CONSENT_OVERRIDE];
+    const { service, createdLogs, audit } = build({ optedOutEmail: true });
+
+    await expect(
+      service.send({ ...SEND_BASE, overrideOptOut: true, overrideReason: 'ok', email: EMAIL('Hi.') }, 'mgr-1', manager),
+    ).rejects.toThrow(/reason/i);
+
+    const res = await service.send(
+      {
+        ...SEND_BASE,
+        overrideOptOut: true,
+        overrideReason: 'Customer asked us by phone this morning to send the offer',
+        email: EMAIL('Hi.'),
+      },
+      'mgr-1',
+      manager,
+    );
+    expect(res.sent[0].status).toBe('SENT');
+    expect(createdLogs[0].consentOverridden).toBe(true);
+    expect(createdLogs[0].consentOverrideReason).toMatch(/asked us by phone/);
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'mgr-1',
+        afterJson: expect.objectContaining({ consentOverridden: true, purpose: 'MARKETING' }),
+      }),
+    );
+  });
+
+  /** The whole point of CR-2026-113: routine work needs no override at all. */
+  it('an operational message needs NO override for the same opted-out customer', async () => {
+    const { service, createdLogs } = build({ optedOutEmail: true });
+    const res = await service.send(
+      {
+        reason: 'PICKUP_READY',
+        customerId: 'cust-1',
+        vehicleId: 'veh-1',
+        email: EMAIL('Your vehicle is ready.'),
+      },
+      'advisor-1',
+      [PERMISSIONS.NOTIFY_SEND],
+    );
+    expect(res.sent[0].status).toBe('SENT');
+    expect(createdLogs[0].purpose).toBe('TRANSACTIONAL');
+    expect(createdLogs[0].consentOverridden).toBe(false);
+  });
+
 
   it('provider failure is recorded as FAILED — never shown as delivered', async () => {
     const { service, createdLogs } = build({ providerResult: { success: false, failureReason: 'rejected' } });

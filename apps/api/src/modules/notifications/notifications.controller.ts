@@ -56,9 +56,13 @@ export class NotificationsController {
 
   @Post('send')
   @RequirePermission(PERMISSIONS.NOTIFY_SEND)
-  @ApiOperation({ summary: 'Send a reviewed/edited customer notification (SMS and/or email)' })
+  @ApiOperation({ summary: 'Send a reviewed/edited customer email' })
   send(@Body() body: SendInput, @CurrentUser() user: JwtPayload) {
-    return this.customerNotifications.send(body, user.sub);
+    // CR-2026-113 — the actor's permissions travel with the send: overriding a
+    // customer's recorded preference needs notify:consent_override, which the
+    // service checks rather than the route, because it applies to SOME sends
+    // (optional outreach) and never to operational ones.
+    return this.customerNotifications.send(body, user.sub, user.permissions ?? []);
   }
 
   @Post('manual-contact')

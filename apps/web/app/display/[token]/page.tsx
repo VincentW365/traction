@@ -319,7 +319,7 @@ export default function DisplayBoardPage() {
 
         <Lane
           title="Ready"
-          subtitle="Ready for pickup"
+          subtitle="Ready for collection"
           count={data.ready.length}
           accent={ACCENTS.emerald}
           icon={<CheckBadgeIcon />}

@@ -512,6 +512,20 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
         ],
       },
       {
+        title: 'Customer consent',
+        help: 'Which customer emails need the customer to have opted in.',
+        settings: [
+          {
+            key: 'notification_purposes_requiring_consent',
+            label: 'Emails That Need Opt-In',
+            help:
+              'Optional outreach (MARKETING) normally needs the customer to have agreed. Emails about a booking or a job in progress (TRANSACTIONAL) and reminders about an appointment they made (REMINDER) are sent to any customer with an email address. One purpose per line.',
+            control: 'list',
+            advanced: true,
+          },
+        ],
+      },
+      {
         title: 'Service due reminders',
         settings: [
           {

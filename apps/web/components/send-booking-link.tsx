@@ -6,10 +6,14 @@
  * (`GET /appointments/booking-link`), which builds the URL from PUBLIC_APP_URL —
  * never from this browser's address.
  *
- * CR-2026-112 — this is a hand-off, not a notification: staff copy the message
- * and pass it on themselves. The one-tap WhatsApp and SMS links were removed
- * with the rest of the SMS surface; the API still returns those fields, which
- * this screen ignores.
+ * CR-2026-112 — this is a hand-off, not a notification: the message is passed
+ * on by the member of staff, from their own device, to a customer who is
+ * usually standing in front of them.
+ *
+ * CR-2026-113 — WhatsApp is restored for exactly that reason. It is NOT a
+ * notification channel: nothing is sent by the platform, nothing is recorded as
+ * delivered, and no customer message flows through it. The SMS deep link stays
+ * out, since SMS is not part of this release at all.
  */
 
 import { useState } from 'react';
@@ -20,6 +24,8 @@ import { useSiteId } from '../hooks/use-site';
 interface BookingLink {
   bookingUrl: string;
   message: string;
+  /** A wa.me link the STAFF member opens; the platform sends nothing. */
+  whatsappUrl: string;
 }
 
 export function SendBookingLink({ phone, compact }: { phone?: string | null; compact?: boolean }) {
@@ -46,10 +52,17 @@ export function SendBookingLink({ phone, compact }: { phone?: string | null; com
               <p className="text-[11px] uppercase tracking-wide text-slate-400">Public booking link</p>
               <p className="break-all font-mono text-xs text-slate-700">{q.data.bookingUrl}</p>
               <p className="text-xs text-slate-600">{q.data.message}</p>
-              {/* CR-2026-112 — the WhatsApp and SMS hand-off links were removed with
-                  the rest of the SMS/WhatsApp surface. Staff copy the message and
-                  send it however they normally reach that customer. */}
+              {/* CR-2026-113 — opens WhatsApp on the staff member's own device with
+                  the message ready to send. The platform transmits nothing here. */}
               <div className="flex flex-wrap gap-2">
+                <a
+                  href={q.data.whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-h-9 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                >
+                  WhatsApp
+                </a>
                 <button
                   type="button"
                   onClick={async () => {
@@ -66,7 +79,10 @@ export function SendBookingLink({ phone, compact }: { phone?: string | null; com
                   {copied ? 'Copied' : 'Copy message'}
                 </button>
               </div>
-              <p className="text-[11px] text-slate-500">The customer identifies with their mobile + plate (or email); no login, no name-only matching.</p>
+              <p className="text-[11px] text-slate-500">
+                WhatsApp opens on your device — the system does not send it. The customer
+                identifies with their mobile + plate (or email); no login, no name-only matching.
+              </p>
             </div>
           )}
         </div>

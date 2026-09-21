@@ -98,6 +98,14 @@ export const PERMISSIONS = {
   // would silently widen this if it were ever granted to advisors.
   NOTIFY_CAPTURED_VIEW: 'notify:captured_view',
 
+  // CR-2026-113 — sending OPTIONAL outreach to a customer who has not opted in.
+  // Deliberately its own boundary, and deliberately NOT granted to the service
+  // advisor: overriding a recorded preference is an exceptional act, and an
+  // exception available on the routine path stops being one. Operational email
+  // (confirmations, authorisation requests, ready for collection) needs nothing
+  // beyond NOTIFY_SEND, so this never stands between the front desk and its work.
+  NOTIFY_CONSENT_OVERRIDE: 'notify:consent_override',
+
   // CR-2026-108 — the Admin Booking Simulator: reading the internal availability
   // decision (capacity numbers, rule values, later resource facts) and minting UAT
   // booking sessions. Diagnostic and privileged, so it is its own boundary.

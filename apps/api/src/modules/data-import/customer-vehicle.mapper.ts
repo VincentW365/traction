@@ -1,3 +1,4 @@
+import { normalizeImportedEmail } from '../../common/helpers/customer-email';
 import { normalizePhone as canonicalNormalizePhone, normalizePlate as canonicalNormalizePlate } from '../../common/helpers/search-terms';
 /**
  * Customer + Vehicle import mapper (CR-2026-003) — PURE functions, no I/O.
@@ -309,7 +310,11 @@ export function planImport(rows: RawContactRow[]): ImportPlan {
         lastName: parsed.lastName || (flags.includes('MISSING_NAME') ? `Contact ${r.id}` : ''),
         rawName: r.name,
         phone: normalizePhone(r.phone),
-        email: r.email || null,
+        // CR-2026-113 — the import is where "N/A" entered the email column in
+        // the first place. Placeholder text becomes NULL here, so it can never
+        // be stored as an address again; an address that is real but malformed
+        // is dropped rather than repaired, and shows up in the import coverage.
+        email: normalizeImportedEmail(r.email).value,
         loyaltyNumber: trimOrNull(r.loyalty),
         vehicleContactIds: [],
         suspiciousMerge: false,
@@ -321,7 +326,7 @@ export function planImport(rows: RawContactRow[]): ImportPlan {
         customer.suspiciousMerge = true;
         flags.push('SUSPICIOUS_MERGE_PLACEHOLDER_PHONE');
       }
-      if (!customer.email && r.email) customer.email = r.email;
+      if (!customer.email && r.email) customer.email = normalizeImportedEmail(r.email).value;
       if (!customer.loyaltyNumber && trimOrNull(r.loyalty)) customer.loyaltyNumber = trimOrNull(r.loyalty);
     }
     customer.vehicleContactIds.push(r.id);

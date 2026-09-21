@@ -291,7 +291,7 @@ export function AppointmentDetailModal({
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={optEmail} onChange={(e) => setOptEmail(e.target.checked)} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />Customer consents to email updates</label>
+                    <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={optEmail} onChange={(e) => setOptEmail(e.target.checked)} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />Customer agrees to service reminders and offers by email</label>
                   </div>
                   {requiresMileage && !mileageIn.trim() && <p className="text-xs text-amber-600">A mileage reading is required for these services.</p>}
                   {checkInMutation.isError && <p className="text-xs text-red-600">{checkInMutation.error instanceof Error ? checkInMutation.error.message : 'Check-in failed'}</p>}

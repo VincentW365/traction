@@ -3,6 +3,12 @@ import { NotificationReason } from '@prisma/client';
 import { PrismaService } from '../../../infrastructure/prisma/prisma.service';
 import { DEFAULT_TEMPLATES, defaultTemplateFor } from './default-templates';
 import { renderTemplate, TemplateData } from './template-engine';
+import {
+  CONSENT_POLICY_RULE_KEY,
+  parsePurposePolicy,
+  purposeForReason,
+  type CommunicationPurposeName,
+} from '../consent-policy';
 
 /**
  * CR-2026-112 — the ONE way to get customer-facing wording.
@@ -41,6 +47,7 @@ export class NotificationTemplateStore {
           name: t.name,
           subject: t.subject,
           body: t.body,
+          purpose: t.purpose,
         },
       });
       created++;
@@ -70,11 +77,39 @@ export class NotificationTemplateStore {
           name: dflt.name,
           subject: dflt.subject,
           body: dflt.body,
+          purpose: dflt.purpose,
         },
       });
     } catch {
       // Raced with a concurrent create — read back.
       return this.prisma.notificationTemplate.findUnique({ where: { key: dflt.key } });
+    }
+  }
+
+  /**
+   * CR-2026-113 — the business purpose this reason is sent under. The template
+   * row wins (a manager may have reclassified it); the factory mapping answers
+   * for a reason with no row yet.
+   */
+  async purposeFor(reason: NotificationReason): Promise<CommunicationPurposeName> {
+    const template = await this.resolve(reason);
+    return (template?.purpose as CommunicationPurposeName | undefined) ?? purposeForReason(reason);
+  }
+
+  /**
+   * CR-2026-113 — which purposes require recorded consent, from configuration.
+   * A missing or unreadable rule falls back to the factory policy rather than
+   * to "send to everyone".
+   */
+  async purposesRequiringConsent(): Promise<CommunicationPurposeName[]> {
+    try {
+      const rule = await this.prisma.businessRuleConfig.findFirst({
+        where: { ruleKey: CONSENT_POLICY_RULE_KEY, effectiveTo: null },
+        select: { valueJson: true },
+      });
+      return parsePurposePolicy(rule?.valueJson);
+    } catch {
+      return parsePurposePolicy(undefined);
     }
   }
 
@@ -87,7 +122,7 @@ export class NotificationTemplateStore {
   async render(
     reason: NotificationReason,
     data: TemplateData,
-  ): Promise<{ templateKey: string; templateVersion: number; subject: string; body: string } | null> {
+  ): Promise<{ templateKey: string; templateVersion: number; subject: string; body: string; purpose: CommunicationPurposeName } | null> {
     const template = await this.resolve(reason);
     if (!template || !template.enabled) return null;
     const subject = renderTemplate(template.subject ?? '', data).text;
@@ -98,6 +133,7 @@ export class NotificationTemplateStore {
       templateVersion: template.version,
       subject: subject.trim(),
       body,
+      purpose: (template.purpose as CommunicationPurposeName | undefined) ?? purposeForReason(reason),
     };
   }
 }

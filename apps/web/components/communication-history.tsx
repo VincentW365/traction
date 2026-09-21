@@ -17,7 +17,7 @@ const REASON_LABELS: Record<string, string> = {
   QUEUE_CHECKED_IN: 'Checked In',
   QUEUE_WORK_STARTED: 'Work Started',
   QUEUE_UPDATE: 'Service Update',
-  PICKUP_READY: 'Ready for Pickup',
+  PICKUP_READY: 'Ready for Collection',
   CUSTOM: 'Message',
 };
 

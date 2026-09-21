@@ -12,6 +12,7 @@ import { renderEmailContent } from './templates/email-templates';
 import { NotificationTemplateStore } from './templates/template-store.service';
 import { buildVehicleDescription, type TemplateData } from './templates/template-engine';
 import { NO_EMAIL_ON_FILE, UNSUPPORTED_CHANNEL_REASON } from './notification-messages';
+import { purposeForTemplateKey, type CommunicationPurposeName } from './consent-policy';
 
 /**
  * CR-2026-106 — the ONE mapping from a NotificationLog row to what a person is
@@ -80,6 +81,8 @@ export interface QueueNotificationInput {
   body?: string;
   /** CR-2026-112 — the reason this message went out, for history and reporting. */
   reason?: NotificationReason;
+  /** CR-2026-113 — the business purpose it was sent under (TRANSACTIONAL / REMINDER / MARKETING). */
+  purpose?: CommunicationPurposeName;
   /** CR-2026-112 — which manager-editable template produced it, when one did. */
   templateVersion?: number;
   /** CR-2026-106 — so the customer's Communication History (filtered by customer/vehicle) shows this message. */
@@ -208,6 +211,7 @@ export class NotificationsService {
           simulated: false,
           status: 'CAPTURED' as NotificationDeliveryStatus,
           ...(input.reason ? { reason: input.reason } : {}),
+          purpose: input.purpose ?? purposeForTemplateKey(input.templateKey),
           failureReason: `Captured for test run ${testRecord.runLabel ?? 'unknown'} (matched via ${testRecord.via}) — not transmitted`,
           ...(subject ? { subject } : {}),
           ...(body ? { body, generatedBody: body } : {}),
@@ -241,6 +245,9 @@ export class NotificationsService {
         // system-sent email.
         ...(input.reason ? { reason: input.reason } : {}),
         ...(input.templateVersion ? { templateVersion: input.templateVersion } : {}),
+        // CR-2026-113 — recorded, so "why was this sent?" is answerable from the
+        // log rather than reconstructed from the template key.
+        purpose: input.purpose ?? purposeForTemplateKey(input.templateKey),
         ...(input.customerId ? { customerId: input.customerId } : {}),
         ...(input.vehicleId ? { vehicleId: input.vehicleId } : {}),
       },
@@ -440,6 +447,7 @@ export class NotificationsService {
       templateKey: rendered?.templateKey ?? legacyKey,
       templateVersion: rendered?.templateVersion,
       reason,
+      purpose: rendered?.purpose ?? 'TRANSACTIONAL',
       recipient: input.email,
       templateData,
       subject: rendered?.subject || fallback.subject,
@@ -498,13 +506,16 @@ export class NotificationsService {
 
     // CR-2026-112 — email reminder. A customer with no address on file simply
     // gets no reminder; nothing is recorded as sent.
-    if (appointment.customer.email && appointment.customer.notificationOptInEmail) {
+    // CR-2026-113 — a reminder is about an appointment this customer already
+    // made, so it is not gated on the optional-email preference.
+    if (appointment.customer.email) {
       const emailId = await this.queue({
         entityType: 'Appointment',
         entityId: appointmentId,
         channel: 'EMAIL',
         templateKey,
         reason: 'APPOINTMENT_REMINDER',
+        purpose: 'REMINDER',
         recipient: appointment.customer.email,
         templateData,
         scheduledAt,
@@ -559,13 +570,15 @@ export class NotificationsService {
 
     const ids: string[] = [];
 
-    if (visit.customer.email && visit.customer.notificationOptInEmail) {
+    // CR-2026-113 — the vehicle is with us and running late: operational.
+    if (visit.customer.email) {
       const emailId = await this.queue({
         entityType: 'ServiceVisit',
         entityId: serviceVisitId,
         channel: 'EMAIL',
         templateKey: 'service_delay_alert',
         reason: 'QUEUE_UPDATE',
+        purpose: 'TRANSACTIONAL',
         recipient: visit.customer.email,
         templateData,
       });
@@ -602,13 +615,16 @@ export class NotificationsService {
 
     const ids: string[] = [];
 
-    if (visit.customer.email && visit.customer.notificationOptInEmail) {
+    // CR-2026-113 — telling someone their vehicle is ready IS the service, not
+    // outreach: an address on file is the only condition.
+    if (visit.customer.email) {
       const emailId = await this.queue({
         entityType: 'ServiceVisit',
         entityId: serviceVisitId,
         channel: 'EMAIL',
         templateKey: 'ready_for_pickup',
         reason: 'PICKUP_READY',
+        purpose: 'TRANSACTIONAL',
         recipient: visit.customer.email,
         templateData,
       });
@@ -759,6 +775,7 @@ export class NotificationsService {
           channel: 'EMAIL',
           templateKey: rendered?.templateKey ?? 'pickup_ready',
           reason: 'PICKUP_READY',
+          purpose: rendered?.purpose ?? 'TRANSACTIONAL',
           recipient: visit.customer.email,
           ...(rendered ? { subject: rendered.subject, body: rendered.body } : {}),
           templateData: {
@@ -980,6 +997,8 @@ export class NotificationsService {
       const { customer, vehicle } = visit;
       // CR-2026-112 — email is the channel, so email consent and an address are
       // what decide whether this follow-up can go out at all.
+      // CR-2026-113 — a thank-you after the visit is optional outreach, so the
+      // customer preference DOES gate it. Deliberately unchanged.
       if (!customer.notificationOptInEmail || !customer.email) { skipped++; continue; }
 
       const vehicleDesc = [vehicle.modelYear, vehicle.make, vehicle.model].filter(Boolean).join(' ') || vehicle.plateNumber;
@@ -990,6 +1009,7 @@ export class NotificationsService {
         entityId: visit.id,
         channel: 'EMAIL',
         templateKey: 'midday_followup',
+        purpose: 'MARKETING',
         recipient: customer.email,
         templateData: { message, customerFirstName: customer.firstName, vehicleDescription: vehicleDesc },
       });
@@ -1076,7 +1096,9 @@ export class NotificationsService {
       }
 
       const customer = appt.customer;
-      if (!customer.email || !customer.notificationOptInEmail) {
+      // CR-2026-113 — a reminder about an appointment the customer booked is not
+      // optional outreach; only a missing address stops it.
+      if (!customer.email) {
         skipped++;
         continue;
       }
@@ -1109,6 +1131,7 @@ export class NotificationsService {
         templateKey: rendered?.templateKey ?? 'appointment_reminder_24h',
         templateVersion: rendered?.templateVersion,
         reason: 'APPOINTMENT_REMINDER',
+        purpose: rendered?.purpose ?? 'REMINDER',
         recipient: customer.email,
         ...(rendered ? { subject: rendered.subject, body: rendered.body } : {}),
         templateData,

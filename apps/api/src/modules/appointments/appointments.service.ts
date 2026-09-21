@@ -201,11 +201,15 @@ export class AppointmentsService {
   private async notifyOnlineBookingChange(kind: 'RESCHEDULED' | 'CANCELLED', appt: { id: string; sourceChannel: string | null; appointmentNumber: string | null; scheduledStartAt: Date; scheduledEndAt: Date | null; customer: { firstName?: string; phone: string; email: string | null; notificationOptInEmail: boolean }; vehicle: { plateNumber: string; make: string | null; model: string | null }; site: { name: string; timezone: string | null }; services: Array<{ serviceType: { name: string } }> }, userId: string) {
     if (appt.sourceChannel !== 'CUSTOMER_SELF_SERVICE' || !this.notifications) return;
     try {
-      // CR-2026-112 — email only. No address (or no consent) means no message,
-      // and the audit below records that plainly instead of claiming a send.
+      // CR-2026-112 — email only. No address means no message, and the audit
+      // below records that plainly instead of claiming a send.
+      // CR-2026-113 — a change the SERVICE CENTRE made to this customer's own
+      // booking is operational, so it is not gated on a marketing preference.
+      // Without this, telling someone we moved their appointment would have
+      // needed a manager to override their preference.
       await this.notifications.queueAppointmentMessage(kind, {
         appointmentId: appt.id,
-        email: appt.customer.notificationOptInEmail ? appt.customer.email : null,
+        email: appt.customer.email,
         customerFirstName: appt.customer.firstName ?? null,
         scheduledStartAt: appt.scheduledStartAt,
         durationMinutes: appt.scheduledEndAt ? Math.round((appt.scheduledEndAt.getTime() - appt.scheduledStartAt.getTime()) / 60_000) : 0,
@@ -227,7 +231,7 @@ export class AppointmentsService {
           appointmentNumber: appt.appointmentNumber,
           // CR-2026-112 — the truth, not an assumption: a customer with no email
           // address (or no email consent) was NOT notified.
-          customerNotified: !!(appt.customer.notificationOptInEmail && appt.customer.email),
+          customerNotified: !!appt.customer.email,
           notifiedBy: 'EMAIL',
           scheduledStartAt: appt.scheduledStartAt,
         },

@@ -524,7 +524,7 @@ export default function CustomerDetailPage() {
               {/* CR-2026-112 — one channel, one consent question. */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="input-label">Email Notifications</label>
+                  <label className="input-label">Service reminders &amp; offers</label>
                   <select value={emailOptInInput ? 'yes' : 'no'} onChange={(e) => setEmailOptInInput(e.target.value === 'yes')} className="input-field">
                     <option value="yes">Opted in</option>
                     <option value="no">Opted out</option>
@@ -543,7 +543,16 @@ export default function CustomerDetailPage() {
             </div>
           ) : (
             <div className="card-body grid grid-cols-2 gap-x-6 gap-y-3">
-              <div><div className="input-label">Email Notifications</div><ConsentBadge on={customer.notificationOptInEmail} /></div>
+              <div>
+                <div className="input-label">Service reminders &amp; offers</div>
+                <ConsentBadge on={customer.notificationOptInEmail} />
+                {/* CR-2026-113 — say what the preference does and does not cover,
+                    so nobody reads "Opted out" as "we cannot contact them". */}
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Optional emails only. Booking confirmations, authorisation requests and
+                  ready-for-collection notices are always sent.
+                </p>
+              </div>
               <div>
                 <div className="input-label">Email Address</div>
                 {customer.email

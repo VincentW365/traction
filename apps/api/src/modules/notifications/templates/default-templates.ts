@@ -25,6 +25,8 @@
  * the table (history stays readable) but are never listed, rendered or sent.
  */
 
+import type { CommunicationPurposeName } from '../consent-policy';
+
 export type NotificationReasonCode =
   | 'SERVICE_DUE'
   | 'CUSTOMER_ACTION_REQUIRED'
@@ -43,6 +45,12 @@ export interface DefaultTemplate {
   reason: NotificationReasonCode;
   /** CR-2026-112 — EMAIL is the only channel this release sends on. */
   channel: 'EMAIL';
+  /**
+   * CR-2026-113 — what this message is FOR. It decides whether a customer's
+   * optional-email preference gates it: operational messages about a booking or
+   * a job in progress are not optional outreach. Manager-changeable per template.
+   */
+  purpose: CommunicationPurposeName;
   name: string;
   subject: string;
   body: string;
@@ -52,6 +60,7 @@ export const DEFAULT_TEMPLATES: DefaultTemplate[] = [
   // --- Vehicle due for service -------------------------------------------------
   {
     key: 'SERVICE_DUE_EMAIL',
+    purpose: 'MARKETING',
     reason: 'SERVICE_DUE',
     channel: 'EMAIL',
     name: 'Service due reminder',
@@ -74,6 +83,7 @@ Bert's Service Centre`,
   // availability, KPI state, resource shortages) are never auto-disclosed.
   {
     key: 'CUSTOMER_ACTION_REQUIRED_EMAIL',
+    purpose: 'TRANSACTIONAL',
     reason: 'CUSTOMER_ACTION_REQUIRED',
     channel: 'EMAIL',
     name: 'Customer action required',
@@ -95,6 +105,7 @@ Bert's Service Centre`,
   // --- Queue: checked in -------------------------------------------------------
   {
     key: 'QUEUE_CHECKED_IN_EMAIL',
+    purpose: 'TRANSACTIONAL',
     reason: 'QUEUE_CHECKED_IN',
     channel: 'EMAIL',
     name: 'Checked in',
@@ -112,6 +123,7 @@ Bert's Service Centre`,
   // --- Queue: work started -----------------------------------------------------
   {
     key: 'QUEUE_WORK_STARTED_EMAIL',
+    purpose: 'TRANSACTIONAL',
     reason: 'QUEUE_WORK_STARTED',
     channel: 'EMAIL',
     name: 'Work started',
@@ -132,6 +144,7 @@ Bert's Service Centre`,
   // resource shortages) are never auto-disclosed.
   {
     key: 'QUEUE_UPDATE_EMAIL',
+    purpose: 'TRANSACTIONAL',
     reason: 'QUEUE_UPDATE',
     channel: 'EMAIL',
     name: 'Service update / delay',
@@ -153,6 +166,7 @@ Bert's Service Centre`,
   // "Vehicle Ready for Collection" everywhere a person reads it.
   {
     key: 'PICKUP_READY_EMAIL',
+    purpose: 'TRANSACTIONAL',
     reason: 'PICKUP_READY',
     channel: 'EMAIL',
     name: 'Vehicle ready for collection',
@@ -172,6 +186,7 @@ Bert's Service Centre`,
   // the move from code to template store is invisible to customers.
   {
     key: 'APPOINTMENT_CONFIRMATION_EMAIL',
+    purpose: 'TRANSACTIONAL',
     reason: 'APPOINTMENT_CONFIRMATION',
     channel: 'EMAIL',
     name: 'Appointment confirmation',
@@ -194,6 +209,7 @@ View, move or cancel: {{manageUrl}}
   },
   {
     key: 'APPOINTMENT_CHANGED_EMAIL',
+    purpose: 'TRANSACTIONAL',
     reason: 'APPOINTMENT_CHANGED',
     channel: 'EMAIL',
     name: 'Appointment changed',
@@ -216,6 +232,7 @@ View, move or cancel: {{manageUrl}}
   },
   {
     key: 'APPOINTMENT_CANCELLED_EMAIL',
+    purpose: 'TRANSACTIONAL',
     reason: 'APPOINTMENT_CANCELLED',
     channel: 'EMAIL',
     name: 'Appointment cancelled',
@@ -234,6 +251,7 @@ You can book again at any time.
   },
   {
     key: 'APPOINTMENT_REMINDER_EMAIL',
+    purpose: 'REMINDER',
     reason: 'APPOINTMENT_REMINDER',
     channel: 'EMAIL',
     name: 'Appointment reminder',
@@ -259,6 +277,7 @@ If you need to change it, please contact us.
   // still flow through the same versioning, audit, and history machinery.
   {
     key: 'CUSTOM_EMAIL',
+    purpose: 'TRANSACTIONAL',
     reason: 'CUSTOM',
     channel: 'EMAIL',
     name: 'Custom message',

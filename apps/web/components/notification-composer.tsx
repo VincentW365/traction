@@ -20,6 +20,15 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api-client';
 import { useAuth } from '../hooks/use-auth';
 
+/** CR-2026-113 — why a message is being sent, in business terms. */
+export type CommunicationPurpose = 'TRANSACTIONAL' | 'REMINDER' | 'MARKETING';
+
+const PURPOSE_LABELS: Record<CommunicationPurpose, string> = {
+  TRANSACTIONAL: 'About this customer\u2019s booking or vehicle',
+  REMINDER: 'Reminder about a booking they made',
+  MARKETING: 'Optional \u2014 needs their agreement',
+};
+
 export type NotificationReason =
   | 'SERVICE_DUE'
   | 'CUSTOMER_ACTION_REQUIRED'
@@ -76,6 +85,17 @@ interface ComposeResponse {
     lastContactedAt: string | null;
   } | null;
   email: { templateKey: string; templateVersion: number; enabled: boolean; subject: string; body: string } | null;
+  /** CR-2026-113 — what this message is FOR, and whether consent stands in the way. */
+  purpose: CommunicationPurpose;
+  consent: {
+    purpose: CommunicationPurpose;
+    optedIn: boolean;
+    requiresConsent: boolean;
+    allowed: boolean;
+    blockedReason: string | null;
+    overrideRequiresReason: boolean;
+    minimumReasonLength: number;
+  };
   priorSend: { channel: string; sentAt: string | null; createdAt: string; status: string } | null;
   previousContact: { channel: string; sentAt: string | null; createdAt: string; status: string } | null;
   capabilities: { emailConfigured: boolean; mode: 'TEST' | 'LIVE'; testRoutingActive: boolean };
@@ -141,6 +161,7 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
   const [step, setStep] = useState<'edit' | 'preview'>('edit');
   const [confirmDuplicate, setConfirmDuplicate] = useState(false);
   const [overrideOptOut, setOverrideOptOut] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
   // CR-2026-106 — the outcome of the last send; the dialog stays open when the
   // send FAILED so the reason is read, never a silent "sent".
   const [outcome, setOutcome] = useState<SentEntry[] | null>(null);
@@ -160,6 +181,7 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
       setStep('edit');
       setConfirmDuplicate(false);
       setOverrideOptOut(false);
+      setOverrideReason('');
       setOutcome(null);
     },
     onError: (e) => setLoadError(e instanceof Error ? e.message : 'Failed to load'),
@@ -188,6 +210,7 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
         email: { recipient: emailTo, subject: emailSubject, body: emailBody },
         confirmDuplicate,
         overrideOptOut,
+        overrideReason,
         clientRequestId: requestIdRef.current,
       }),
     onSuccess: (res) => {
@@ -217,10 +240,23 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
 
   const caps = data?.capabilities;
   const hasEmail = !!data?.customer.emailValid || (!!emailTo.trim() && emailTo.includes('@'));
-  const sendDisabled = sendMutation.isPending || !data || !hasEmail || !emailSubject.trim() || !emailBody.trim();
+
+  // CR-2026-113 — the preference only stands in the way of OPTIONAL outreach.
+  // An operational message about this customer's own booking is never gated on
+  // it, so the front desk is not asked to override anything to do its job.
+  const consentBlocked = data ? !data.consent.allowed : false;
+  const canOverrideConsent = user?.roleCode === 'ADMIN';
+  const reasonLongEnough = overrideReason.trim().length >= (data?.consent.minimumReasonLength ?? 10);
+
+  const sendDisabled =
+    sendMutation.isPending ||
+    !data ||
+    !hasEmail ||
+    !emailSubject.trim() ||
+    !emailBody.trim() ||
+    (consentBlocked && (!canOverrideConsent || !overrideOptOut || !reasonLongEnough));
 
   const emailOverridden = data && emailTo.trim().toLowerCase() !== (data.customer.email ?? '').trim().toLowerCase();
-  const emailOptedOut = data ? !data.customer.allowEmail : false;
 
   const sendErrorInfo = (() => {
     const e = sendMutation.error;
@@ -272,6 +308,10 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
                 <div>
                   <p className="text-[11px] uppercase tracking-wide text-slate-400">Customer</p>
                   <p className="font-medium text-slate-900">{data.customer.name}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Purpose</p>
+                  <p className="font-medium text-slate-900" data-testid="message-purpose">{PURPOSE_LABELS[data.purpose]}</p>
                 </div>
                 <div>
                   <p className="text-[11px] uppercase tracking-wide text-slate-400">Vehicle</p>
@@ -417,12 +457,47 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
                 </div>
               )}
 
-              {/* Opt-out confirmation */}
-              {emailOptedOut && (
-                <label className="flex items-center gap-2 text-xs text-red-700 bg-red-50 rounded-md px-3 py-2 mb-2">
-                  <input type="checkbox" checked={overrideOptOut} onChange={(e) => setOverrideOptOut(e.target.checked)} />
-                  The customer opted out of email messages. I confirm this operational message should still be sent.
-                </label>
+              {/* CR-2026-113 — consent, only where consent actually applies. */}
+              {consentBlocked && (
+                <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-2" data-testid="consent-block">
+                  <p className="text-xs font-medium text-red-800">
+                    {data.consent.blockedReason ?? 'This customer has not opted in to optional emails.'}
+                  </p>
+                  {canOverrideConsent ? (
+                    <>
+                      <label className="mt-2 flex items-start gap-2 text-xs text-red-700">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={overrideOptOut}
+                          onChange={(e) => setOverrideOptOut(e.target.checked)}
+                        />
+                        Send anyway. I am recording why, against my name.
+                      </label>
+                      {overrideOptOut && (
+                        <div className="mt-2">
+                          <label className="block text-[11px] text-red-700 mb-0.5">Reason</label>
+                          <textarea
+                            value={overrideReason}
+                            onChange={(e) => setOverrideReason(e.target.value)}
+                            rows={2}
+                            className="input-field text-sm"
+                            placeholder="e.g. Customer asked by phone today to be told when this offer runs"
+                          />
+                          {!reasonLongEnough && (
+                            <p className="mt-1 text-[11px] text-red-700">
+                              Give a short reason ({data.consent.minimumReasonLength} characters or more).
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="mt-1 text-xs text-red-700" data-testid="consent-needs-manager">
+                      A manager can send it anyway if there is a reason to. You can also call the customer and log the call.
+                    </p>
+                  )}
+                </div>
               )}
 
               {outcome && (
@@ -469,7 +544,7 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
             ) : (
               <button
                 onClick={() => sendMutation.mutate()}
-                disabled={sendDisabled || (emailOptedOut && !overrideOptOut)}
+                disabled={sendDisabled}
                 className="btn-primary text-sm"
               >
                 {sendMutation.isPending ? 'Sending…' : 'Send Email'}

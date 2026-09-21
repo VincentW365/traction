@@ -22,6 +22,13 @@ import { deliveryDisplayState } from './notifications.service';
 import { NotificationTemplateStore } from './templates/template-store.service';
 import { EMAIL_ONLY_RELEASE, NO_EMAIL_ON_FILE } from './notification-messages';
 import {
+  decideConsent,
+  MIN_OVERRIDE_REASON_LENGTH,
+  purposeForReason,
+  type CommunicationPurposeName,
+} from './consent-policy';
+import { PERMISSIONS } from '../../common/constants/permissions';
+import {
   buildVehicleDescription,
   findDisallowedPlaceholders,
   findUnresolvedInFinal,
@@ -69,8 +76,14 @@ export interface SendInput extends ComposeInput {
   email: { recipient: string; subject: string; body: string };
   /** Staff explicitly confirmed a repeat vehicle-ready notification. */
   confirmDuplicate?: boolean;
-  /** Staff explicitly confirmed sending despite a recorded opt-out. */
+  /**
+   * Staff explicitly chose to send despite the customer's recorded preference.
+   * CR-2026-113 — only ever needed for a purpose that requires consent, only
+   * permitted with `notify:consent_override`, and only with a reason.
+   */
   overrideOptOut?: boolean;
+  /** Why the preference is being overridden. Required with overrideOptOut. */
+  overrideReason?: string;
   /** Client-generated UUID; makes double-click sends idempotent. */
   clientRequestId?: string;
 }
@@ -236,6 +249,15 @@ export class CustomerNotificationsService {
     // The composer shows the exact operational sentence when the answer is no.
     const emailValid = !!c.email && isValidEmail(c.email);
 
+    // CR-2026-113 — what this message is FOR, and whether the customer's
+    // optional-email preference stands in the way of it.
+    const purpose = await this.purposeOf(input.reason);
+    const consent = decideConsent({
+      purpose,
+      customerOptedIn: c.notificationOptInEmail,
+      purposesRequiringConsent: await this.templates.purposesRequiringConsent(),
+    });
+
     return {
       reason: input.reason,
       customer: {
@@ -259,6 +281,17 @@ export class CustomerNotificationsService {
         ? { id: context.visit.id, ticketNumber: context.ticketNumber ?? null, status: context.visit.status }
         : null,
       serviceDue: context.serviceDue,
+      purpose,
+      consent: {
+        purpose,
+        optedIn: c.notificationOptInEmail,
+        requiresConsent: consent.requiresConsent,
+        allowed: consent.allowed,
+        blockedReason: consent.blockedReason,
+        /** What staff must supply to send anyway, when that is permitted at all. */
+        overrideRequiresReason: true,
+        minimumReasonLength: MIN_OVERRIDE_REASON_LENGTH,
+      },
       email: emailTemplate
         ? {
             templateKey: emailTemplate.key,
@@ -285,7 +318,7 @@ export class CustomerNotificationsService {
    * A client that still asks for another one is refused outright, because a
    * message this deployment cannot deliver must never come back as sent.
    */
-  async send(input: SendInput, userId: string) {
+  async send(input: SendInput, userId: string, actorPermissions: string[] = []) {
     this.enforceRateLimit(userId);
 
     const asked = (input.channels ?? []).map((ch) => String(ch).toUpperCase());
@@ -350,13 +383,44 @@ export class CustomerNotificationsService {
       );
     }
 
-    // --- Opt-out: never silently overridden
-    const optedOut = !c.notificationOptInEmail;
-    if (optedOut && !input.overrideOptOut) {
-      throw new ConflictException({
-        message: 'Customer has opted out of email messages. Confirm to send anyway.',
-        errors: { code: 'OPT_OUT', channel: 'EMAIL' },
-      });
+    // --- CR-2026-113 — consent applies to the purposes the business says it
+    //     applies to. An operational message about this customer's own booking
+    //     or vehicle is not gated on a marketing preference, so the front desk
+    //     never has to "override" anything to do its job. Optional outreach is
+    //     gated, and sending anyway is an exceptional, permissioned, reasoned,
+    //     audited act.
+    const purpose = await this.purposeOf(input.reason);
+    const consent = decideConsent({
+      purpose,
+      customerOptedIn: c.notificationOptInEmail,
+      purposesRequiringConsent: await this.templates.purposesRequiringConsent(),
+    });
+
+    const overrideRequested = !!input.overrideOptOut;
+    const overrideReason = (input.overrideReason ?? '').trim();
+    let consentOverridden = false;
+
+    if (!consent.allowed) {
+      if (!overrideRequested) {
+        throw new ConflictException({
+          message: consent.blockedReason ?? 'This customer has not opted in to optional emails.',
+          errors: { code: 'CONSENT_REQUIRED', channel: 'EMAIL', purpose },
+        });
+      }
+      if (!actorPermissions.includes(PERMISSIONS.NOTIFY_CONSENT_OVERRIDE)) {
+        throw new ForbiddenException(
+          'Sending optional email to a customer who has not opted in needs a manager. Ask a manager to send it, or record the contact as a phone call instead.',
+        );
+      }
+      if (overrideReason.length < MIN_OVERRIDE_REASON_LENGTH) {
+        throw new BadRequestException(
+          `Give a reason for sending despite the customer's recorded preference (at least ${MIN_OVERRIDE_REASON_LENGTH} characters). It is recorded against your name.`,
+        );
+      }
+      consentOverridden = true;
+    } else if (overrideRequested && !consent.requiresConsent) {
+      // Nothing to override: this purpose does not depend on the preference.
+      // Not an error — just never recorded as an override, because it was not one.
     }
 
     // --- Final content validation
@@ -395,6 +459,9 @@ export class CustomerNotificationsService {
         subject,
         body,
         generatedBody: generated,
+        purpose,
+        consentOverridden,
+        consentOverrideReason: consentOverridden ? overrideReason : null,
         customerId: c.id,
         vehicleId: context.vehicle?.id ?? null,
         initiatedByUserId: userId,
@@ -446,7 +513,10 @@ export class CustomerNotificationsService {
         testRouted: routing.testRouted,
         simulated: routing.simulated,
         recipientOverridden: recipient.toLowerCase() !== (c.email ?? '').trim().toLowerCase(),
-        optOutOverridden: optedOut,
+        purpose,
+        customerOptedIn: c.notificationOptInEmail,
+        consentOverridden,
+        ...(consentOverridden ? { consentOverrideReason: overrideReason } : {}),
         edited: generated !== null && generated !== body,
         templateKey: template?.key,
         templateVersion: template?.version,
@@ -684,6 +754,18 @@ export class CustomerNotificationsService {
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
+
+  /**
+   * CR-2026-113 — the purpose a reason is sent under: the template's setting if
+   * it has one, else the factory classification.
+   */
+  private async purposeOf(reason: NotificationReason): Promise<CommunicationPurposeName> {
+    try {
+      return await this.templates.purposeFor(reason);
+    } catch {
+      return purposeForReason(reason);
+    }
+  }
 
   /** The one EMAIL template for a reason; self-heals from factory wording. */
   private async getTemplate(reason: NotificationReason) {

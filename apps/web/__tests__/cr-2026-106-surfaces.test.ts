@@ -156,12 +156,13 @@ describe('CR-2026-106 — customer booking (public page)', () => {
     expect(read('app/book/layout.tsx')).toContain('viewport');
   });
 
-  // CR-2026-112 — the link and its wording still come from the API; the one-tap
-  // WhatsApp/SMS hand-off buttons were removed with the rest of the SMS surface,
-  // so staff copy the message instead.
+  // CR-2026-112 removed the one-tap hand-off buttons with the SMS surface;
+  // CR-2026-113 §4 restored WhatsApp, which is a hand-off from the STAFF
+  // member's own device, not a notification channel. SMS stays out.
   it('staff can hand the customer the secure booking link and review pending identities', () => {
     expect(read('components/send-booking-link.tsx')).toContain('/appointments/booking-link?siteId=');
-    expect(read('components/send-booking-link.tsx')).not.toContain('whatsappUrl');
+    expect(read('components/send-booking-link.tsx')).toContain('whatsappUrl');
+    expect(read('components/send-booking-link.tsx')).not.toContain('smsUrl');
     expect(read('components/send-booking-link.tsx')).toContain('Copy message');
     expect(read('app/(dashboard)/customers/[id]/page.tsx')).toContain('<SendBookingLink');
     expect(read('app/(dashboard)/customers/page.tsx')).toContain('/customers/identity-review');

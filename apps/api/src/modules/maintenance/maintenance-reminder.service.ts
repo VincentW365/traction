@@ -222,6 +222,9 @@ export class MaintenanceReminderService {
         channel: 'EMAIL',
         templateKey: 'maintenance_oil_change_reminder',
         reason: 'SERVICE_DUE',
+        // CR-2026-113 — a service-due campaign is optional outreach, so the
+        // customer recorded preference gates it. Deliberately unchanged.
+        purpose: 'MARKETING',
         recipient: customer.email,
         templateData,
         customerId: customer.id,

@@ -136,7 +136,7 @@ export default function QueueBoardPage() {
         <StatCard value={waitingForBayCount} label="Waiting for Bay" color="amber" />
         <StatCard value={readyCount} label="Ready to Call" color="green" />
         <StatCard value={inServiceCount} label="In Service" color="blue" />
-        <StatCard value={readyForPickupCount} label="Ready for Pickup" color="green" />
+        <StatCard value={readyForPickupCount} label="Ready for Collection" color="green" />
         <StatCard value={blockedItems.length} label="Blocked" color="red" />
       </div>
 

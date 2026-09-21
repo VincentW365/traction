@@ -84,7 +84,7 @@ export function QueueRail({ queueItems, readyForPickup, collapsed, onToggle }: P
           <div className="border-t border-slate-100">
             <div className="px-3 py-2 flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Ready for Pickup</span>
+              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Ready for Collection</span>
               <span className="text-[10px] bg-green-100 text-green-700 px-1.5 rounded-full font-semibold">{readyForPickup.length}</span>
             </div>
             <div className="px-2 pb-2 space-y-1.5">

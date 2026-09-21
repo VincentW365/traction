@@ -58,6 +58,7 @@ import {
 } from './booking-reference';
 import type { ConfirmBookingDto, IdentifyDto, RescheduleBookingDto } from './dto/public-booking.dto';
 import { publicUrl } from '../../common/helpers/public-url';
+import { normalizeCustomerEmail } from '../../common/helpers/customer-email';
 
 /** Appointment statuses that still hold a service position. */
 export const ACTIVE_APPOINTMENT_STATUSES = ['DRAFT', 'CONFIRMED', 'RESCHEDULED', 'CHECKED_IN', 'IN_PROGRESS'] as const;
@@ -363,7 +364,10 @@ export class PublicBookingService {
         // CR-2026-106 — pending identity: if this mobile number already belongs to a
         // record, the new customer is FLAGGED for review (never silently merged, never
         // linked to the other record's data).
-        const sameEmail = c.email?.trim();
+        // CR-2026-113 — normalised before it is used for duplicate detection OR
+        // storage, so "N/A" never becomes an address and casing never splits a
+        // customer into two records.
+        const sameEmail = normalizeCustomerEmail(c.email) ?? null;
         const possibleDuplicate = await tx.customer.findFirst({
           where: {
             testDataRunId: null,
@@ -767,9 +771,12 @@ export class PublicBookingService {
       // CR-2026-112 — the confirmation is an email. The public booking form
       // requires an address for exactly this reason: it carries the reference
       // and the link to change or cancel.
+      // CR-2026-113 — the confirmation for a booking the customer just made is
+      // operational: it carries their reference and their cancel link. The
+      // optional-email preference governs campaigns, not this.
       await this.notifications.queueAppointmentMessage(kind, {
         appointmentId: appt.id,
-        email: appt.customer.notificationOptInEmail ? appt.customer.email : null,
+        email: appt.customer.email,
         customerFirstName: appt.customer.firstName,
         scheduledStartAt: appt.scheduledStartAt,
         durationMinutes: this.durationOf(appt),

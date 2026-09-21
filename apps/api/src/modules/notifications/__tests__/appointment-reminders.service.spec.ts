@@ -93,14 +93,21 @@ describe('sweepAppointmentReminders (CR-2026-056)', () => {
     expect(h.queueSpy).not.toHaveBeenCalled();
   });
 
-  it('skips a customer who opted out of email', async () => {
+  /**
+   * CR-2026-113 — a reminder is about an appointment this customer chose to
+   * make. Gating it on the optional-email preference meant a customer who had
+   * not opted in to CAMPAIGNS silently lost the reminder for their own booking.
+   */
+  it('still reminds a customer who has not opted in to optional email', async () => {
     const h = build({
       appointments: [appt({ notificationOptInEmail: false })],
     });
     const res = await h.service.sweepAppointmentReminders(NOW);
 
-    expect(res).toEqual({ sent: 0, skipped: 1 });
-    expect(h.queueSpy).not.toHaveBeenCalled();
+    expect(res.sent).toBe(1);
+    expect(h.queueSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ purpose: 'REMINDER', recipient: 'jo@example.com' }),
+    );
   });
 
   it('does nothing when appointment_reminder_enabled is false', async () => {

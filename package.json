@@ -35,7 +35,9 @@
     "jobs:import:commit": "tsx apps/api/scripts/import-jobs.ts --commit",
     "booking:demonstrate": "tsx scripts/demonstrate-booking-to-job-sheet.ts",
     "booking:visual-qa": "tsx scripts/visual-qa-booking.ts",
-    "audit:operational": "tsx scripts/operational-regression-audit.ts"
+    "audit:operational": "tsx scripts/operational-regression-audit.ts",
+    "notifications:collection-wording": "tsx scripts/set-collection-wording.ts",
+    "customers:email-quality": "tsx scripts/customer-email-quality.ts"
   },
   "devDependencies": {
     "playwright": "^1.59.0",

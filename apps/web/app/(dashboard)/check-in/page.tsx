@@ -556,12 +556,12 @@ export default function CheckInPage() {
                 <div className="col-span-2 border-t border-slate-100 pt-3 mt-1">
                   {/* CR-2026-112 — email is the only channel, so this is the
                       only consent to ask for. */}
-                  <p className="input-label mb-2">Notification consent</p>
+                  <p className="input-label mb-2">Optional email consent</p>
                   <div className="space-y-2">
                     <label className="flex items-center gap-3 cursor-pointer">
                       <input type="checkbox" checked={notifyOptInEmail} onChange={(e) => setNotifyOptInEmail(e.target.checked)}
                         className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                      <span className="text-sm text-slate-700">Customer consents to email updates</span>
+                      <span className="text-sm text-slate-700">Customer agrees to service reminders and offers by email</span>
                     </label>
                   </div>
                 </div>

@@ -325,6 +325,12 @@ async function main() {
     // is an environment setting (EMAIL_PROVIDER), not a business rule. The old
     // SMS row is not seeded any more; existing rows are harmless and unread.
     { ruleKey: 'notification_provider_email', valueJson: 'stub', notes: 'Email provider: stub | smtp (set by EMAIL_PROVIDER in the environment)' },
+    // CR-2026-113 — which message PURPOSES need the customer to have opted in.
+    // Operational email (confirmations, authorisation requests, ready for
+    // collection) is deliberately not on this list: a customer with a live job
+    // in the workshop is told about it. Marketing is. The platform does not
+    // encode a legal interpretation — this is the business's setting to make.
+    { ruleKey: 'notification_purposes_requiring_consent', valueJson: ['MARKETING'], notes: 'CR-2026-113: message purposes that require notificationOptInEmail. TRANSACTIONAL / REMINDER / MARKETING.' },
     { ruleKey: 'appointment_reminder_enabled', valueJson: true, notes: 'CR-2026-056: whether the automatic appointment reminder (sent ~24h before) is active' },
     { ruleKey: 'appointment_reminder_hours', valueJson: 24, notes: 'CR-2026-056: how many hours before scheduledStartAt the reminder fires (hourly cron sweep)' },
     // CR-2026-086 — "tell the customer their next service is due". Everything for this

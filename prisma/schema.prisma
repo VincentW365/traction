@@ -175,6 +175,25 @@ enum NotificationDeliveryStatus {
   CAPTURED
 }
 
+// CR-2026-113 — WHY a message is being sent, in business terms, so consent
+// policy can be applied to the right things and only the right things.
+//
+//   TRANSACTIONAL  needed to manage a booking, visit or service transaction the
+//                  customer already has with us (confirmation, change,
+//                  cancellation, authorisation request, ready for collection).
+//   REMINDER       a prompt about an existing commitment (appointment reminder).
+//   MARKETING      optional outreach: service-due campaigns, offers, follow-ups.
+//
+// Which purposes require recorded consent is CONFIGURATION, not a constant in
+// code (business rule `notification_purposes_requiring_consent`, default
+// ["MARKETING"]). The platform does not encode a legal interpretation; it makes
+// the business purpose explicit so the policy can be set by the business.
+enum CommunicationPurpose {
+  TRANSACTIONAL
+  REMINDER
+  MARKETING
+}
+
 // CR-2026-096 — why a customer notification was sent. Legacy rows (pre-CR) have null.
 // CR-2026-112 — the appointment and customer-action reasons join the same
 // template-driven pipeline, so every customer email (staff-initiated or
@@ -1833,6 +1852,12 @@ model NotificationLog {
   vehicleId         String?             @map("vehicle_id") @db.Uuid
   clientRequestId   String?             @unique @map("client_request_id") // idempotency key against double-click sends
 
+  // CR-2026-113 — the business purpose this message was sent under, and the
+  // truth about any consent override. Nullable: pre-CR rows have no purpose.
+  purpose               CommunicationPurpose?
+  consentOverridden     Boolean               @default(false) @map("consent_overridden")
+  consentOverrideReason String?               @map("consent_override_reason")
+
   initiatedBy UserAccount? @relation("NotificationInitiatedBy", fields: [initiatedByUserId], references: [id])
   customer    Customer?    @relation("CustomerNotifications", fields: [customerId], references: [id])
   vehicle     Vehicle?     @relation("VehicleNotifications", fields: [vehicleId], references: [id])
@@ -1857,6 +1882,9 @@ model NotificationTemplate {
   subject         String? // email templates only
   body            String
   enabled         Boolean             @default(true)
+  // CR-2026-113 — configurable per template, because whether a given message is
+  // operational or optional outreach is a business judgement, not a code fact.
+  purpose         CommunicationPurpose @default(TRANSACTIONAL)
   version         Int                 @default(1)
   updatedByUserId String?             @map("updated_by_user_id") @db.Uuid
   createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz

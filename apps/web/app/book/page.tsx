@@ -572,7 +572,7 @@ export default function BookPage() {
                   <span className="mt-1 block text-xs text-slate-500">We email your confirmation and your link to change or cancel.</span>
                 </label>
                 <div className="flex flex-wrap gap-x-4 text-sm text-slate-700">
-                  <label className="flex min-h-11 cursor-pointer items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={emailOptIn} onChange={(e) => setEmailOptIn(e.target.checked)} /> Also email me service reminders</label>
+                  <label className="flex min-h-11 cursor-pointer items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={emailOptIn} onChange={(e) => setEmailOptIn(e.target.checked)} /> Also email me service reminders and offers (optional)</label>
                 </div>
               </>
             )}
