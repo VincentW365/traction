@@ -18,7 +18,7 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import { PERMISSIONS } from '../../common/constants/permissions';
 import {
   CurrentUser,
-  JwtPayload,
+  type JwtPayload,
 } from '../../common/decorators/current-user.decorator';
 import { DecodeVehicleDto } from './dto/decode-vehicle.dto';
 import { FluidRecommendationQueryDto } from './dto/fluid-recommendation.dto';

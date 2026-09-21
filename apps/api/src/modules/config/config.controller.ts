@@ -16,7 +16,7 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import { PERMISSIONS } from '../../common/constants/permissions';
 import {
   CurrentUser,
-  JwtPayload,
+  type JwtPayload,
 } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Config')

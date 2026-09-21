@@ -2,16 +2,16 @@ import { Controller, Get, Post, Put, Param, Body, Query, UseGuards, BadRequestEx
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import {
-  ComposeInput,
+  type ComposeInput,
   CustomerNotificationsService,
-  SendInput,
+  type SendInput,
 } from './customer-notifications.service';
 import { NotificationReason } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
-import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
+import { CurrentUser, type JwtPayload } from '../../common/decorators/current-user.decorator';
 
 @ApiTags('Notifications')
 @Controller('notifications')

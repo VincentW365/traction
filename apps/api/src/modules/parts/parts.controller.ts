@@ -18,7 +18,7 @@ import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import {
   CurrentUser,
-  JwtPayload,
+  type JwtPayload,
 } from '../../common/decorators/current-user.decorator';
 import { PERMISSIONS } from '../../common/constants/permissions';
 

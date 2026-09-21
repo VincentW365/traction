@@ -1,10 +1,10 @@
 import { BadRequestException, Controller, Get, Optional, Query, ServiceUnavailableException, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
-import { ReportingService, TrendMetric } from './reporting.service';
+import { ReportingService, type TrendMetric } from './reporting.service';
 import { JobTimesService } from './job-times.service';
 import { PerformanceReportService } from './performance-report.service';
 import { AppointmentsReportService } from './appointments-report.service';
-import { CurrentUser, JwtPayload } from '../../common/decorators/current-user.decorator';
+import { CurrentUser, type JwtPayload } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RbacGuard } from '../../common/guards/rbac.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
