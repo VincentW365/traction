@@ -575,16 +575,14 @@ export default function TechnicianJobWorkspace() {
             <Field label="Account #" value={customer.customerNumber} />
             <Field label="Phone" value={customer.phone} />
             <Field label="Email" value={customer.email ?? '—'} />
+            {/* CR-2026-112 — email is the only channel, so this says whether the
+                advisor can email this customer at all. */}
             <Field
-              label="Preferred contact"
+              label="How we contact them"
               value={
-                customer.notificationOptInSms && customer.notificationOptInEmail
-                  ? 'SMS or email'
-                  : customer.notificationOptInSms
-                    ? 'SMS'
-                    : customer.notificationOptInEmail
-                      ? 'Email'
-                      : 'No messaging — advisor calls'
+                customer.notificationOptInEmail && customer.email
+                  ? 'Email'
+                  : 'No email — advisor calls'
               }
             />
             <Field label="Loyalty" value={customer.loyaltyMember ? 'Member' : '—'} />

@@ -378,7 +378,8 @@ export class PublicBookingService {
             lastName: c.lastName.trim(),
             phone,
             email: sameEmail || null,
-            notificationOptInSms: c.smsOptIn ?? true,
+            // CR-2026-112 — the dormant SMS field keeps its schema default; nothing
+            // reads it while email is the only channel (see docs/131 §4).
             notificationOptInEmail: c.emailOptIn ?? true,
             notes: 'Created by customer self-service booking (CR-2026-105c).',
             ...(possibleDuplicate ? { identityReviewStatus: 'PENDING_REVIEW', possibleDuplicateOfId: possibleDuplicate.id } : {}),
@@ -706,7 +707,7 @@ export class PublicBookingService {
           },
         },
       },
-      customer: { select: { id: true, firstName: true, phone: true, email: true, notificationOptInSms: true, notificationOptInEmail: true } },
+      customer: { select: { id: true, firstName: true, phone: true, email: true, notificationOptInEmail: true } },
       vehicle: { select: { id: true, plateNumber: true, make: true, model: true, modelYear: true } },
     } satisfies Prisma.AppointmentInclude;
   }
@@ -763,10 +764,13 @@ export class PublicBookingService {
     uat?: { testDataRunId: string; runLabel: string } | null,
   ): Promise<void> {
     try {
+      // CR-2026-112 — the confirmation is an email. The public booking form
+      // requires an address for exactly this reason: it carries the reference
+      // and the link to change or cancel.
       await this.notifications.queueAppointmentMessage(kind, {
         appointmentId: appt.id,
-        phone: appt.customer.notificationOptInSms ? appt.customer.phone : null,
         email: appt.customer.notificationOptInEmail ? appt.customer.email : null,
+        customerFirstName: appt.customer.firstName,
         scheduledStartAt: appt.scheduledStartAt,
         durationMinutes: this.durationOf(appt),
         services: appt.services.map((s) => s.serviceType.name),
@@ -910,7 +914,7 @@ type AppointmentRow = Prisma.AppointmentGetPayload<{
         serviceType: { select: { id: true; code: true; name: true; baseDurationMinutes: true; sedanDurationMinutes: true; suvDurationMinutes: true } };
       };
     };
-    customer: { select: { id: true; firstName: true; phone: true; email: true; notificationOptInSms: true; notificationOptInEmail: true } };
+    customer: { select: { id: true; firstName: true; phone: true; email: true; notificationOptInEmail: true } };
     vehicle: { select: { id: true; plateNumber: true; make: true; model: true; modelYear: true } };
   };
 }> & { reschedules?: number };

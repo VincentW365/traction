@@ -3,10 +3,14 @@
 /**
  * CR-2026-096 — Administration → Notifications.
  *
- * Managers edit the customer-facing message wording here — SMS bodies, email
- * subjects/bodies, and whether a notification type is enabled. Changes apply to
- * the next message sent; messages already sent keep the exact wording they went
- * out with. No code change or redeployment is ever needed for wording.
+ * Managers edit the customer-facing message wording here — the subject and body
+ * of every customer email, and whether a notification type is enabled. Changes
+ * apply to the next message sent; messages already sent keep the exact wording
+ * they went out with. No code change or redeployment is ever needed for wording.
+ *
+ * CR-2026-112 — every template on this page is an email, including the booking
+ * confirmation, change, cancellation and reminder, which used to be wording
+ * buried in code.
  */
 
 import { useState } from 'react';
@@ -18,10 +22,15 @@ import { LoadingState } from '../../../../components/ui/loading-state';
 
 const REASON_LABELS: Record<string, string> = {
   SERVICE_DUE: 'Vehicle Due for Service',
+  CUSTOMER_ACTION_REQUIRED: 'Customer Action Required',
   QUEUE_CHECKED_IN: 'Checked In',
   QUEUE_WORK_STARTED: 'Work Started',
   QUEUE_UPDATE: 'Service Update / Delay',
-  PICKUP_READY: 'Ready for Pickup',
+  PICKUP_READY: 'Vehicle Ready for Collection',
+  APPOINTMENT_CONFIRMATION: 'Appointment Confirmation',
+  APPOINTMENT_CHANGED: 'Appointment Changed',
+  APPOINTMENT_CANCELLED: 'Appointment Cancelled',
+  APPOINTMENT_REMINDER: 'Appointment Reminder',
   CUSTOM: 'Custom Message',
 };
 
@@ -29,14 +38,20 @@ const PLACEHOLDERS = [
   'customerFirstName', 'customerFullName', 'vehicleYear', 'vehicleMake', 'vehicleModel',
   'vehicleDescription', 'registrationNumber', 'ticketDisplayNumber', 'serviceDueDetails',
   'serviceDueDate', 'serviceDueMileage', 'lastServiceDate', 'currentMileage',
-  'pickupDetails', 'staffEditableUpdate', 'businessName',
+  'pickupDetails', 'staffEditableUpdate', 'businessName', 'siteName',
+  // CR-2026-112 — appointment emails
+  'appointmentReference', 'appointmentWhen', 'appointmentServices', 'appointmentDuration',
+  'appointmentInstructions', 'manageUrl',
+  // CR-2026-112 — customer action required
+  'actionRequired', 'actionNeededBy',
 ];
 
 interface Template {
   id: string;
   key: string;
   reason: string;
-  channel: 'SMS' | 'EMAIL' | string;
+  /** CR-2026-112 — always EMAIL; the API never lists another channel. */
+  channel: 'EMAIL' | string;
   name: string;
   subject: string | null;
   body: string;
@@ -96,7 +111,7 @@ export default function NotificationTemplatesPage() {
     <div className="page-container">
       <PageHeader
         title="Notifications"
-        subtitle="Customer message templates — changes apply immediately, no redeployment"
+        subtitle="Customer email templates — changes apply immediately, no redeployment"
         breadcrumbs={[
           { label: 'Dashboard', href: '/' },
           { label: 'Notifications' },
@@ -128,7 +143,6 @@ export default function NotificationTemplatesPage() {
               <div key={t.key} className="px-5 py-3">
                 <div className="flex items-center justify-between gap-2 mb-1">
                   <div className="flex items-center gap-2">
-                    <span className="badge bg-slate-100 text-slate-600 text-[10px]">{t.channel}</span>
                     <p className="text-sm font-medium text-slate-900">{t.name}</p>
                     <span className="text-[11px] text-slate-400">v{t.version}</span>
                     {!t.enabled && <span className="badge bg-red-50 text-red-600 text-[10px]">disabled</span>}
@@ -150,18 +164,16 @@ export default function NotificationTemplatesPage() {
 
                 {editKey === t.key ? (
                   <div className="space-y-2 mt-2">
-                    {t.channel === 'EMAIL' && (
-                      <div>
-                        <label className="input-label">Subject</label>
-                        <input value={subject} onChange={(e) => setSubject(e.target.value)} className="input-field text-sm" />
-                      </div>
-                    )}
                     <div>
-                      <label className="input-label">{t.channel === 'SMS' ? 'SMS message' : 'Email body'}</label>
+                      <label className="input-label">Subject</label>
+                      <input value={subject} onChange={(e) => setSubject(e.target.value)} className="input-field text-sm" />
+                    </div>
+                    <div>
+                      <label className="input-label">Email body</label>
                       <textarea
                         value={body}
                         onChange={(e) => setBody(e.target.value)}
-                        rows={t.channel === 'SMS' ? 3 : 8}
+                        rows={8}
                         className="input-field text-sm"
                       />
                     </div>
@@ -169,7 +181,7 @@ export default function NotificationTemplatesPage() {
                       <p className="text-xs text-red-600">{saveMutation.error instanceof Error ? saveMutation.error.message : 'Save failed'}</p>
                     )}
                     <button
-                      onClick={() => saveMutation.mutate({ key: t.key, body, ...(t.channel === 'EMAIL' ? { subject } : {}) })}
+                      onClick={() => saveMutation.mutate({ key: t.key, body, subject })}
                       disabled={saveMutation.isPending}
                       className="btn-primary text-xs"
                     >

@@ -56,12 +56,14 @@ describe('CR-2026-106 §C3 — honest notification states', () => {
     expect(src).toMatch(/o === 'SENT' \|\| o === 'DELIVERED'/);
   });
 
-  it('the composer stays open and names the reason when any channel FAILED', () => {
+  // CR-2026-112 — the guarantee is unchanged (a failed send never reads as sent);
+  // the wording is now singular because there is one channel.
+  it('the composer stays open and names the reason when the send FAILED', () => {
     const src = read('components/notification-composer.tsx');
     expect(src).toContain("=== 'FAILED'");
     expect(src).toContain('setOutcome(res.sent)');
     expect(src).toContain('send-outcome');
-    expect(src).toContain('Not every channel got through');
+    expect(src).toContain('The email did not get through');
   });
 
   it('Admin → Deployment can prove outbound email and shows the public URL verdict', () => {
@@ -154,9 +156,13 @@ describe('CR-2026-106 — customer booking (public page)', () => {
     expect(read('app/book/layout.tsx')).toContain('viewport');
   });
 
-  it('staff can hand the customer the secure booking link (WhatsApp Phase 1) and review pending identities', () => {
+  // CR-2026-112 — the link and its wording still come from the API; the one-tap
+  // WhatsApp/SMS hand-off buttons were removed with the rest of the SMS surface,
+  // so staff copy the message instead.
+  it('staff can hand the customer the secure booking link and review pending identities', () => {
     expect(read('components/send-booking-link.tsx')).toContain('/appointments/booking-link?siteId=');
-    expect(read('components/send-booking-link.tsx')).toContain('whatsappUrl');
+    expect(read('components/send-booking-link.tsx')).not.toContain('whatsappUrl');
+    expect(read('components/send-booking-link.tsx')).toContain('Copy message');
     expect(read('app/(dashboard)/customers/[id]/page.tsx')).toContain('<SendBookingLink');
     expect(read('app/(dashboard)/customers/page.tsx')).toContain('/customers/identity-review');
     const review = read('app/(dashboard)/customers/identity-review/page.tsx');

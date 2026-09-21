@@ -66,8 +66,9 @@ Password). The page shows the list until it is empty; that is the confirmation.
 
 ## Optional setup
 
-- SMS: `NOTIFICATION_PROVIDER=twilio` + `TWILIO_*`
-- Email: `EMAIL_PROVIDER=smtp` + `SMTP_*`
+- Email (the ONE customer channel, CR-2026-112): `EMAIL_PROVIDER=smtp` + `SMTP_*`.
+  There is no SMS provider to configure; any `NOTIFICATION_PROVIDER` /
+  `TWILIO_*` values left in the environment are ignored and can be deleted.
 - Going live to real customers additionally requires an explicit
   `NOTIFICATION_MODE=LIVE`; until then every send is recorded, not delivered,
   and the UI says so.

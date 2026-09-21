@@ -44,17 +44,25 @@ describe('SmtpNotificationProvider', () => {
   });
 });
 
-describe('ChannelRouterProvider', () => {
-  it('routes SMS and EMAIL to their own providers', async () => {
-    const sms = { send: vi.fn(async () => ({ success: true, providerReference: 'sms' })) };
+describe('ChannelRouterProvider (CR-2026-112 — email only)', () => {
+  it('routes EMAIL to the email provider', async () => {
     const email = { send: vi.fn(async () => ({ success: true, providerReference: 'email' })) };
-    const router = new ChannelRouterProvider(sms, email);
+    const router = new ChannelRouterProvider(email);
 
-    const a = await router.send({ channel: 'SMS', recipient: 'x', templateKey: 'k', templateData: {} });
-    const b = await router.send({ channel: 'EMAIL', recipient: 'y', templateKey: 'k', templateData: {} });
-    expect(a.providerReference).toBe('sms');
-    expect(b.providerReference).toBe('email');
-    expect(sms.send).toHaveBeenCalledOnce();
+    const r = await router.send({ channel: 'EMAIL', recipient: 'y@example.com', templateKey: 'k', templateData: {} });
+    expect(r.providerReference).toBe('email');
     expect(email.send).toHaveBeenCalledOnce();
+  });
+
+  it('REFUSES a non-email channel with a reason instead of reporting a send', async () => {
+    const email = { send: vi.fn(async () => ({ success: true, providerReference: 'email' })) };
+    const router = new ChannelRouterProvider(email);
+
+    const r = await router.send({ channel: 'SMS', recipient: '8765551234', templateKey: 'k', templateData: {} });
+    expect(r.success).toBe(false);
+    expect(r.failureReason).toMatch(/email only/i);
+    expect(r.providerReference).toBeUndefined();
+    // The email provider is never used as a stand-in for the missing channel.
+    expect(email.send).not.toHaveBeenCalled();
   });
 });

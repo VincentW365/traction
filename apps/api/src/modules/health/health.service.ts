@@ -192,7 +192,8 @@ export class HealthService {
         environment: process.env.NODE_ENV ?? 'development',
         devLoginEnabled:
           process.env.ALLOW_DEV_LOGIN === 'true' && process.env.NODE_ENV !== 'production',
-        notificationProvider: process.env.NOTIFICATION_PROVIDER ?? 'stub',
+        // CR-2026-112 — email is the only customer channel; there is no SMS
+        // provider to report on.
         emailProvider: process.env.EMAIL_PROVIDER ?? 'stub',
         notificationMode: process.env.NOTIFICATION_MODE ?? 'TEST',
         vinDecodeProvider: process.env.VIN_DECODE_PROVIDER === 'LIVE' ? 'LIVE' : 'STUB',

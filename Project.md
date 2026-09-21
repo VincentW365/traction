@@ -48,7 +48,7 @@ Every major decision must protect:
 ### Secondary goals
 - Reduce no-show rate by **60%**
 - Achieve **85–90% technician utilization**
-- Support SMS / email notifications
+- Support customer email notifications (SMS is a documented future phase — CR-2026-112)
 - Support customer drop-off and pickup logistics
 - Enable future mobile / remote queue visibility
 - Generate management-ready reporting from day one
@@ -295,7 +295,7 @@ This preserves both fairness and operational efficiency.
 - **Database**: PostgreSQL
 - **Realtime**: WebSocket gateway with room-based broadcasts
 - **Jobs / scheduling**: Redis-backed worker queue
-- **Notifications**: Twilio + SendGrid
+- **Notifications**: email via any SMTP mailbox, behind a channel-shaped adapter (CR-2026-112)
 - **Auth**: provider-agnostic OIDC/JWT boundary with RBAC in API
 - **API**: REST-first with OpenAPI and event/webhook support
 - **Repo**: monorepo

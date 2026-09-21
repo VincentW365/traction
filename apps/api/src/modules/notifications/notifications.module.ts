@@ -1,5 +1,4 @@
 import { Global, Module } from '@nestjs/common';
-import twilio from 'twilio';
 import * as nodemailer from 'nodemailer';
 import { validateEnv } from '@bsop/config';
 import {
@@ -13,7 +12,7 @@ import { NotificationsController } from './notifications.controller';
 import { CustomerNotificationsService } from './customer-notifications.service';
 import { TestRecordResolver } from './test-record.resolver';
 import { StubNotificationProvider } from './providers/stub.provider';
-import { TwilioNotificationProvider, TwilioMessageClient } from './providers/twilio.provider';
+import { NotificationTemplateStore } from './templates/template-store.service';
 import {
   NOTIFICATION_CAPABILITIES,
   NOTIFICATION_PROVIDER,
@@ -22,29 +21,19 @@ import {
 } from './providers/notification-provider.interface';
 
 /**
- * CR-2026-033 — provider selection. Default is the stub (dev/test/CI unchanged);
- * NOTIFICATION_PROVIDER=twilio wires the real SMS provider (EMAIL falls back to the
- * stub). The Twilio SDK import is confined to this factory.
+ * CR-2026-112 — provider selection for an email-only release.
+ *
+ * Email is the ONE customer channel. `EMAIL_PROVIDER=smtp` wires a real mailbox
+ * (CR-2026-099); anything else leaves the stub in place, which records messages
+ * as simulated rather than pretending they were delivered. No SMS credentials
+ * are read, required, or validated anywhere in this factory — an unconfigured
+ * SMS provider cannot affect email, because there is no SMS provider.
+ *
+ * Adding SMS in a later phase: write the provider, construct it here, and pass
+ * it to ChannelRouterProvider. Nothing else in the module changes.
  */
 function notificationProviderFactory(): NotificationProvider {
   const env = validateEnv();
-
-  // SMS side (CR-2026-033)
-  let smsProvider: NotificationProvider = new StubNotificationProvider();
-  if (env.NOTIFICATION_PROVIDER === 'twilio') {
-    const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, TWILIO_MESSAGING_SERVICE_SID } = env;
-    if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || (!TWILIO_FROM_NUMBER && !TWILIO_MESSAGING_SERVICE_SID)) {
-      throw new Error(
-        'NOTIFICATION_PROVIDER=twilio requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID',
-      );
-    }
-    const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) as unknown as TwilioMessageClient;
-    smsProvider = new TwilioNotificationProvider(
-      { fromNumber: TWILIO_FROM_NUMBER, messagingServiceSid: TWILIO_MESSAGING_SERVICE_SID },
-      client,
-      new StubNotificationProvider(), // never reached — the router owns EMAIL
-    );
-  }
 
   // Email side (CR-2026-099) — any SMTP mailbox; the transport is confined here.
   let emailProvider: NotificationProvider = new StubNotificationProvider();
@@ -67,7 +56,7 @@ function notificationProviderFactory(): NotificationProvider {
     emailProvider = new SmtpNotificationProvider({ from: SMTP_FROM }, transport);
   }
 
-  return new ChannelRouterProvider(smsProvider, emailProvider);
+  return new ChannelRouterProvider(emailProvider);
 }
 
 /**
@@ -77,11 +66,9 @@ function notificationProviderFactory(): NotificationProvider {
 function notificationCapabilitiesFactory(): NotificationCapabilities {
   const env = validateEnv();
   return {
-    smsConfigured: env.NOTIFICATION_PROVIDER === 'twilio',
     // CR-2026-099 — real email via any SMTP mailbox (EMAIL_PROVIDER=smtp).
     emailConfigured: env.EMAIL_PROVIDER === 'smtp',
     mode: env.NOTIFICATION_MODE,
-    testSmsTo: env.NOTIFICATION_TEST_SMS_TO,
     testEmailTo: env.NOTIFICATION_TEST_EMAIL_TO,
     // CR-2026-106 — presence-safe transport facts for the verification screen.
     ...(env.EMAIL_PROVIDER === 'smtp' && env.SMTP_HOST && env.SMTP_FROM
@@ -105,12 +92,14 @@ function notificationCapabilitiesFactory(): NotificationCapabilities {
     NotificationsService,
     NotificationsCronService,
     CustomerNotificationsService,
+    // CR-2026-112 — the one place customer-facing wording is resolved from.
+    NotificationTemplateStore,
     // CR-2026-108 Stage 1 — decides, per record, whether a message is about a
     // test run and must be captured rather than transmitted.
     TestRecordResolver,
     { provide: NOTIFICATION_PROVIDER, useFactory: notificationProviderFactory },
     { provide: NOTIFICATION_CAPABILITIES, useFactory: notificationCapabilitiesFactory },
   ],
-  exports: [NotificationsService, CustomerNotificationsService, TestRecordResolver],
+  exports: [NotificationsService, CustomerNotificationsService, TestRecordResolver, NotificationTemplateStore],
 })
 export class NotificationsModule {}

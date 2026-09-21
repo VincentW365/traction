@@ -81,11 +81,17 @@ export class NewCustomerDto {
   @ApiProperty() @IsString() @IsNotEmpty() @MaxLength(30)
   phone!: string;
 
-  @ApiPropertyOptional() @IsOptional() @IsEmail() @MaxLength(120)
-  email?: string;
-
-  @ApiPropertyOptional({ default: true }) @IsOptional() @IsBoolean()
-  smsOptIn?: boolean;
+  /**
+   * CR-2026-112 — REQUIRED for an online booking. The confirmation email is how
+   * a self-service customer receives their reference and the link to change or
+   * cancel, and email is the only channel this release sends on. Staff-created
+   * appointments keep email optional: the advisor has the customer in front of
+   * them and can read the reference out.
+   */
+  @ApiProperty({ description: 'Where the booking confirmation and manage link are sent' })
+  @IsEmail({}, { message: 'Enter an email address so we can send your confirmation and your link to change or cancel.' })
+  @MaxLength(120)
+  email!: string;
 
   @ApiPropertyOptional({ default: true }) @IsOptional() @IsBoolean()
   emailOptIn?: boolean;

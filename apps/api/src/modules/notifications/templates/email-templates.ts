@@ -5,12 +5,21 @@
  * without a pre-rendered body, and four flows (pickup-ready, the 24-hour reminder
  * sweep, the midday follow-up, maintenance reminders) passed only a template key —
  * every one of their emails failed with "Empty email body" while the screen said
- * "Sent". The Twilio provider renders SMS from the key; this is the email sibling.
+ * "Sent".
  *
- * Pure + unit-testable. Plain text (the transport sends `text`), no PII beyond what
- * the caller already supplies for the SMS.
+ * CR-2026-108 — extracted so a CAPTURED message records exactly what a SENT one
+ * would have contained.
+ *
+ * CR-2026-112 — this is now the FALLBACK renderer. Customer-facing wording lives
+ * in `notification_templates` (manager-editable, versioned); these functions
+ * render the same message for a deployment whose table has not been seeded yet,
+ * so a fresh install can never send an empty email. The SMS renderer this file
+ * used to borrow from was deleted with the SMS provider, so the wording each key
+ * produces is stated here in full.
+ *
+ * Pure + unit-testable. Plain text (the transport sends `text`), no PII beyond
+ * what the caller already supplies.
  */
-import { renderSmsBody } from './sms-templates';
 
 type Data = Record<string, unknown>;
 
@@ -26,6 +35,11 @@ function fmtWhen(v: unknown): string {
   return 'your scheduled time';
 }
 
+/** The appointment time the caller already formatted in the site's zone, else the raw stamp. */
+function apptWhen(d: Data): string {
+  return str(d.when) || fmtWhen(d.scheduledStartAt);
+}
+
 function vehicleDesc(d: Data): string {
   return str(d.vehicleDescription) || [d.vehicleMake, d.vehicleModel].filter(Boolean).join(' ') || str(d.vehiclePlate) || 'your vehicle';
 }
@@ -33,6 +47,11 @@ function vehicleDesc(d: Data): string {
 function greeting(d: Data): string {
   const first = str(d.customerFirstName) || str(d.customerName).split(' ')[0];
   return first ? `Hi ${first},` : 'Hello,';
+}
+
+/** "Ref BK-4821." — omitted entirely when there is no reference to quote. */
+function refSuffix(d: Data): string {
+  return str(d.reference) ? ` Ref ${str(d.reference)}.` : '';
 }
 
 export interface EmailContent {
@@ -47,17 +66,27 @@ export function renderEmailContent(templateKey: string, data: Data = {}): EmailC
     case 'appointment_confirmation':
       return {
         subject: `Appointment confirmed${str(data.reference) ? ` — ${str(data.reference)}` : ''}`,
-        body: `${greeting(data)}\n\n${renderSmsBody(templateKey, data)}${sign}`,
+        body:
+          `${greeting(data)}\n\nYour appointment at ${site} is confirmed for ${apptWhen(data)}.${refSuffix(data)}` +
+          (str(data.manageUrl) ? `\n\nView, move or cancel: ${str(data.manageUrl)}` : '') +
+          sign,
       };
     case 'appointment_rescheduled':
       return {
         subject: `Appointment moved${str(data.reference) ? ` — ${str(data.reference)}` : ''}`,
-        body: `${greeting(data)}\n\n${renderSmsBody(templateKey, data)}${sign}`,
+        body:
+          `${greeting(data)}\n\nYour appointment at ${site} has been moved to ${apptWhen(data)}.${refSuffix(data)}` +
+          (str(data.manageUrl) ? `\n\nView, move or cancel: ${str(data.manageUrl)}` : '') +
+          sign,
       };
     case 'appointment_cancelled':
       return {
         subject: `Appointment cancelled${str(data.reference) ? ` — ${str(data.reference)}` : ''}`,
-        body: `${greeting(data)}\n\n${renderSmsBody(templateKey, data)}${sign}`,
+        body:
+          `${greeting(data)}\n\nYour appointment at ${site} for ${apptWhen(data)}` +
+          (str(data.reference) ? ` (ref ${str(data.reference)})` : '') +
+          ` has been cancelled. You can book again at any time.` +
+          sign,
       };
     case 'appointment_reminder_24h':
       return {
@@ -79,8 +108,8 @@ export function renderEmailContent(templateKey: string, data: Data = {}): EmailC
     case 'ready_for_pickup':
     case 'pickup_ready':
       return {
-        subject: `${vehicleDesc(data)} is ready for pickup`,
-        body: `${greeting(data)}\n\nGood news — ${vehicleDesc(data)} is ready for pickup at ${site}.` +
+        subject: `${vehicleDesc(data)} is ready for collection`,
+        body: `${greeting(data)}\n\nGood news — ${vehicleDesc(data)} is ready for collection at ${site}.` +
           (str(data.pickupDetails) ? `\n\n${str(data.pickupDetails)}` : '') +
           sign,
       };

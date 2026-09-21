@@ -15,7 +15,6 @@ import type { NotificationCapabilities } from '../providers/notification-provide
  */
 
 const LIVE_CAPS: NotificationCapabilities = {
-  smsConfigured: true,
   emailConfigured: true,
   mode: 'LIVE',
 };

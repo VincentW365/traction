@@ -1318,6 +1318,25 @@ export default function QueueTicketDetailPage() {
                           Rework
                         </button>
                       )}
+                      {/* CR-2026-112 — a job held for the customer's decision is
+                          exactly when an advisor needs to ask for it. One click opens
+                          the composer on the Customer Action Required template,
+                          already filled with this visit's context. */}
+                      {canManageOrders && order.status === 'WAITING_CUSTOMER' && (
+                        <button
+                          onClick={() =>
+                            setComposerCtx({
+                              reason: 'CUSTOMER_ACTION_REQUIRED',
+                              customerId: sv.customer.id,
+                              vehicleId: sv.vehicle.id,
+                              serviceVisitId: sv.id,
+                            })
+                          }
+                          className="btn-primary text-xs py-1 px-2"
+                        >
+                          Email Customer
+                        </button>
+                      )}
                       {/* CR-2026-100 §18 — the shared hold story + retroactive correction. */}
                       {canManageOrders && ['PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER'].includes(order.status) && (
                         <button
@@ -1746,7 +1765,7 @@ export default function QueueTicketDetailPage() {
           <div className="card-header flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-900">Customer Communication</h2>
             <div className="flex items-center gap-1.5">
-              <button onClick={openComposer} className="btn-primary text-xs py-1 px-3">Contact Customer</button>
+              <button onClick={openComposer} className="btn-primary text-xs py-1 px-3">Email Customer</button>
               <button onClick={() => logCall.mutate()} disabled={logCall.isPending} className="btn-secondary text-xs py-1 px-2" title="Record that the customer was called — nothing is sent">
                 {logCall.isPending ? 'Logging…' : 'Log Call'}
               </button>
@@ -1785,7 +1804,7 @@ export default function QueueTicketDetailPage() {
                   }
                   className="btn-primary text-sm px-4 py-2.5"
                 >
-                  Notify Customer
+                  Email Customer
                 </button>
               )}
               <button onClick={() => setShowCompletion(true)} className="btn-success text-sm px-5 py-2.5 font-semibold">

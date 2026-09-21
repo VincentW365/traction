@@ -2,22 +2,27 @@
 
 /**
  * CR-2026-096 — CustomerNotificationComposer.
+ * CR-2026-112 — one channel: email.
  *
  * The ONE composer for every staff-initiated customer message: service-due
- * reminders, queue progress updates, pickup notices, and custom messages.
- * Flow: Generate → Review → Edit → Preview → Send. The server generates the
- * drafts from admin-editable templates; staff edit before sending; the exact
- * final text is recorded. Editing a recipient here is a send-to override only —
+ * reminders, customer-action requests, queue progress updates, ready-for-
+ * collection notices, and custom messages. Flow: Generate → Review → Edit →
+ * Preview → Send. The server generates the draft from manager-editable
+ * templates; staff edit before sending; the exact final text is recorded.
+ *
+ * There is no channel to choose, so there is no channel selector: this screen
+ * is an email screen. Editing the address here is a send-to override only —
  * customer master data changes go through the explicit update action.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api-client';
 import { useAuth } from '../hooks/use-auth';
 
 export type NotificationReason =
   | 'SERVICE_DUE'
+  | 'CUSTOMER_ACTION_REQUIRED'
   | 'QUEUE_CHECKED_IN'
   | 'QUEUE_WORK_STARTED'
   | 'QUEUE_UPDATE'
@@ -26,18 +31,23 @@ export type NotificationReason =
 
 const REASON_LABELS: Record<NotificationReason, string> = {
   SERVICE_DUE: 'Vehicle Due for Service',
+  CUSTOMER_ACTION_REQUIRED: 'Customer Action Required',
   QUEUE_CHECKED_IN: 'Checked In',
   QUEUE_WORK_STARTED: 'Work Started',
   QUEUE_UPDATE: 'Service Update',
-  PICKUP_READY: 'Vehicle Ready for Pickup',
+  PICKUP_READY: 'Vehicle Ready for Collection',
   CUSTOM: 'Custom Message',
 };
 
-/** Queue tickets offer a choice of contextual templates. */
+/** Reasons whose template deliberately leaves the substance to the advisor. */
+const STAFF_WRITES_THE_DETAIL: NotificationReason[] = ['QUEUE_UPDATE', 'CUSTOMER_ACTION_REQUIRED'];
+
+/** A visit offers a choice of contextual templates. */
 const QUEUE_REASON_CHOICES: NotificationReason[] = [
   'QUEUE_CHECKED_IN',
   'QUEUE_WORK_STARTED',
   'QUEUE_UPDATE',
+  'CUSTOMER_ACTION_REQUIRED',
   'CUSTOM',
 ];
 
@@ -48,10 +58,10 @@ interface ComposeResponse {
     name: string;
     phone: string | null;
     email: string | null;
-    allowSms: boolean;
     allowEmail: boolean;
-    smsValid: boolean;
     emailValid: boolean;
+    /** The exact sentence to show when there is nothing to send to. */
+    emailProblem: string | null;
   };
   vehicle: { id: string; description: string; registration: string } | null;
   visit: { id: string; ticketNumber: string | null; status: string } | null;
@@ -65,11 +75,10 @@ interface ComposeResponse {
     contactStatus: string;
     lastContactedAt: string | null;
   } | null;
-  sms: { templateKey: string; templateVersion: number; enabled: boolean; body: string; chars: number; segments: number } | null;
   email: { templateKey: string; templateVersion: number; enabled: boolean; subject: string; body: string } | null;
   priorSend: { channel: string; sentAt: string | null; createdAt: string; status: string } | null;
   previousContact: { channel: string; sentAt: string | null; createdAt: string; status: string } | null;
-  capabilities: { smsConfigured: boolean; emailConfigured: boolean; mode: 'TEST' | 'LIVE'; testRoutingActive: boolean };
+  capabilities: { emailConfigured: boolean; mode: 'TEST' | 'LIVE'; testRoutingActive: boolean };
 }
 
 export interface ComposerContext {
@@ -84,21 +93,12 @@ interface Props {
   open: boolean;
   onClose: () => void;
   context: ComposerContext;
-  /** Show the queue template picker (Checked In / Work Started / Update / Custom). */
+  /** Show the visit template picker (Checked In / Work Started / Update / Action / Custom). */
   allowReasonChoice?: boolean;
   onSent?: () => void;
 }
 
-function smsSegments(body: string): { chars: number; segments: number } {
-  const chars = body.length;
-  // Client-side estimate; authoritative count is computed server-side.
-  const ascii = /^[\x20-\x7e\n\r]*$/.test(body);
-  const single = ascii ? 160 : 70;
-  const multi = ascii ? 153 : 67;
-  return { chars, segments: chars === 0 ? 0 : chars <= single ? 1 : Math.ceil(chars / multi) };
-}
-
-/** CR-2026-106 — one send result per channel, with the state a person should read. */
+/** CR-2026-106 — the send result, with the state a person should read. */
 interface SentEntry {
   channel: string;
   status: string;
@@ -135,18 +135,14 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
   const [data, setData] = useState<ComposeResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [useSms, setUseSms] = useState(false);
-  const [useEmail, setUseEmail] = useState(false);
-  const [smsTo, setSmsTo] = useState('');
   const [emailTo, setEmailTo] = useState('');
-  const [smsBody, setSmsBody] = useState('');
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
   const [step, setStep] = useState<'edit' | 'preview'>('edit');
   const [confirmDuplicate, setConfirmDuplicate] = useState(false);
   const [overrideOptOut, setOverrideOptOut] = useState(false);
-  // CR-2026-106 — the per-channel outcome of the last send; the dialog stays open
-  // when any channel FAILED so the reason is read, never a silent "sent".
+  // CR-2026-106 — the outcome of the last send; the dialog stays open when the
+  // send FAILED so the reason is read, never a silent "sent".
   const [outcome, setOutcome] = useState<SentEntry[] | null>(null);
   const requestIdRef = useRef<string>('');
 
@@ -158,14 +154,9 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
     onSuccess: (res) => {
       setData(res);
       setLoadError(null);
-      setSmsTo(res.customer.phone ?? '');
       setEmailTo(res.customer.email ?? '');
-      setSmsBody(res.sms?.body ?? '');
       setEmailSubject(res.email?.subject ?? '');
       setEmailBody(res.email?.body ?? '');
-      const smsOk = res.customer.smsValid && (res.sms?.enabled ?? false);
-      setUseSms(smsOk && res.customer.allowSms);
-      setUseEmail(false);
       setStep('edit');
       setConfirmDuplicate(false);
       setOverrideOptOut(false);
@@ -189,18 +180,12 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
     composeMutation.mutate(r);
   };
 
-  const sendMutation = useMutation<
-    { duplicate: boolean; sent: SentEntry[] },
-    unknown,
-    void
-  >({
+  const sendMutation = useMutation<{ duplicate: boolean; sent: SentEntry[] }, unknown, void>({
     mutationFn: () =>
       api.post('/notifications/send', {
         ...context,
         reason,
-        channels: [...(useSms ? ['SMS'] : []), ...(useEmail ? ['EMAIL'] : [])],
-        sms: useSms ? { recipient: smsTo, body: smsBody } : undefined,
-        email: useEmail ? { recipient: emailTo, subject: emailSubject, body: emailBody } : undefined,
+        email: { recipient: emailTo, subject: emailSubject, body: emailBody },
         confirmDuplicate,
         overrideOptOut,
         clientRequestId: requestIdRef.current,
@@ -220,7 +205,7 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
     },
   });
 
-  const updateContactMutation = useMutation<unknown, unknown, { phone?: string; email?: string }>({
+  const updateContactMutation = useMutation<unknown, unknown, { email: string }>({
     mutationFn: (patch) => api.patch(`/customers/${context.customerId}`, patch),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customer', context.customerId] });
@@ -228,20 +213,14 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
     },
   });
 
-  const seg = useMemo(() => smsSegments(smsBody), [smsBody]);
-
   if (!open) return null;
 
   const caps = data?.capabilities;
-  const sendDisabled =
-    sendMutation.isPending || (!useSms && !useEmail) || !data;
+  const hasEmail = !!data?.customer.emailValid || (!!emailTo.trim() && emailTo.includes('@'));
+  const sendDisabled = sendMutation.isPending || !data || !hasEmail || !emailSubject.trim() || !emailBody.trim();
 
-  const smsOverridden = data && smsTo.trim() !== (data.customer.phone ?? '').trim();
   const emailOverridden = data && emailTo.trim().toLowerCase() !== (data.customer.email ?? '').trim().toLowerCase();
-
-  const smsOptedOut = data ? !data.customer.allowSms : false;
   const emailOptedOut = data ? !data.customer.allowEmail : false;
-  const needsOptOutConfirm = (useSms && smsOptedOut) || (useEmail && emailOptedOut);
 
   const sendErrorInfo = (() => {
     const e = sendMutation.error;
@@ -262,7 +241,7 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
         {/* Header */}
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
           <div>
-            <h2 className="text-sm font-semibold text-slate-900">Contact Customer</h2>
+            <h2 className="text-sm font-semibold text-slate-900">Email Customer</h2>
             <p className="text-xs text-slate-500">{REASON_LABELS[reason]}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1" aria-label="Close">
@@ -279,12 +258,12 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
               {/* Mode banners */}
               {caps?.testRoutingActive && (
                 <div className="mb-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 font-medium">
-                  TEST MODE — Customer will not receive this message. Sends are redirected to the configured test recipient.
+                  TEST MODE — Customer will not receive this email. Sends are redirected to the configured test mailbox.
                 </div>
               )}
-              {caps && !caps.smsConfigured && !caps.emailConfigured && (
+              {caps && !caps.emailConfigured && (
                 <div className="mb-3 rounded-md bg-slate-100 border border-slate-200 px-3 py-2 text-xs text-slate-600">
-                  Messaging is unavailable — no SMS or email provider is configured. The message will be recorded in history but <span className="font-semibold">not delivered</span>.
+                  Email is not set up on this deployment. The message will be recorded in history but <span className="font-semibold">not delivered</span>.
                 </div>
               )}
 
@@ -322,7 +301,7 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
               {/* Prior-send warnings */}
               {data.priorSend && (
                 <div className="mb-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
-                  {REASON_LABELS[reason]} notification already sent — {data.priorSend.channel} · {fmtWhen(data.priorSend.sentAt ?? data.priorSend.createdAt)} · {data.priorSend.status}
+                  {REASON_LABELS[reason]} notification already sent — {fmtWhen(data.priorSend.sentAt ?? data.priorSend.createdAt)} · {data.priorSend.status}
                   {reason === 'PICKUP_READY' && (
                     <label className="flex items-center gap-2 mt-1 font-medium">
                       <input type="checkbox" checked={confirmDuplicate} onChange={(e) => setConfirmDuplicate(e.target.checked)} />
@@ -333,11 +312,11 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
               )}
               {data.previousContact && !data.priorSend && (
                 <div className="mb-3 rounded-md bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600">
-                  Previously contacted — {data.previousContact.channel} · {fmtWhen(data.previousContact.sentAt ?? data.previousContact.createdAt)} · {data.previousContact.status}
+                  Previously contacted — {fmtWhen(data.previousContact.sentAt ?? data.previousContact.createdAt)} · {data.previousContact.status}
                 </div>
               )}
 
-              {/* Queue template choice */}
+              {/* Template choice */}
               {allowReasonChoice && (
                 <div className="mb-3">
                   <p className="text-[11px] uppercase tracking-wide text-slate-400 mb-1">Message type</p>
@@ -355,141 +334,109 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
                 </div>
               )}
 
-              {/* Channels */}
-              <p className="text-[11px] uppercase tracking-wide text-slate-400 mb-1">Send via</p>
-              <div className="flex gap-4 mb-3">
-                <label className={`flex items-center gap-2 text-sm ${!data.customer.smsValid ? 'text-slate-400' : 'text-slate-700'}`}>
-                  <input type="checkbox" checked={useSms} disabled={!data.customer.smsValid} onChange={(e) => setUseSms(e.target.checked)} />
-                  SMS
-                  {smsOptedOut && <span className="badge bg-red-50 text-red-600 text-[10px]">opted out</span>}
-                </label>
-                <label className={`flex items-center gap-2 text-sm ${!data.customer.emailValid ? 'text-slate-400' : 'text-slate-700'}`}>
-                  <input type="checkbox" checked={useEmail} disabled={!data.customer.emailValid} onChange={(e) => setUseEmail(e.target.checked)} />
-                  Email
-                  {emailOptedOut && <span className="badge bg-red-50 text-red-600 text-[10px]">opted out</span>}
-                </label>
-              </div>
-              {!data.customer.smsValid && <p className="text-xs text-red-600 mb-1">No valid mobile number available.</p>}
-              {!data.customer.emailValid && <p className="text-xs text-red-600 mb-2">No valid email address available.</p>}
+              {/* CR-2026-112 §8 — nothing to send to: say so, and offer the fix. */}
+              {!data.customer.emailValid && (
+                <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2" data-testid="no-email-on-file">
+                  <p className="text-xs text-red-800 font-medium">
+                    {data.customer.emailProblem ?? "No customer email address is recorded. Add or update the customer's email address before sending this notification."}
+                  </p>
+                  {canEditCustomer && (
+                    <div className="mt-2 flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="email"
+                        value={emailTo}
+                        onChange={(e) => setEmailTo(e.target.value)}
+                        placeholder="customer@example.com"
+                        className="input-field text-sm"
+                      />
+                      <button
+                        onClick={() => updateContactMutation.mutate({ email: emailTo.trim() })}
+                        disabled={updateContactMutation.isPending || !emailTo.includes('@')}
+                        className="btn-secondary text-xs whitespace-nowrap"
+                      >
+                        {updateContactMutation.isPending ? 'Saving…' : 'Save to customer record'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {step === 'edit' ? (
                 <>
-                  {/* SMS */}
-                  {useSms && (
-                    <div className="mb-4 border border-slate-200 rounded-lg p-3">
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-xs font-semibold text-slate-700">SMS</p>
-                        <button onClick={() => setSmsBody(data.sms?.body ?? '')} className="text-[11px] text-blue-600 hover:underline">Reset to Template</button>
-                      </div>
-                      <label className="block text-[11px] text-slate-500 mb-0.5">Mobile</label>
-                      <input value={smsTo} onChange={(e) => setSmsTo(e.target.value)} className="input-field text-sm mb-1" />
-                      {smsOverridden && (
-                        <div className="text-[11px] text-amber-700 bg-amber-50 rounded px-2 py-1 mb-2 flex items-center justify-between gap-2">
-                          <span>Send-to override — the customer record is not changed.</span>
-                          {canEditCustomer && (
-                            <button
-                              onClick={() => updateContactMutation.mutate({ phone: smsTo.trim() })}
-                              disabled={updateContactMutation.isPending}
-                              className="underline whitespace-nowrap"
-                            >
-                              Update customer record
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      <label className="block text-[11px] text-slate-500 mb-0.5">Message</label>
-                      <textarea value={smsBody} onChange={(e) => setSmsBody(e.target.value)} rows={4} className="input-field text-sm font-normal" />
-                      <p className={`text-[11px] mt-1 ${seg.segments > 3 ? 'text-amber-600 font-medium' : 'text-slate-400'}`}>
-                        {seg.chars} characters · ~{seg.segments} SMS segment{seg.segments === 1 ? '' : 's'}
-                        {seg.segments > 3 ? ' — unusually long for an SMS; consider email for details' : ''}
-                      </p>
+                  <div className="mb-4 border border-slate-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-xs font-semibold text-slate-700">Email</p>
+                      <button
+                        onClick={() => { setEmailSubject(data.email?.subject ?? ''); setEmailBody(data.email?.body ?? ''); }}
+                        className="text-[11px] text-blue-600 hover:underline"
+                      >
+                        Reset to Template
+                      </button>
                     </div>
-                  )}
-
-                  {/* Email */}
-                  {useEmail && (
-                    <div className="mb-4 border border-slate-200 rounded-lg p-3">
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-xs font-semibold text-slate-700">Email</p>
-                        <button
-                          onClick={() => { setEmailSubject(data.email?.subject ?? ''); setEmailBody(data.email?.body ?? ''); }}
-                          className="text-[11px] text-blue-600 hover:underline"
-                        >
-                          Reset to Template
-                        </button>
+                    <label className="block text-[11px] text-slate-500 mb-0.5">To</label>
+                    <input value={emailTo} onChange={(e) => setEmailTo(e.target.value)} className="input-field text-sm mb-1" />
+                    {emailOverridden && data.customer.emailValid && (
+                      <div className="text-[11px] text-amber-700 bg-amber-50 rounded px-2 py-1 mb-2 flex items-center justify-between gap-2">
+                        <span>Send-to override — the customer record is not changed.</span>
+                        {canEditCustomer && (
+                          <button
+                            onClick={() => updateContactMutation.mutate({ email: emailTo.trim() })}
+                            disabled={updateContactMutation.isPending}
+                            className="underline whitespace-nowrap"
+                          >
+                            Update customer record
+                          </button>
+                        )}
                       </div>
-                      <label className="block text-[11px] text-slate-500 mb-0.5">Email address</label>
-                      <input value={emailTo} onChange={(e) => setEmailTo(e.target.value)} className="input-field text-sm mb-1" />
-                      {emailOverridden && (
-                        <div className="text-[11px] text-amber-700 bg-amber-50 rounded px-2 py-1 mb-2 flex items-center justify-between gap-2">
-                          <span>Send-to override — the customer record is not changed.</span>
-                          {canEditCustomer && (
-                            <button
-                              onClick={() => updateContactMutation.mutate({ email: emailTo.trim() })}
-                              disabled={updateContactMutation.isPending}
-                              className="underline whitespace-nowrap"
-                            >
-                              Update customer record
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      <label className="block text-[11px] text-slate-500 mb-0.5">Subject</label>
-                      <input value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} className="input-field text-sm mb-2" />
-                      <label className="block text-[11px] text-slate-500 mb-0.5">Message</label>
-                      <textarea value={emailBody} onChange={(e) => setEmailBody(e.target.value)} rows={8} className="input-field text-sm font-normal" />
-                    </div>
-                  )}
+                    )}
+                    <label className="block text-[11px] text-slate-500 mb-0.5">Subject</label>
+                    <input value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} className="input-field text-sm mb-2" />
+                    <label className="block text-[11px] text-slate-500 mb-0.5">Message</label>
+                    <textarea value={emailBody} onChange={(e) => setEmailBody(e.target.value)} rows={10} className="input-field text-sm font-normal" />
+                  </div>
 
-                  {reason === 'QUEUE_UPDATE' && useSms && smsBody === (data.sms?.body ?? '') && (
+                  {STAFF_WRITES_THE_DETAIL.includes(reason) && emailBody === (data.email?.body ?? '') && (
                     <p className="text-xs text-amber-700 mb-2">
-                      Add the update details for the customer — the template leaves that part to you.
+                      {reason === 'CUSTOMER_ACTION_REQUIRED'
+                        ? 'Say what you need the customer to decide, and by when — the template leaves that part to you.'
+                        : 'Add the update details for the customer — the template leaves that part to you.'}
                     </p>
                   )}
                 </>
               ) : (
                 /* Preview */
                 <div className="space-y-3">
-                  {useSms && (
-                    <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
-                      <p className="text-xs font-semibold text-slate-700 mb-1">SMS → {smsTo}</p>
-                      <p className="text-sm text-slate-800 whitespace-pre-wrap">{smsBody}</p>
-                      <p className="text-[11px] text-slate-400 mt-1">{seg.chars} characters · ~{seg.segments} segment{seg.segments === 1 ? '' : 's'}</p>
-                    </div>
-                  )}
-                  {useEmail && (
-                    <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
-                      <p className="text-xs font-semibold text-slate-700 mb-1">Email → {emailTo}</p>
-                      <p className="text-sm font-medium text-slate-900 mb-1">{emailSubject}</p>
-                      <p className="text-sm text-slate-800 whitespace-pre-wrap">{emailBody}</p>
-                    </div>
-                  )}
+                  <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+                    <p className="text-xs font-semibold text-slate-700 mb-1">To {emailTo}</p>
+                    <p className="text-sm font-medium text-slate-900 mb-1">{emailSubject}</p>
+                    <p className="text-sm text-slate-800 whitespace-pre-wrap">{emailBody}</p>
+                  </div>
                   {caps?.testRoutingActive && (
-                    <p className="text-xs text-amber-700 font-medium">TEST MODE — this will be delivered to the test recipient, not the customer.</p>
+                    <p className="text-xs text-amber-700 font-medium">TEST MODE — this will be delivered to the test mailbox, not the customer.</p>
                   )}
                 </div>
               )}
 
               {/* Opt-out confirmation */}
-              {needsOptOutConfirm && (
+              {emailOptedOut && (
                 <label className="flex items-center gap-2 text-xs text-red-700 bg-red-50 rounded-md px-3 py-2 mb-2">
                   <input type="checkbox" checked={overrideOptOut} onChange={(e) => setOverrideOptOut(e.target.checked)} />
-                  The customer opted out of {useSms && smsOptedOut ? 'SMS' : ''}{useSms && smsOptedOut && useEmail && emailOptedOut ? ' and ' : ''}{useEmail && emailOptedOut ? 'email' : ''} messages. I confirm this operational message should still be sent.
+                  The customer opted out of email messages. I confirm this operational message should still be sent.
                 </label>
               )}
 
               {outcome && (
                 <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 mb-2 text-xs" data-testid="send-outcome">
-                  <p className="font-semibold text-red-800 mb-1">Not every channel got through</p>
+                  <p className="font-semibold text-red-800 mb-1">The email did not get through</p>
                   <ul className="space-y-0.5">
                     {outcome.map((s) => (
                       <li key={s.channel} className={(s.displayState ?? s.status) === 'FAILED' ? 'text-red-700' : 'text-slate-700'}>
-                        <span className="font-medium">{s.channel}</span> → {DISPLAY_STATE_LABELS[s.displayState ?? s.status] ?? s.status}
+                        {DISPLAY_STATE_LABELS[s.displayState ?? s.status] ?? s.status}
                         {s.failureReason ? ` — ${s.failureReason}` : ''}
                       </li>
                     ))}
                   </ul>
-                  <p className="mt-1 text-slate-600">The failed message is recorded in history as Failed. Fix the address or the email setup, then send again.</p>
+                  <p className="mt-1 text-slate-600">It is recorded in history as Failed. Fix the address or the email setup, then send again.</p>
                 </div>
               )}
 
@@ -497,7 +444,7 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
                 <div className="text-xs text-red-600 bg-red-50 rounded-md px-3 py-2 mb-2">
                   {sendErrorInfo.code === 'DUPLICATE_PICKUP' && sendErrorInfo.prior ? (
                     <>
-                      A pickup notification was already sent at {fmtWhen(sendErrorInfo.prior.sentAt)} ({sendErrorInfo.prior.channel}). Tick “Send another anyway” above to resend.
+                      A ready-for-collection email was already sent at {fmtWhen(sendErrorInfo.prior.sentAt)}. Tick “Send another anyway” above to resend.
                     </>
                   ) : (
                     sendErrorInfo.message
@@ -522,10 +469,10 @@ export function CustomerNotificationComposer({ open, onClose, context, allowReas
             ) : (
               <button
                 onClick={() => sendMutation.mutate()}
-                disabled={sendDisabled || (needsOptOutConfirm && !overrideOptOut)}
+                disabled={sendDisabled || (emailOptedOut && !overrideOptOut)}
                 className="btn-primary text-sm"
               >
-                {sendMutation.isPending ? 'Sending…' : 'Send Notification'}
+                {sendMutation.isPending ? 'Sending…' : 'Send Email'}
               </button>
             )}
           </div>

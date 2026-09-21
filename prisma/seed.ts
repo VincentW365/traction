@@ -321,13 +321,15 @@ async function main() {
     { ruleKey: 'completion_requires_front_desk_action', valueJson: true, notes: 'Whether tech completion requires front desk to notify customer' },
     { ruleKey: 'display_board_enabled', valueJson: true, notes: 'Whether the public waiting-room display board (/display/:token) is active' },
     { ruleKey: 'display_board_token', valueJson: 'bert-display-7f3a9c2e4b81d6', notes: 'Unguessable token gating the public waiting-room display board URL (/display/:token). No login is required on the screen; rotate this value if the URL leaks.' },
-    { ruleKey: 'notification_provider_sms', valueJson: 'stub', notes: 'SMS provider: stub | twilio' },
-    { ruleKey: 'notification_provider_email', valueJson: 'stub', notes: 'Email provider: stub | sendgrid | smtp' },
+    // CR-2026-112 — customer notifications are email only; the delivery provider
+    // is an environment setting (EMAIL_PROVIDER), not a business rule. The old
+    // SMS row is not seeded any more; existing rows are harmless and unread.
+    { ruleKey: 'notification_provider_email', valueJson: 'stub', notes: 'Email provider: stub | smtp (set by EMAIL_PROVIDER in the environment)' },
     { ruleKey: 'appointment_reminder_enabled', valueJson: true, notes: 'CR-2026-056: whether the automatic appointment reminder (sent ~24h before) is active' },
     { ruleKey: 'appointment_reminder_hours', valueJson: 24, notes: 'CR-2026-056: how many hours before scheduledStartAt the reminder fires (hourly cron sweep)' },
     // CR-2026-086 — "tell the customer their next service is due". Everything for this
     // was already built (auto-created reminders, send-date maths, opt-in, quiet hours,
-    // SMS/email dispatch) except anything that CALLED it, so reminders sat in SCHEDULED
+    // email dispatch) except anything that CALLED it, so reminders sat in SCHEDULED
     // forever. An hourly cron now sweeps them. DEFAULT OFF on purpose: switching it on
     // messages every opted-in customer holding a scheduled reminder, so that should be
     // a decision someone takes having looked at the backlog, not a deploy side effect.
@@ -459,7 +461,7 @@ async function main() {
     // deploy without /book suddenly offering nothing; management turns it on from
     // Settings once the readiness audit and preflight pass. Never a redeploy.
     { ruleKey: 'booking_enforce_online_bookable', valueJson: false, notes: 'CR-2026-108: when true, /book offers ONLY services with bookableOnline=true. False preserves the pre-CR behaviour (every active, non-external, non-excluded service). Activation is gated by a preflight — see docs/122 §E.' },
-    { ruleKey: 'booking_share_message_template', valueJson: 'Hi! You can book your next service at {siteName} online here: {bookingUrl} — pick your vehicle, the service you need, and a time that suits you.', notes: 'CR-2026-106: text staff send (WhatsApp/SMS) with the public booking link; {bookingUrl} and {siteName} are replaced.' },
+    { ruleKey: 'booking_share_message_template', valueJson: 'Hi! You can book your next service at {siteName} online here: {bookingUrl} — pick your vehicle, the service you need, and a time that suits you.', notes: 'CR-2026-106: the wording staff copy and pass on with the public booking link; {bookingUrl} and {siteName} are replaced.' },
   ];
 
   for (const r of cr105cRules) {

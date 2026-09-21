@@ -1,10 +1,15 @@
 'use client';
 
 /**
- * CR-2026-106 — "Send booking link" (WhatsApp Phase 1 = a message containing the
- * secure public booking URL; no messaging integration). The link and the wording
- * come from the API (`GET /appointments/booking-link`), which builds the URL from
- * PUBLIC_APP_URL — never from this browser's address.
+ * CR-2026-106 — "Send booking link": the secure public booking URL plus the
+ * wording to go with it. The link and the message come from the API
+ * (`GET /appointments/booking-link`), which builds the URL from PUBLIC_APP_URL —
+ * never from this browser's address.
+ *
+ * CR-2026-112 — this is a hand-off, not a notification: staff copy the message
+ * and pass it on themselves. The one-tap WhatsApp and SMS links were removed
+ * with the rest of the SMS surface; the API still returns those fields, which
+ * this screen ignores.
  */
 
 import { useState } from 'react';
@@ -15,8 +20,6 @@ import { useSiteId } from '../hooks/use-site';
 interface BookingLink {
   bookingUrl: string;
   message: string;
-  whatsappUrl: string;
-  smsUrl: string;
 }
 
 export function SendBookingLink({ phone, compact }: { phone?: string | null; compact?: boolean }) {
@@ -43,13 +46,10 @@ export function SendBookingLink({ phone, compact }: { phone?: string | null; com
               <p className="text-[11px] uppercase tracking-wide text-slate-400">Public booking link</p>
               <p className="break-all font-mono text-xs text-slate-700">{q.data.bookingUrl}</p>
               <p className="text-xs text-slate-600">{q.data.message}</p>
+              {/* CR-2026-112 — the WhatsApp and SMS hand-off links were removed with
+                  the rest of the SMS/WhatsApp surface. Staff copy the message and
+                  send it however they normally reach that customer. */}
               <div className="flex flex-wrap gap-2">
-                <a href={q.data.whatsappUrl} target="_blank" rel="noopener noreferrer" className="min-h-9 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
-                  WhatsApp
-                </a>
-                <a href={q.data.smsUrl} className="min-h-9 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700">
-                  Text message
-                </a>
                 <button
                   type="button"
                   onClick={async () => {

@@ -29,7 +29,6 @@ interface CustomerSearchResult {
 
 interface CustomerDetail extends CustomerSearchResult {
   vehicles: Vehicle[];
-  notificationOptInSms?: boolean;
   notificationOptInEmail?: boolean;
 }
 
@@ -85,7 +84,6 @@ export default function CheckInPage() {
   const [vehicleWeightClass, setVehicleWeightClass] = useState('STANDARD');
   const [vehicleColor, setVehicleColor] = useState('');
   // P4(b) notification consent capture (default opt-out unless explicitly set)
-  const [notifyOptInSms, setNotifyOptInSms] = useState(false);
   const [notifyOptInEmail, setNotifyOptInEmail] = useState(false);
   const [successResult, setSuccessResult] = useState<{
     ticketNumber: string;
@@ -122,7 +120,6 @@ export default function CheckInPage() {
   // preserve existing consent and never silently flip it; default opt-out.
   useEffect(() => {
     const c = customerDetailQuery.data;
-    setNotifyOptInSms(c?.notificationOptInSms ?? false);
     setNotifyOptInEmail(c?.notificationOptInEmail ?? false);
   }, [customerDetailQuery.data]);
 
@@ -169,7 +166,6 @@ export default function CheckInPage() {
         oilGrade: (oilGrade === 'Other' ? (oilGradeOther.trim() || 'Other') : oilGrade) || undefined,
         vehicleWeightClass: vehicleWeightClass || undefined,
         color: vehicleColor || undefined,
-        notificationOptInSms: notifyOptInSms,
         notificationOptInEmail: notifyOptInEmail,
       }),
     onSuccess: (data) => {
@@ -197,7 +193,6 @@ export default function CheckInPage() {
       oilGrade?: string;
       vehicleWeightClass?: string;
       color?: string;
-      notificationOptInSms?: boolean;
       notificationOptInEmail?: boolean;
     }) => api.post<CheckInResponse>('/walk-ins', payload),
     onSuccess: (data) => {
@@ -277,7 +272,6 @@ export default function CheckInPage() {
       // CR-2026-084 — the consent checkboxes were rendered and toggled on this page
       // but never sent on the walk-in path, so a customer's answer was discarded and
       // they stayed opted out. The appointment path always sent them.
-      notificationOptInSms: notifyOptInSms,
       notificationOptInEmail: notifyOptInEmail,
     });
   }
@@ -560,13 +554,10 @@ export default function CheckInPage() {
                 )}
                 {/* P4(b): notification consent capture (default opt-out) */}
                 <div className="col-span-2 border-t border-slate-100 pt-3 mt-1">
+                  {/* CR-2026-112 — email is the only channel, so this is the
+                      only consent to ask for. */}
                   <p className="input-label mb-2">Notification consent</p>
                   <div className="space-y-2">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input type="checkbox" checked={notifyOptInSms} onChange={(e) => setNotifyOptInSms(e.target.checked)}
-                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                      <span className="text-sm text-slate-700">Customer consents to SMS updates</span>
-                    </label>
                     <label className="flex items-center gap-3 cursor-pointer">
                       <input type="checkbox" checked={notifyOptInEmail} onChange={(e) => setNotifyOptInEmail(e.target.checked)}
                         className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />

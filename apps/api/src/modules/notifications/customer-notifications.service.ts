@@ -18,31 +18,38 @@ import {
   NotificationCapabilities,
   NotificationProvider,
 } from './providers/notification-provider.interface';
-import { toE164Jamaica } from './providers/twilio.provider';
 import { deliveryDisplayState } from './notifications.service';
-import { DEFAULT_TEMPLATES } from './templates/default-templates';
+import { NotificationTemplateStore } from './templates/template-store.service';
+import { EMAIL_ONLY_RELEASE, NO_EMAIL_ON_FILE } from './notification-messages';
 import {
   buildVehicleDescription,
   findDisallowedPlaceholders,
   findUnresolvedInFinal,
   isValidEmail,
-  isValidMobileNumber,
   renderTemplate,
-  smsSegmentInfo,
   TemplateData,
 } from './templates/template-engine';
 
 /**
- * CR-2026-096 — unified customer SMS/email notifications.
+ * CR-2026-096 — unified customer notifications.
+ * CR-2026-112 — one channel: email.
  *
- * One pipeline for every staff-initiated customer message (service due, queue
- * progress, pickup, custom): Generate → Review → Edit → Preview → Send → Track.
- * Wording comes from admin-editable NotificationTemplate rows; the exact text
- * sent (after staff edits) is snapshotted on NotificationLog so later template
- * edits never rewrite history.
+ * One pipeline for every staff-initiated customer message (service due, customer
+ * action required, queue progress, vehicle ready, custom):
+ * Generate → Review → Edit → Preview → Send → Track. Wording comes from
+ * admin-editable NotificationTemplate rows; the exact text sent (after staff
+ * edits) is snapshotted on NotificationLog so later template edits never rewrite
+ * history.
+ *
+ * There is no channel choice to make: this release delivers by email. A send
+ * asking for any other channel is REFUSED with a reason rather than recorded as
+ * delivered (directive §9).
  */
 
 const BUSINESS_NAME = "Bert's Service Centre";
+
+// CR-2026-112 — re-exported so existing importers keep one obvious place to look.
+export { NO_EMAIL_ON_FILE, EMAIL_ONLY_RELEASE };
 
 export interface ComposeInput {
   reason: NotificationReason;
@@ -53,10 +60,14 @@ export interface ComposeInput {
 }
 
 export interface SendInput extends ComposeInput {
-  channels: Array<'SMS' | 'EMAIL'>;
-  sms?: { recipient: string; body: string };
-  email?: { recipient: string; subject: string; body: string };
-  /** Staff explicitly confirmed a repeat pickup notification. */
+  /**
+   * CR-2026-112 — accepted only so an out-of-date client asking for SMS is told
+   * plainly that nothing was sent, instead of having the request quietly treated
+   * as an email. Omit it; EMAIL is implied.
+   */
+  channels?: string[];
+  email: { recipient: string; subject: string; body: string };
+  /** Staff explicitly confirmed a repeat vehicle-ready notification. */
   confirmDuplicate?: boolean;
   /** Staff explicitly confirmed sending despite a recorded opt-out. */
   overrideOptOut?: boolean;
@@ -77,6 +88,9 @@ export class CustomerNotificationsService {
     private audit: AuditService,
     @Inject(NOTIFICATION_PROVIDER) private provider: NotificationProvider,
     @Inject(NOTIFICATION_CAPABILITIES) private caps: NotificationCapabilities,
+    // CR-2026-112 — the shared template store: the composer and the automatic
+    // flows now read the same manager-editable wording.
+    private templates: NotificationTemplateStore,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -85,7 +99,6 @@ export class CustomerNotificationsService {
 
   capabilities() {
     return {
-      smsConfigured: this.caps.smsConfigured,
       emailConfigured: this.caps.emailConfigured,
       mode: this.caps.mode,
       testRoutingActive: this.caps.mode === 'TEST',
@@ -98,32 +111,19 @@ export class CustomerNotificationsService {
 
   /** Create-if-missing seeding; never overwrites an admin's edited wording. */
   async ensureDefaultTemplates(): Promise<number> {
-    let created = 0;
-    for (const t of DEFAULT_TEMPLATES) {
-      const existing = await this.prisma.notificationTemplate.findUnique({
-        where: { key: t.key },
-        select: { id: true },
-      });
-      if (existing) continue;
-      await this.prisma.notificationTemplate.create({
-        data: {
-          key: t.key,
-          reason: t.reason as NotificationReason,
-          channel: t.channel,
-          name: t.name,
-          subject: t.subject ?? null,
-          body: t.body,
-        },
-      });
-      created++;
-    }
-    return created;
+    return this.templates.ensureDefaults();
   }
 
+  /**
+   * CR-2026-112 — EMAIL templates only. Legacy `_SMS` rows stay in the table so
+   * historical messages remain explainable, but a manager is never shown wording
+   * for a channel this release cannot send on.
+   */
   async listTemplates() {
     await this.ensureDefaultTemplates();
     return this.prisma.notificationTemplate.findMany({
-      orderBy: [{ reason: 'asc' }, { channel: 'asc' }],
+      where: { channel: 'EMAIL' },
+      orderBy: [{ reason: 'asc' }, { key: 'asc' }],
       include: { updatedBy: { select: { fullName: true } } },
     });
   }
@@ -135,6 +135,10 @@ export class CustomerNotificationsService {
   ) {
     const existing = await this.prisma.notificationTemplate.findUnique({ where: { key } });
     if (!existing) throw new NotFoundException(`Template ${key} not found`);
+    // CR-2026-112 — a legacy SMS row is history, not editable content.
+    if (existing.channel !== 'EMAIL') {
+      throw new BadRequestException(`${EMAIL_ONLY_RELEASE} This template is kept for historical messages and cannot be edited.`);
+    }
 
     if (input.body !== undefined) {
       const bad = findDisallowedPlaceholders(input.body);
@@ -189,10 +193,8 @@ export class CustomerNotificationsService {
     const context = await this.loadContext(input);
     const data = context.templateData;
 
-    const smsTemplate = await this.getTemplate(input.reason, 'SMS');
-    const emailTemplate = await this.getTemplate(input.reason, 'EMAIL');
+    const emailTemplate = await this.getTemplate(input.reason);
 
-    const smsDraft = smsTemplate ? renderTemplate(smsTemplate.body, data) : null;
     const emailSubjectDraft = emailTemplate?.subject
       ? renderTemplate(emailTemplate.subject, data)
       : null;
@@ -230,7 +232,8 @@ export class CustomerNotificationsService {
         : null;
 
     const c = context.customer;
-    const smsValid = !!c.phone && isValidMobileNumber(c.phone);
+    // CR-2026-112 — one channel, so one question: can we email this customer?
+    // The composer shows the exact operational sentence when the answer is no.
     const emailValid = !!c.email && isValidEmail(c.email);
 
     return {
@@ -240,10 +243,10 @@ export class CustomerNotificationsService {
         name: `${c.firstName} ${c.lastName}`,
         phone: c.phone ?? null,
         email: c.email ?? null,
-        allowSms: c.notificationOptInSms,
         allowEmail: c.notificationOptInEmail,
-        smsValid,
         emailValid,
+        /** Present only when there is nothing to send to — the words staff read. */
+        emailProblem: emailValid ? null : NO_EMAIL_ON_FILE,
       },
       vehicle: context.vehicle
         ? {
@@ -256,15 +259,6 @@ export class CustomerNotificationsService {
         ? { id: context.visit.id, ticketNumber: context.ticketNumber ?? null, status: context.visit.status }
         : null,
       serviceDue: context.serviceDue,
-      sms: smsTemplate
-        ? {
-            templateKey: smsTemplate.key,
-            templateVersion: smsTemplate.version,
-            enabled: smsTemplate.enabled,
-            body: smsDraft?.text ?? '',
-            ...smsSegmentInfo(smsDraft?.text ?? ''),
-          }
-        : null,
       email: emailTemplate
         ? {
             templateKey: emailTemplate.key,
@@ -284,11 +278,25 @@ export class CustomerNotificationsService {
   // Send
   // -------------------------------------------------------------------------
 
+  /**
+   * Send one reviewed customer email.
+   *
+   * CR-2026-112 — no channel loop and no channel argument: email is the channel.
+   * A client that still asks for another one is refused outright, because a
+   * message this deployment cannot deliver must never come back as sent.
+   */
   async send(input: SendInput, userId: string) {
     this.enforceRateLimit(userId);
 
-    if (!input.channels?.length) {
-      throw new BadRequestException('Select at least one channel (SMS or Email).');
+    const asked = (input.channels ?? []).map((ch) => String(ch).toUpperCase());
+    const unsupported = asked.filter((ch) => ch !== 'EMAIL');
+    if (unsupported.length > 0) {
+      throw new BadRequestException(
+        `${EMAIL_ONLY_RELEASE} Nothing was sent for: ${unsupported.join(', ')}.`,
+      );
+    }
+    if (!input.email) {
+      throw new BadRequestException('No email content was provided.');
     }
 
     // Idempotency: the same clientRequestId never sends twice.
@@ -305,7 +313,7 @@ export class CustomerNotificationsService {
     const context = await this.loadContext(input);
     const c = context.customer;
 
-    // Duplicate pickup guard — resend is allowed, but only deliberately.
+    // Duplicate vehicle-ready guard — resend is allowed, but only deliberately.
     if (input.reason === 'PICKUP_READY' && input.serviceVisitId && !input.confirmDuplicate) {
       const prior = await this.prisma.notificationLog.findFirst({
         where: {
@@ -322,7 +330,7 @@ export class CustomerNotificationsService {
       if (prior) {
         // `errors` survives the global exception filter as `details` in the body.
         throw new ConflictException({
-          message: 'A pickup notification was already sent to this customer. Send another?',
+          message: 'A ready-for-collection notification was already sent to this customer. Send another?',
           errors: {
             code: 'DUPLICATE_PICKUP',
             prior: { channel: prior.channel, sentAt: prior.sentAt ?? prior.createdAt, status: prior.status },
@@ -331,172 +339,155 @@ export class CustomerNotificationsService {
       }
     }
 
-    const results: Array<{
-      channel: string;
-      status: string;
-      displayState: string;
-      failureReason: string | null;
-      recipient: string;
-      logId: string;
-      testRouted: boolean;
-      simulated: boolean;
-    }> = [];
-
-    for (const channel of input.channels) {
-      const payload = channel === 'SMS' ? input.sms : input.email;
-      if (!payload) {
-        throw new BadRequestException(`${channel} selected but no ${channel} content provided.`);
-      }
-
-      // --- Recipient validation (send-to override allowed; master data untouched)
-      const recipient = payload.recipient?.trim();
-      if (channel === 'SMS') {
-        if (!recipient || !isValidMobileNumber(recipient)) {
-          throw new BadRequestException('No valid mobile number available.');
-        }
-      } else {
-        if (!recipient || !isValidEmail(recipient)) {
-          throw new BadRequestException('No valid email address available.');
-        }
-      }
-
-      // --- Opt-out: never silently overridden
-      const optedOut = channel === 'SMS' ? !c.notificationOptInSms : !c.notificationOptInEmail;
-      if (optedOut && !input.overrideOptOut) {
-        throw new ConflictException({
-          message: `Customer has opted out of ${channel === 'SMS' ? 'SMS' : 'email'} messages. Confirm to send anyway.`,
-          errors: { code: 'OPT_OUT', channel },
-        });
-      }
-
-      // --- Final content validation
-      const body = payload.body?.trim() ?? '';
-      if (!body) throw new BadRequestException(`${channel} message is empty.`);
-      const unresolved = findUnresolvedInFinal(body);
-      const subject = channel === 'EMAIL' ? (input.email!.subject?.trim() ?? '') : undefined;
-      if (channel === 'EMAIL') {
-        if (!subject) throw new BadRequestException('Email subject is empty.');
-        unresolved.push(...findUnresolvedInFinal(subject));
-      }
-      if (unresolved.length > 0) {
-        throw new BadRequestException(
-          `Message still contains unfilled placeholders: ${[...new Set(unresolved)].map((u) => `{{${u}}}`).join(', ')}. Fill or remove them before sending.`,
-        );
-      }
-
-      // --- Template snapshot for audit (what was generated vs what was sent)
-      const template = await this.getTemplate(input.reason, channel);
-      const generated = template ? renderTemplate(template.body, context.templateData).text : null;
-
-      // --- Test routing (never concealed; intended recipient always retained)
-      const routing = this.resolveRouting(channel, recipient);
-
-      // --- Record first (DRAFT→SENDING semantics collapsed into one row)
-      const log = await this.prisma.notificationLog.create({
-        data: {
-          entityType: context.visit ? 'ServiceVisit' : 'Customer',
-          entityId: context.visit?.id ?? c.id,
-          channel,
-          templateKey: template?.key ?? `${input.reason}_${channel}`,
-          templateVersion: template?.version ?? 1,
-          recipient: routing.to,
-          intendedRecipient: routing.testRouted ? recipient : null,
-          testRouted: routing.testRouted,
-          simulated: routing.simulated,
-          status: 'PENDING',
-          reason: input.reason,
-          subject: subject ?? null,
-          body,
-          generatedBody: generated,
-          customerId: c.id,
-          vehicleId: context.vehicle?.id ?? null,
-          initiatedByUserId: userId,
-          clientRequestId: input.clientRequestId ? `${input.clientRequestId}:${channel}` : null,
-        },
-      });
-
-      // --- Deliver
-      let status: 'SENT' | 'FAILED' = 'SENT';
-      let providerReference: string | undefined;
-      let failureReason: string | undefined;
-      try {
-        const result = await this.provider.send({
-          channel,
-          recipient: routing.to,
-          templateKey: template?.key ?? input.reason,
-          templateData: context.templateData as Record<string, unknown>,
-          body,
-          subject,
-        });
-        status = result.success ? 'SENT' : 'FAILED';
-        providerReference = result.providerReference;
-        failureReason = result.failureReason;
-      } catch (error) {
-        status = 'FAILED';
-        failureReason = error instanceof Error ? error.message : 'Provider send failed';
-      }
-
-      await this.prisma.notificationLog.update({
-        where: { id: log.id },
-        data: {
-          status,
-          providerReference,
-          failureReason,
-          sentAt: status === 'SENT' ? new Date() : undefined,
-        },
-      });
-
-      await this.audit.log({
-        actorUserId: userId,
-        action: status === 'SENT' ? 'CUSTOMER_NOTIFICATION_SENT' : 'CUSTOMER_NOTIFICATION_FAILED',
-        entityType: 'NotificationLog',
-        entityId: log.id,
-        afterJson: {
-          reason: input.reason,
-          channel,
-          intendedRecipient: recipient,
-          actualRecipient: routing.to,
-          testRouted: routing.testRouted,
-          simulated: routing.simulated,
-          recipientOverridden: this.isOverride(channel, recipient, c),
-          optOutOverridden: optedOut,
-          edited: generated !== null && generated !== body,
-          templateKey: template?.key,
-          templateVersion: template?.version,
-        },
-      });
-
-      results.push({
-        channel,
-        status,
-        // CR-2026-106 — the honest outcome for the screen: never 'Sent' when the
-        // row was simulated or redirected, and the provider's reason on failure.
-        displayState: deliveryDisplayState({ status, simulated: routing.simulated, testRouted: routing.testRouted }),
-        failureReason: failureReason ?? null,
-        recipient: routing.to,
-        logId: log.id,
-        testRouted: routing.testRouted,
-        simulated: routing.simulated,
-      });
-
-      // --- Business outcome: due-service follow-up becomes CONTACTED only after
-      //     a send actually succeeded (never merely because the composer opened).
-      if (status === 'SENT' && input.reason === 'SERVICE_DUE' && input.recommendationId) {
-        await this.prisma.maintenanceRecommendation.updateMany({
-          where: {
-            id: input.recommendationId,
-            contactStatus: { in: ['NOT_CONTACTED', 'CONTACTED'] },
-          },
-          data: {
-            contactStatus: 'CONTACTED',
-            lastContactedAt: new Date(),
-            lastContactLogId: log.id,
-          },
-        });
-      }
+    // --- Recipient validation (send-to override allowed; master data untouched)
+    const recipient = input.email.recipient?.trim();
+    if (!recipient) {
+      throw new BadRequestException(NO_EMAIL_ON_FILE);
+    }
+    if (!isValidEmail(recipient)) {
+      throw new BadRequestException(
+        `"${recipient}" is not a valid email address. Correct it before sending this notification.`,
+      );
     }
 
-    return { duplicate: false, sent: results };
+    // --- Opt-out: never silently overridden
+    const optedOut = !c.notificationOptInEmail;
+    if (optedOut && !input.overrideOptOut) {
+      throw new ConflictException({
+        message: 'Customer has opted out of email messages. Confirm to send anyway.',
+        errors: { code: 'OPT_OUT', channel: 'EMAIL' },
+      });
+    }
+
+    // --- Final content validation
+    const body = input.email.body?.trim() ?? '';
+    if (!body) throw new BadRequestException('The email message is empty.');
+    const subject = input.email.subject?.trim() ?? '';
+    if (!subject) throw new BadRequestException('The email subject is empty.');
+    const unresolved = [...findUnresolvedInFinal(body), ...findUnresolvedInFinal(subject)];
+    if (unresolved.length > 0) {
+      throw new BadRequestException(
+        `Message still contains unfilled placeholders: ${[...new Set(unresolved)].map((u) => `{{${u}}}`).join(', ')}. Fill or remove them before sending.`,
+      );
+    }
+
+    // --- Template snapshot for audit (what was generated vs what was sent)
+    const template = await this.getTemplate(input.reason);
+    const generated = template ? renderTemplate(template.body, context.templateData).text : null;
+
+    // --- Test routing (never concealed; intended recipient always retained)
+    const routing = this.resolveRouting(recipient);
+
+    // --- Record first (DRAFT→SENDING semantics collapsed into one row)
+    const log = await this.prisma.notificationLog.create({
+      data: {
+        entityType: context.visit ? 'ServiceVisit' : 'Customer',
+        entityId: context.visit?.id ?? c.id,
+        channel: 'EMAIL',
+        templateKey: template?.key ?? `${input.reason}_EMAIL`,
+        templateVersion: template?.version ?? 1,
+        recipient: routing.to,
+        intendedRecipient: routing.testRouted ? recipient : null,
+        testRouted: routing.testRouted,
+        simulated: routing.simulated,
+        status: 'PENDING',
+        reason: input.reason,
+        subject,
+        body,
+        generatedBody: generated,
+        customerId: c.id,
+        vehicleId: context.vehicle?.id ?? null,
+        initiatedByUserId: userId,
+        clientRequestId: input.clientRequestId ? `${input.clientRequestId}:EMAIL` : null,
+      },
+    });
+
+    // --- Deliver
+    let status: 'SENT' | 'FAILED' = 'SENT';
+    let providerReference: string | undefined;
+    let failureReason: string | undefined;
+    try {
+      const result = await this.provider.send({
+        channel: 'EMAIL',
+        recipient: routing.to,
+        templateKey: template?.key ?? input.reason,
+        templateData: context.templateData as Record<string, unknown>,
+        body,
+        subject,
+      });
+      status = result.success ? 'SENT' : 'FAILED';
+      providerReference = result.providerReference;
+      failureReason = result.failureReason;
+    } catch (error) {
+      status = 'FAILED';
+      failureReason = error instanceof Error ? error.message : 'Provider send failed';
+    }
+
+    await this.prisma.notificationLog.update({
+      where: { id: log.id },
+      data: {
+        status,
+        providerReference,
+        failureReason,
+        sentAt: status === 'SENT' ? new Date() : undefined,
+      },
+    });
+
+    await this.audit.log({
+      actorUserId: userId,
+      action: status === 'SENT' ? 'CUSTOMER_NOTIFICATION_SENT' : 'CUSTOMER_NOTIFICATION_FAILED',
+      entityType: 'NotificationLog',
+      entityId: log.id,
+      afterJson: {
+        reason: input.reason,
+        channel: 'EMAIL',
+        intendedRecipient: recipient,
+        actualRecipient: routing.to,
+        testRouted: routing.testRouted,
+        simulated: routing.simulated,
+        recipientOverridden: recipient.toLowerCase() !== (c.email ?? '').trim().toLowerCase(),
+        optOutOverridden: optedOut,
+        edited: generated !== null && generated !== body,
+        templateKey: template?.key,
+        templateVersion: template?.version,
+      },
+    });
+
+    // --- Business outcome: due-service follow-up becomes CONTACTED only after
+    //     a send actually succeeded (never merely because the composer opened).
+    if (status === 'SENT' && input.reason === 'SERVICE_DUE' && input.recommendationId) {
+      await this.prisma.maintenanceRecommendation.updateMany({
+        where: {
+          id: input.recommendationId,
+          contactStatus: { in: ['NOT_CONTACTED', 'CONTACTED'] },
+        },
+        data: {
+          contactStatus: 'CONTACTED',
+          lastContactedAt: new Date(),
+          lastContactLogId: log.id,
+        },
+      });
+    }
+
+    return {
+      duplicate: false,
+      // The array shape is kept so every existing caller and screen keeps working;
+      // an email-only release simply always returns exactly one entry.
+      sent: [
+        {
+          channel: 'EMAIL',
+          status,
+          // CR-2026-106 — the honest outcome for the screen: never 'Sent' when the
+          // row was simulated or redirected, and the provider's reason on failure.
+          displayState: deliveryDisplayState({ status, simulated: routing.simulated, testRouted: routing.testRouted }),
+          failureReason: failureReason ?? null,
+          recipient: routing.to,
+          logId: log.id,
+          testRouted: routing.testRouted,
+          simulated: routing.simulated,
+        },
+      ],
+    };
   }
 
   /** Record a manual (phone/in-person) contact without sending anything. */
@@ -624,8 +615,14 @@ export class CustomerNotificationsService {
     if (original.status !== 'FAILED') {
       throw new BadRequestException('Only failed notifications can be retried.');
     }
-    if (!original.body || (original.channel !== 'SMS' && original.channel !== 'EMAIL')) {
-      throw new BadRequestException('This notification cannot be retried.');
+    // CR-2026-112 — a failed legacy SMS row stays in history and stays failed:
+    // this release has no way to send it, so offering a retry would be a lie.
+    if (!original.body || original.channel !== 'EMAIL') {
+      throw new BadRequestException(
+        original.channel === 'EMAIL'
+          ? 'This notification cannot be retried.'
+          : `${EMAIL_ONLY_RELEASE} This message was sent on another channel and cannot be retried.`,
+      );
     }
 
     let status: 'SENT' | 'FAILED' = 'SENT';
@@ -633,7 +630,7 @@ export class CustomerNotificationsService {
     let failureReason: string | undefined;
     try {
       const result = await this.provider.send({
-        channel: original.channel,
+        channel: 'EMAIL',
         recipient: original.recipient,
         templateKey: original.templateKey,
         templateData: {},
@@ -688,60 +685,28 @@ export class CustomerNotificationsService {
   // Internals
   // -------------------------------------------------------------------------
 
-  private async getTemplate(reason: NotificationReason, channel: 'SMS' | 'EMAIL') {
-    const row = await this.prisma.notificationTemplate.findFirst({
-      where: { reason, channel },
-    });
-    if (row) return row;
-    // Deployed-DB safety net: fall back to factory wording, then persist it.
-    const dflt = DEFAULT_TEMPLATES.find((t) => t.reason === reason && t.channel === channel);
-    if (!dflt) return null;
-    try {
-      return await this.prisma.notificationTemplate.create({
-        data: {
-          key: dflt.key,
-          reason: dflt.reason as NotificationReason,
-          channel: dflt.channel,
-          name: dflt.name,
-          subject: dflt.subject ?? null,
-          body: dflt.body,
-        },
-      });
-    } catch {
-      // Raced with a concurrent create — read back.
-      return this.prisma.notificationTemplate.findUnique({ where: { key: dflt.key } });
-    }
+  /** The one EMAIL template for a reason; self-heals from factory wording. */
+  private async getTemplate(reason: NotificationReason) {
+    return this.templates.resolve(reason);
   }
 
-  private resolveRouting(
-    channel: 'SMS' | 'EMAIL',
-    intended: string,
-  ): { to: string; testRouted: boolean; simulated: boolean } {
-    const configured = channel === 'SMS' ? this.caps.smsConfigured : this.caps.emailConfigured;
+  private resolveRouting(intended: string): { to: string; testRouted: boolean; simulated: boolean } {
+    const configured = this.caps.emailConfigured;
     if (this.caps.mode === 'LIVE') {
       return { to: intended, testRouted: false, simulated: !configured };
     }
     // TEST mode
-    const testTo = channel === 'SMS' ? this.caps.testSmsTo : this.caps.testEmailTo;
-    if (testTo) {
-      return { to: testTo, testRouted: true, simulated: !configured };
+    if (this.caps.testEmailTo) {
+      return { to: this.caps.testEmailTo, testRouted: true, simulated: !configured };
     }
     if (configured) {
       // A real provider in TEST mode with no test recipient must never reach a customer.
       throw new BadRequestException(
-        `TEST mode is active but ${channel === 'SMS' ? 'NOTIFICATION_TEST_SMS_TO' : 'NOTIFICATION_TEST_EMAIL_TO'} is not configured. Configure a test recipient or set NOTIFICATION_MODE=LIVE.`,
+        'TEST mode is active but NOTIFICATION_TEST_EMAIL_TO is not configured. Configure a test recipient or set NOTIFICATION_MODE=LIVE.',
       );
     }
     // Stub provider: nothing real is sent either way — record as simulated.
     return { to: intended, testRouted: false, simulated: true };
-  }
-
-  private isOverride(channel: 'SMS' | 'EMAIL', recipient: string, customer: { phone: string | null; email: string | null }): boolean {
-    if (channel === 'SMS') {
-      const norm = (v: string | null) => (v ? toE164Jamaica(v) : null);
-      return norm(recipient) !== norm(customer.phone);
-    }
-    return recipient.toLowerCase() !== (customer.email ?? '').toLowerCase();
   }
 
   private enforceRateLimit(userId: string) {
@@ -874,6 +839,11 @@ export class CustomerNotificationsService {
       currentMileage: vehicle?.odometer != null ? vehicle.odometer.toLocaleString() : null,
       pickupDetails: null, // populated only when an approved operational value exists
       staffEditableUpdate: null, // the staff member writes this
+      // CR-2026-112 — what the customer must decide, and by when. Deliberately
+      // empty: the advisor writes both in customer-facing words. The renderer
+      // drops the labelled line, so the draft simply leaves them the space.
+      actionRequired: null,
+      actionNeededBy: null,
       businessName: BUSINESS_NAME,
       siteName: BUSINESS_NAME,
     };

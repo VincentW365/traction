@@ -47,7 +47,6 @@ interface DeploymentStatus {
   configuration: {
     environment: string;
     devLoginEnabled: boolean;
-    notificationProvider: string;
     emailProvider?: string;
     notificationMode?: string;
     vinDecodeProvider: string;
@@ -186,7 +185,7 @@ export default function DeploymentStatusPage() {
               value={d.configuration.devLoginEnabled ? 'ENABLED (non-production only)' : 'off'}
               tone={d.configuration.devLoginEnabled ? 'warn' : 'ok'}
             />
-            <Row label="SMS provider" value={d.configuration.notificationProvider} />
+
             <Row label="Email provider" value={d.configuration.emailProvider ?? 'stub'} tone={(d.configuration.emailProvider ?? 'stub') === 'stub' ? 'warn' : 'ok'} />
             <Row
               label="Notification mode"

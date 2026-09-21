@@ -7,8 +7,11 @@ import {
   NotificationCapabilities,
   NotificationProvider,
 } from './providers/notification-provider.interface';
-import { NotificationChannel, NotificationDeliveryStatus } from '@prisma/client';
+import { NotificationChannel, NotificationDeliveryStatus, NotificationReason } from '@prisma/client';
 import { renderEmailContent } from './templates/email-templates';
+import { NotificationTemplateStore } from './templates/template-store.service';
+import { buildVehicleDescription, type TemplateData } from './templates/template-engine';
+import { NO_EMAIL_ON_FILE, UNSUPPORTED_CHANNEL_REASON } from './notification-messages';
 
 /**
  * CR-2026-106 — the ONE mapping from a NotificationLog row to what a person is
@@ -66,14 +69,19 @@ export function formatAppointmentWhen(at: Date, timeZone?: string): string {
 export interface QueueNotificationInput {
   entityType: string;
   entityId: string;
-  channel: 'SMS' | 'EMAIL';
+  /** CR-2026-112 — email is the only channel this release delivers on. */
+  channel: 'EMAIL';
   templateKey: string;
   recipient: string;
   templateData: Record<string, unknown>;
   scheduledAt?: Date;
-  /** CR-2026-105c — pre-rendered content (the email provider needs a body; SMS may override the template). */
+  /** CR-2026-105c — pre-rendered content (the email provider needs a body). */
   subject?: string;
   body?: string;
+  /** CR-2026-112 — the reason this message went out, for history and reporting. */
+  reason?: NotificationReason;
+  /** CR-2026-112 — which manager-editable template produced it, when one did. */
+  templateVersion?: number;
   /** CR-2026-106 — so the customer's Communication History (filtered by customer/vehicle) shows this message. */
   customerId?: string | null;
   vehicleId?: string | null;
@@ -86,11 +94,19 @@ export interface QueueNotificationInput {
   testContext?: { testDataRunId?: string | null; runLabel?: string | null } | null;
 }
 
-/** CR-2026-105c — what a booking message needs to say. Customer contact is opt-in gated by the caller. */
+/**
+ * CR-2026-105c — what a booking message needs to say. Customer contact is opt-in
+ * gated by the caller.
+ *
+ * CR-2026-112 — `phone` is gone: these messages are emails. A caller that has no
+ * email for the customer passes null and nothing is sent, which the booking
+ * screens state plainly rather than hiding.
+ */
 export interface AppointmentMessageInput {
   appointmentId: string;
-  phone: string | null;
   email: string | null;
+  /** Used only to address the customer by name in the template. */
+  customerFirstName?: string | null;
   scheduledStartAt: Date;
   durationMinutes: number;
   services: string[];
@@ -128,6 +144,10 @@ export class NotificationsService {
     // service directly keep compiling. Absent resolver = nothing is ever treated
     // as a test record, i.e. exactly the pre-CR behaviour.
     @Optional() private testRecords?: TestRecordResolver,
+    // CR-2026-112 — @Optional for the same reason, and appended so the existing
+    // positional constructions keep working. Absent store = the code fallback
+    // wording, which is what these flows used before this CR.
+    @Optional() private templates?: NotificationTemplateStore,
   ) {}
 
   /**
@@ -137,21 +157,20 @@ export class NotificationsService {
    * TEST mode with no test recipient refuses rather than reaching a customer.
    */
   private routeRecipient(
-    channel: 'SMS' | 'EMAIL',
     intended: string,
   ): { to: string; testRouted: boolean; simulated: boolean; blocked?: string } {
-    const configured = channel === 'SMS' ? this.caps.smsConfigured : this.caps.emailConfigured;
+    const configured = this.caps.emailConfigured;
     if (this.caps.mode === 'LIVE') {
       return { to: intended, testRouted: false, simulated: !configured };
     }
-    const testTo = channel === 'SMS' ? this.caps.testSmsTo : this.caps.testEmailTo;
+    const testTo = this.caps.testEmailTo;
     if (testTo) return { to: testTo, testRouted: true, simulated: !configured };
     if (configured) {
       return {
         to: intended,
         testRouted: false,
         simulated: false,
-        blocked: `TEST mode without ${channel === 'SMS' ? 'NOTIFICATION_TEST_SMS_TO' : 'NOTIFICATION_TEST_EMAIL_TO'} — refused to contact a real customer`,
+        blocked: 'TEST mode without NOTIFICATION_TEST_EMAIL_TO — refused to contact a real customer',
       };
     }
     return { to: intended, testRouted: false, simulated: true };
@@ -188,6 +207,7 @@ export class NotificationsService {
           testRouted: false,
           simulated: false,
           status: 'CAPTURED' as NotificationDeliveryStatus,
+          ...(input.reason ? { reason: input.reason } : {}),
           failureReason: `Captured for test run ${testRecord.runLabel ?? 'unknown'} (matched via ${testRecord.via}) — not transmitted`,
           ...(subject ? { subject } : {}),
           ...(body ? { body, generatedBody: body } : {}),
@@ -202,7 +222,7 @@ export class NotificationsService {
       return captured.id;
     }
 
-    const routing = this.routeRecipient(input.channel, input.recipient);
+    const routing = this.routeRecipient(input.recipient);
 
     const log = await this.prisma.notificationLog.create({
       data: {
@@ -216,6 +236,11 @@ export class NotificationsService {
         simulated: routing.simulated,
         status: input.scheduledAt ? 'SCHEDULED' : 'PENDING',
         scheduledAt: input.scheduledAt,
+        // CR-2026-112 — automatic messages carry their reason and template version
+        // too, so Communication History reads the same for staff-sent and
+        // system-sent email.
+        ...(input.reason ? { reason: input.reason } : {}),
+        ...(input.templateVersion ? { templateVersion: input.templateVersion } : {}),
         ...(input.customerId ? { customerId: input.customerId } : {}),
         ...(input.vehicleId ? { vehicleId: input.vehicleId } : {}),
       },
@@ -304,7 +329,7 @@ export class NotificationsService {
   private renderForChannel(input: QueueNotificationInput): { subject?: string; body?: string } {
     let subject = input.subject;
     let body = input.body;
-    if (input.channel === 'EMAIL' && !(body ?? '').trim()) {
+    if (!(body ?? '').trim()) {
       const rendered = renderEmailContent(input.templateKey, input.templateData);
       subject = subject ?? rendered.subject;
       body = rendered.body;
@@ -337,9 +362,8 @@ export class NotificationsService {
           providerReference: result.providerReference,
           sentAt: result.success ? new Date() : undefined,
           failureReason: result.failureReason,
-          // What was actually sent, so history can show it (SMS bodies come from the
-          // provider's renderer; emails are rendered here).
-          ...(input.channel === 'EMAIL' && subject ? { subject } : {}),
+          // What was actually sent, so history can show it.
+          ...(subject ? { subject } : {}),
           ...(body ? { body } : {}),
         },
       });
@@ -358,14 +382,25 @@ export class NotificationsService {
 
   /**
    * CR-2026-105c — NOT-001: confirmation on create and on reschedule, plus a
-   * cancellation notice. SMS uses the code templates; the email carries a
-   * pre-rendered subject + body (the legacy path had no email renderer). The
-   * caller passes `null` for any channel the customer has not opted into.
+   * cancellation notice.
+   *
+   * CR-2026-112 — one email, rendered from the manager-editable template for the
+   * matching reason (APPOINTMENT_CONFIRMATION / CHANGED / CANCELLED). The code
+   * wording below is the FALLBACK for a deployment whose template table has not
+   * been seeded yet, so a booking confirmation can never go out blank. The
+   * caller passes `null` for email when the customer has not opted in, or has no
+   * address — nothing is sent and nothing is recorded as sent.
    */
   async queueAppointmentMessage(kind: 'CONFIRMED' | 'RESCHEDULED' | 'CANCELLED', input: AppointmentMessageInput): Promise<void> {
-    const templateKey =
+    if (!input.email) return;
+
+    const reason: NotificationReason =
+      kind === 'CONFIRMED' ? 'APPOINTMENT_CONFIRMATION' : kind === 'RESCHEDULED' ? 'APPOINTMENT_CHANGED' : 'APPOINTMENT_CANCELLED';
+    const legacyKey =
       kind === 'CONFIRMED' ? 'appointment_confirmation' : kind === 'RESCHEDULED' ? 'appointment_rescheduled' : 'appointment_cancelled';
     const when = formatAppointmentWhen(input.scheduledStartAt, input.timezone);
+
+    // The fallback renderer's data (legacy shape) …
     const templateData: Record<string, unknown> = {
       scheduledStartAt: input.scheduledStartAt,
       siteName: input.siteName,
@@ -373,85 +408,46 @@ export class NotificationsService {
       reference: input.reference,
       manageUrl: input.manageUrl,
       durationMinutes: input.durationMinutes,
+      customerFirstName: input.customerFirstName ?? null,
       when,
     };
-    const subject =
-      kind === 'CONFIRMED'
-        ? `Appointment confirmed — ${input.reference}`
-        : kind === 'RESCHEDULED'
-          ? `Appointment moved — ${input.reference}`
-          : `Appointment cancelled — ${input.reference}`;
-    const lines = [
-      kind === 'CONFIRMED'
-        ? `Your appointment at ${input.siteName} is confirmed.`
-        : kind === 'RESCHEDULED'
-          ? `Your appointment at ${input.siteName} has been moved.`
-          : `Your appointment at ${input.siteName} has been cancelled.`,
-      '',
-      `Reference: ${input.reference}`,
-      `When: ${when}`,
-      ...(input.vehicle ? [`Vehicle: ${input.vehicle}`] : []),
-      ...(kind !== 'CANCELLED' && input.durationMinutes > 0 ? [`Planned time: about ${input.durationMinutes} minutes`] : []),
-      ...(input.services.length ? [`Service: ${input.services.join(', ')}`] : []),
-      ...(kind !== 'CANCELLED' && input.instructions ? ['', input.instructions] : []),
-      ...(input.manageUrl ? ['', `View, move or cancel: ${input.manageUrl}`] : []),
-      ...(!input.manageUrl && kind !== 'CANCELLED' ? ['', input.changeGuidance ?? 'To change or cancel, use the link in your original confirmation message or call the service centre.'] : []),
-      '',
-      `${input.siteName}`,
-    ];
-    const body = lines.join('\n');
 
-    if (input.phone) {
-      await this.queue({ entityType: 'Appointment', entityId: input.appointmentId, channel: 'SMS', templateKey, recipient: input.phone, templateData, customerId: input.customerId, vehicleId: input.vehicleId, testContext: input.testContext });
-    }
-    if (input.email) {
-      await this.queue({
-        entityType: 'Appointment',
-        entityId: input.appointmentId,
-        channel: 'EMAIL',
-        templateKey,
-        recipient: input.email,
-        templateData,
-        subject,
-        body,
-        customerId: input.customerId,
-        vehicleId: input.vehicleId,
-        testContext: input.testContext,
-      });
-    }
-  }
+    // … and the template store's placeholder data.
+    const placeholders: TemplateData = {
+      customerFirstName: input.customerFirstName ?? null,
+      siteName: input.siteName,
+      businessName: input.siteName,
+      vehicleDescription: input.vehicle ?? null,
+      appointmentReference: input.reference || null,
+      appointmentWhen: when,
+      appointmentServices: input.services.length ? input.services.join(', ') : null,
+      appointmentDuration: kind !== 'CANCELLED' && input.durationMinutes > 0 ? input.durationMinutes : null,
+      appointmentInstructions:
+        kind === 'CANCELLED'
+          ? null
+          : (input.instructions ??
+            (input.manageUrl ? null : (input.changeGuidance ?? null))),
+      manageUrl: kind === 'CANCELLED' ? null : (input.manageUrl ?? null),
+    };
 
-  async queueAppointmentConfirmation(
-    appointmentId: string,
-    customerPhone: string,
-    customerEmail: string | null,
-    appointmentDetails: {
-      scheduledStartAt: Date;
-      services: string[];
-      siteName: string;
-    },
-  ) {
-    // Queue SMS confirmation
+    const rendered = this.templates ? await this.templates.render(reason, placeholders) : null;
+    const fallback = renderEmailContent(legacyKey, templateData);
+
     await this.queue({
       entityType: 'Appointment',
-      entityId: appointmentId,
-      channel: 'SMS',
-      templateKey: 'appointment_confirmation',
-      recipient: customerPhone,
-      templateData: appointmentDetails,
+      entityId: input.appointmentId,
+      channel: 'EMAIL',
+      templateKey: rendered?.templateKey ?? legacyKey,
+      templateVersion: rendered?.templateVersion,
+      reason,
+      recipient: input.email,
+      templateData,
+      subject: rendered?.subject || fallback.subject,
+      body: rendered?.body ?? fallback.body,
+      customerId: input.customerId,
+      vehicleId: input.vehicleId,
+      testContext: input.testContext,
     });
-
-    // Queue email confirmation if available
-    if (customerEmail) {
-      await this.queue({
-        entityType: 'Appointment',
-        entityId: appointmentId,
-        channel: 'EMAIL',
-        templateKey: 'appointment_confirmation',
-        recipient: customerEmail,
-        templateData: appointmentDetails,
-      });
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -500,30 +496,15 @@ export class NotificationsService {
 
     const ids: string[] = [];
 
-    // SMS reminder
-    if (appointment.customer.notificationOptInSms) {
-      const smsId = await this.queue({
-        entityType: 'Appointment',
-        entityId: appointmentId,
-        channel: 'SMS',
-        templateKey,
-        recipient: appointment.customer.phone,
-        templateData,
-        scheduledAt,
-      });
-      ids.push(smsId);
-    }
-
-    // Email reminder
-    if (
-      appointment.customer.email &&
-      appointment.customer.notificationOptInEmail
-    ) {
+    // CR-2026-112 — email reminder. A customer with no address on file simply
+    // gets no reminder; nothing is recorded as sent.
+    if (appointment.customer.email && appointment.customer.notificationOptInEmail) {
       const emailId = await this.queue({
         entityType: 'Appointment',
         entityId: appointmentId,
         channel: 'EMAIL',
         templateKey,
+        reason: 'APPOINTMENT_REMINDER',
         recipient: appointment.customer.email,
         templateData,
         scheduledAt,
@@ -578,24 +559,13 @@ export class NotificationsService {
 
     const ids: string[] = [];
 
-    if (visit.customer.notificationOptInSms) {
-      const smsId = await this.queue({
-        entityType: 'ServiceVisit',
-        entityId: serviceVisitId,
-        channel: 'SMS',
-        templateKey: 'service_delay_alert',
-        recipient: visit.customer.phone,
-        templateData,
-      });
-      ids.push(smsId);
-    }
-
     if (visit.customer.email && visit.customer.notificationOptInEmail) {
       const emailId = await this.queue({
         entityType: 'ServiceVisit',
         entityId: serviceVisitId,
         channel: 'EMAIL',
         templateKey: 'service_delay_alert',
+        reason: 'QUEUE_UPDATE',
         recipient: visit.customer.email,
         templateData,
       });
@@ -606,7 +576,7 @@ export class NotificationsService {
   }
 
   /**
-   * Send a "your vehicle is ready for pickup" notification.
+   * Send a "your vehicle is ready for collection" notification.
    */
   async sendReadyForPickup(serviceVisitId: string): Promise<string[]> {
     const visit = await this.prisma.serviceVisit.findUnique({
@@ -632,24 +602,13 @@ export class NotificationsService {
 
     const ids: string[] = [];
 
-    if (visit.customer.notificationOptInSms) {
-      const smsId = await this.queue({
-        entityType: 'ServiceVisit',
-        entityId: serviceVisitId,
-        channel: 'SMS',
-        templateKey: 'ready_for_pickup',
-        recipient: visit.customer.phone,
-        templateData,
-      });
-      ids.push(smsId);
-    }
-
     if (visit.customer.email && visit.customer.notificationOptInEmail) {
       const emailId = await this.queue({
         entityType: 'ServiceVisit',
         entityId: serviceVisitId,
         channel: 'EMAIL',
         templateKey: 'ready_for_pickup',
+        reason: 'PICKUP_READY',
         recipient: visit.customer.email,
         templateData,
       });
@@ -771,43 +730,53 @@ export class NotificationsService {
     const results: Array<{ channel: string; status: string; recipient: string; displayState?: string; simulated?: boolean; testRouted?: boolean; failureReason?: string | null; intendedRecipient?: string | null }> = [];
 
     for (const channel of channels) {
-      if (channel === 'SMS') {
-        const logId = await this.queue({
-          entityType: 'ServiceVisit',
-          entityId: serviceVisitId,
-          channel: 'SMS',
-          templateKey: 'pickup_ready',
-          recipient: visit.customer.phone,
-          templateData: {
-            customerName: `${visit.customer.firstName} ${visit.customer.lastName}`,
-            vehiclePlate: visit.vehicle.plateNumber,
-            siteName: visit.site.name,
-          },
-        });
-        // Update with initiatedByUserId; CR-2026-106 — report the REAL outcome from
-        // the log (status was hard-coded 'SENT' before, docs/121 §C3).
-        const smsLog = await this.prisma.notificationLog.update({
-          where: { id: logId },
-          data: { initiatedByUserId: userId, templateVersion: 1 },
-        });
-        results.push({ channel: 'SMS', status: smsLog.status, recipient: visit.customer.phone, ...this.outcomeDetail(smsLog) });
-
-      } else if (channel === 'EMAIL' && visit.customer.email) {
+      if (channel === 'EMAIL') {
+        // CR-2026-112 — no email address is an operational fact, not a silent
+        // no-op: the panel must say so instead of showing nothing happened.
+        if (!visit.customer.email) {
+          results.push({
+            channel: 'EMAIL',
+            status: 'FAILED',
+            recipient: '',
+            displayState: 'FAILED',
+            failureReason: NO_EMAIL_ON_FILE,
+          });
+          continue;
+        }
+        const rendered = this.templates
+          ? await this.templates.render('PICKUP_READY', {
+              customerFirstName: visit.customer.firstName,
+              vehicleDescription: buildVehicleDescription(visit.vehicle),
+              registrationNumber: visit.vehicle.plateNumber,
+              siteName: visit.site.name,
+              businessName: visit.site.name,
+              pickupDetails: null,
+            })
+          : null;
         const logId = await this.queue({
           entityType: 'ServiceVisit',
           entityId: serviceVisitId,
           channel: 'EMAIL',
-          templateKey: 'pickup_ready',
+          templateKey: rendered?.templateKey ?? 'pickup_ready',
+          reason: 'PICKUP_READY',
           recipient: visit.customer.email,
+          ...(rendered ? { subject: rendered.subject, body: rendered.body } : {}),
           templateData: {
             customerName: `${visit.customer.firstName} ${visit.customer.lastName}`,
+            customerFirstName: visit.customer.firstName,
             vehiclePlate: visit.vehicle.plateNumber,
+            vehicleMake: visit.vehicle.make,
+            vehicleModel: visit.vehicle.model,
             siteName: visit.site.name,
           },
+          customerId: visit.customerId,
+          vehicleId: visit.vehicleId,
         });
+        // Update with initiatedByUserId; CR-2026-106 — report the REAL outcome from
+        // the log (status was hard-coded 'SENT' before, docs/121 §C3).
         const emailLog = await this.prisma.notificationLog.update({
           where: { id: logId },
-          data: { initiatedByUserId: userId, templateVersion: 1 },
+          data: { initiatedByUserId: userId, templateVersion: rendered?.templateVersion ?? 1 },
         });
         results.push({ channel: 'EMAIL', status: emailLog.status, recipient: visit.customer.email, ...this.outcomeDetail(emailLog) });
 
@@ -827,6 +796,17 @@ export class NotificationsService {
           },
         });
         results.push({ channel: 'MANUAL_CALL', status: 'MANUAL', recipient: visit.customer.phone });
+
+      } else {
+        // CR-2026-112 — an out-of-date client asking for a channel this release
+        // cannot deliver is told so. Nothing is recorded: nothing was attempted.
+        results.push({
+          channel,
+          status: 'FAILED',
+          recipient: '',
+          displayState: 'FAILED',
+          failureReason: UNSUPPORTED_CHANNEL_REASON,
+        });
       }
     }
 
@@ -969,7 +949,7 @@ export class NotificationsService {
           select: {
             id: true,
             customer: {
-              select: { firstName: true, phone: true, email: true, notificationOptInSms: true, notificationOptInEmail: true },
+              select: { firstName: true, phone: true, email: true, notificationOptInEmail: true },
             },
             vehicle: { select: { plateNumber: true, make: true, model: true, modelYear: true } },
           },
@@ -998,32 +978,21 @@ export class NotificationsService {
       if (already > 0) { skipped++; continue; }
 
       const { customer, vehicle } = visit;
-      if (!customer.notificationOptInSms && !customer.notificationOptInEmail) { skipped++; continue; }
+      // CR-2026-112 — email is the channel, so email consent and an address are
+      // what decide whether this follow-up can go out at all.
+      if (!customer.notificationOptInEmail || !customer.email) { skipped++; continue; }
 
       const vehicleDesc = [vehicle.modelYear, vehicle.make, vehicle.model].filter(Boolean).join(' ') || vehicle.plateNumber;
       const message = `Hi ${customer.firstName}! Your ${vehicleDesc} was completed this morning at Bert's. Thank you for choosing us — we hope everything's running smoothly, and we'll see you next service!`;
 
-      if (customer.notificationOptInSms && customer.phone) {
-        await this.queue({
-          entityType: 'ServiceVisit',
-          entityId: visit.id,
-          channel: 'SMS',
-          templateKey: 'midday_followup',
-          recipient: customer.phone,
-          templateData: { message, customerFirstName: customer.firstName, vehicleDescription: vehicleDesc },
-        });
-      }
-
-      if (customer.notificationOptInEmail && customer.email) {
-        await this.queue({
-          entityType: 'ServiceVisit',
-          entityId: visit.id,
-          channel: 'EMAIL',
-          templateKey: 'midday_followup',
-          recipient: customer.email,
-          templateData: { message, customerFirstName: customer.firstName, vehicleDescription: vehicleDesc },
-        });
-      }
+      await this.queue({
+        entityType: 'ServiceVisit',
+        entityId: visit.id,
+        channel: 'EMAIL',
+        templateKey: 'midday_followup',
+        recipient: customer.email,
+        templateData: { message, customerFirstName: customer.firstName, vehicleDescription: vehicleDesc },
+      });
 
       sent++;
     }
@@ -1048,7 +1017,7 @@ export class NotificationsService {
    *   RESCHEDULED) — never CHECKED_IN / IN_PROGRESS / COMPLETED / MISSED / CANCELLED.
    * - Idempotent: one reminder per appointment, deduped on NotificationLog
    *   templateKey `appointment_reminder_24h`.
-   * - Respects customer opt-in (notificationOptInSms / notificationOptInEmail).
+   * - Respects customer email opt-in (CR-2026-112: email is the only channel).
    * - Sends immediately (no `scheduledAt`) — the sweep itself IS the schedule.
    *
    * Gated by business rules `appointment_reminder_enabled` (default true) and
@@ -1088,12 +1057,17 @@ export class NotificationsService {
     let skipped = 0;
 
     for (const appt of appointments) {
-      // Idempotency: already reminded for this appointment?
+      // Idempotency: already reminded for this appointment? CR-2026-112 — the
+      // template-store key counts too, so an appointment reminded before this CR
+      // is never reminded a second time by the renamed template.
       const already = await this.prisma.notificationLog.count({
         where: {
           entityType: 'Appointment',
           entityId: appt.id,
-          templateKey: 'appointment_reminder_24h',
+          OR: [
+            { templateKey: { in: ['appointment_reminder_24h', 'APPOINTMENT_REMINDER_EMAIL'] } },
+            { reason: 'APPOINTMENT_REMINDER' },
+          ],
         },
       });
       if (already > 0) {
@@ -1102,9 +1076,7 @@ export class NotificationsService {
       }
 
       const customer = appt.customer;
-      const smsOk = customer.notificationOptInSms && !!customer.phone;
-      const emailOk = !!customer.email && customer.notificationOptInEmail;
-      if (!smsOk && !emailOk) {
+      if (!customer.email || !customer.notificationOptInEmail) {
         skipped++;
         continue;
       }
@@ -1113,28 +1085,36 @@ export class NotificationsService {
         scheduledStartAt: appt.scheduledStartAt,
         services: appt.services.map((s) => s.serviceType.name),
         siteName: appt.site.name,
+        customerFirstName: customer.firstName,
       };
 
-      if (smsOk) {
-        await this.queue({
-          entityType: 'Appointment',
-          entityId: appt.id,
-          channel: 'SMS',
-          templateKey: 'appointment_reminder_24h',
-          recipient: customer.phone,
-          templateData,
-        });
-      }
-      if (emailOk) {
-        await this.queue({
-          entityType: 'Appointment',
-          entityId: appt.id,
-          channel: 'EMAIL',
-          templateKey: 'appointment_reminder_24h',
-          recipient: customer.email as string,
-          templateData,
-        });
-      }
+      // CR-2026-112 — manager-editable wording, with the code renderer as the
+      // fallback for a deployment whose template table is not seeded.
+      const rendered = this.templates
+        ? await this.templates.render('APPOINTMENT_REMINDER', {
+            customerFirstName: customer.firstName,
+            siteName: appt.site.name,
+            businessName: appt.site.name,
+            appointmentReference: appt.appointmentNumber ?? null,
+            appointmentWhen: formatAppointmentWhen(appt.scheduledStartAt, appt.site.timezone ?? undefined),
+            appointmentServices: appt.services.map((s) => s.serviceType.name).join(', ') || null,
+            appointmentInstructions: null,
+          })
+        : null;
+
+      await this.queue({
+        entityType: 'Appointment',
+        entityId: appt.id,
+        channel: 'EMAIL',
+        templateKey: rendered?.templateKey ?? 'appointment_reminder_24h',
+        templateVersion: rendered?.templateVersion,
+        reason: 'APPOINTMENT_REMINDER',
+        recipient: customer.email,
+        ...(rendered ? { subject: rendered.subject, body: rendered.body } : {}),
+        templateData,
+        customerId: appt.customerId,
+        vehicleId: appt.vehicleId,
+      });
       sent++;
     }
 

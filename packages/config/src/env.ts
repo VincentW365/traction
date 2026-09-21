@@ -17,16 +17,12 @@ export const envSchema = z.object({
   // origin for local development; deploy-check FAILS in production when it is
   // unset, localhost, or a private address.
   PUBLIC_APP_URL: z.string().url().optional(),
-  NOTIFICATION_PROVIDER: z
-    .enum(['stub', 'twilio', 'sendgrid'])
-    .default('stub'),
-  // CR-2026-033 — Twilio SMS credentials. Optional in the schema; the provider
-  // factory requires SID + token + (from-number OR messaging-service-sid) only
-  // when NOTIFICATION_PROVIDER=twilio. Never committed — set in env/.env.
-  TWILIO_ACCOUNT_SID: z.string().optional(),
-  TWILIO_AUTH_TOKEN: z.string().optional(),
-  TWILIO_FROM_NUMBER: z.string().optional(),
-  TWILIO_MESSAGING_SERVICE_SID: z.string().optional(),
+  // CR-2026-112 — customer notifications are EMAIL ONLY in this release. The
+  // SMS provider selector and the Twilio credentials were removed with the SMS
+  // implementation: nothing reads them, and an unconfigured SMS provider can no
+  // longer affect email because there is no SMS provider. A future SMS phase
+  // adds its own keys back alongside the email ones.
+  //
   // CR-2026-099 — email delivery. `smtp` sends real mail through any SMTP
   // mailbox (Microsoft 365, Google Workspace, a relay); `stub` records only.
   EMAIL_PROVIDER: z.enum(['stub', 'smtp']).default('stub'),
@@ -44,7 +40,6 @@ export const envSchema = z.object({
   // requires an EXPLICIT NOTIFICATION_MODE=LIVE in deployment config. With the
   // stub provider the mode is recorded but nothing real is sent either way.
   NOTIFICATION_MODE: z.enum(['TEST', 'LIVE']).default('TEST'),
-  NOTIFICATION_TEST_SMS_TO: z.string().optional(),
   NOTIFICATION_TEST_EMAIL_TO: z.string().optional(),
   // VIN decode: STUB (no outbound calls) by default; LIVE opt-in enables NHTSA vPIC.
   VIN_DECODE_PROVIDER: z.enum(['STUB', 'LIVE']).default('STUB'),

@@ -225,7 +225,7 @@ export default function DueForContactPage() {
                       ) : '—'}
                     </td>
                     <td className="whitespace-nowrap">
-                      {hasPhone && <span className="badge bg-blue-50 text-blue-700 text-[10px] mr-1" title={cust!.phone!}>SMS</span>}
+                      
                       {hasEmail && <span className="badge bg-indigo-50 text-indigo-700 text-[10px]" title={cust!.email!}>Email</span>}
                       {!hasPhone && !hasEmail && <span className="badge bg-red-50 text-red-600 text-[10px]">No contact info</span>}
                     </td>

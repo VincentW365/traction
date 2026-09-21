@@ -42,7 +42,7 @@ function makePrisma() {
   return prisma;
 }
 
-const liveCaps = { smsConfigured: true, emailConfigured: true, mode: 'LIVE' as const };
+const liveCaps = { emailConfigured: true, mode: 'LIVE' as const };
 
 describe('deliveryDisplayState', () => {
   it('never says Sent for a simulated or test-redirected row', () => {
@@ -88,7 +88,7 @@ describe('NotificationsService.queue → processNotification', () => {
     const row = [...prisma._logs.values()][0] as { status: string; subject?: string; body?: string };
     expect(row.status).toBe('SENT');
     expect(row.subject).toContain('2020 Honda Grace');
-    expect(row.body).toContain('ready for pickup');
+    expect(row.body).toContain('ready for collection');
   });
 
   it('keeps a pre-rendered body untouched', async () => {
@@ -139,7 +139,7 @@ describe('NotificationsService.queue → processNotification', () => {
 });
 
 describe('NotificationsService.sendPickupReady — honest outcome', () => {
-  it('reports the REAL log status per channel (a failed email is FAILED, with its reason)', async () => {
+  it('reports the REAL log status (a failed email is FAILED, with its reason)', async () => {
     const prisma = makePrisma();
     prisma.serviceVisit.findUnique.mockResolvedValue({
       id: 'sv-1',
@@ -151,28 +151,63 @@ describe('NotificationsService.sendPickupReady — honest outcome', () => {
       serviceOrders: [],
     });
     const provider = {
-      send: vi.fn(async (input: { channel: string }) =>
-        input.channel === 'EMAIL'
-          ? { success: false, failureReason: 'Empty email body' }
-          : { success: true, providerReference: 'sms-1' },
-      ),
+      send: vi.fn(async () => ({ success: false, failureReason: 'Empty email body' })),
     };
     const svc = new NotificationsService(prisma as never, provider as never, liveCaps);
-    const out = await svc.sendPickupReady('sv-1', ['SMS', 'EMAIL'], 'user-1');
-    const sms = out.sent.find((s) => s.channel === 'SMS')!;
+    const out = await svc.sendPickupReady('sv-1', ['EMAIL'], 'user-1');
     const email = out.sent.find((s) => s.channel === 'EMAIL')!;
-    expect(sms.status).toBe('SENT');
-    expect(sms.displayState).toBe('SENT');
     expect(email.status).toBe('FAILED');
     expect(email.displayState).toBe('FAILED');
     expect(email.failureReason).toMatch(/Empty email body/);
+  });
+
+  /** CR-2026-112 §11 — an out-of-date client asking for SMS is told, not obeyed. */
+  it('refuses a non-email channel with a reason and records nothing', async () => {
+    const prisma = makePrisma();
+    prisma.serviceVisit.findUnique.mockResolvedValue({
+      id: 'sv-1',
+      siteId: 'site-1',
+      customer: { id: 'c-1', firstName: 'Vincent', lastName: 'Wilson', phone: '8765551234', email: 'v@example.com' },
+      vehicle: { plateNumber: '1234AB', make: 'Honda', model: 'Grace' },
+      site: { name: "Bert's" },
+      queueTickets: [{ ticketNumber: 'B-1' }],
+      serviceOrders: [],
+    });
+    const provider = { send: vi.fn(async () => ({ success: true, providerReference: 'x' })) };
+    const svc = new NotificationsService(prisma as never, provider as never, liveCaps);
+    const out = await svc.sendPickupReady('sv-1', ['SMS'], 'user-1');
+    const sms = out.sent.find((s) => s.channel === 'SMS')!;
+    expect(sms.status).toBe('FAILED');
+    expect(sms.failureReason).toMatch(/email only/i);
+    expect(provider.send).not.toHaveBeenCalled();
+    expect(prisma.notificationLog.create).not.toHaveBeenCalled();
+  });
+
+  /** CR-2026-112 §8 — "no email on file" is an answer, not silence. */
+  it('says so when the customer has no email address, instead of doing nothing', async () => {
+    const prisma = makePrisma();
+    prisma.serviceVisit.findUnique.mockResolvedValue({
+      id: 'sv-1',
+      siteId: 'site-1',
+      customer: { id: 'c-1', firstName: 'Vincent', lastName: 'Wilson', phone: '8765551234', email: null },
+      vehicle: { plateNumber: '1234AB', make: 'Honda', model: 'Grace' },
+      site: { name: "Bert's" },
+      queueTickets: [{ ticketNumber: 'B-1' }],
+      serviceOrders: [],
+    });
+    const provider = { send: vi.fn() };
+    const svc = new NotificationsService(prisma as never, provider as never, liveCaps);
+    const out = await svc.sendPickupReady('sv-1', ['EMAIL'], 'user-1');
+    expect(out.sent[0].status).toBe('FAILED');
+    expect(out.sent[0].failureReason).toMatch(/No customer email address is recorded/);
+    expect(provider.send).not.toHaveBeenCalled();
   });
 });
 
 describe('NotificationsService.verifyEmail', () => {
   it('refuses to claim success when EMAIL_PROVIDER is stub', async () => {
     const prisma = makePrisma();
-    const svc = new NotificationsService(prisma as never, { send: vi.fn() } as never, { smsConfigured: false, emailConfigured: false, mode: 'TEST' });
+    const svc = new NotificationsService(prisma as never, { send: vi.fn() } as never, { emailConfigured: false, mode: 'TEST' });
     const r = await svc.verifyEmail('me@example.com', 'u-1');
     expect(r.verified).toBe(false);
     expect(r.configured).toBe(false);

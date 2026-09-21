@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api-client';
+import { NO_EMAIL_ON_FILE } from '../lib/notification-copy';
 
 interface ReadyVisit {
   serviceVisitId: string;
@@ -24,7 +25,7 @@ export function PickupNotificationPanel({ readyVisits }: PickupNotificationPanel
   return (
     <div className="rounded-xl border-2 border-green-400 bg-green-50 p-4 mb-6">
       <h3 className="text-sm font-bold text-green-800 uppercase tracking-wider mb-3">
-        Ready for Pickup ({readyVisits.length})
+        Ready for Collection ({readyVisits.length})
       </h3>
       <div className="space-y-3">
         {readyVisits.map((v) => (
@@ -49,7 +50,7 @@ const OUTCOME_LABEL: Record<string, string> = {
   DELIVERED: 'Delivered',
   FAILED: 'Failed',
   TEST_REDIRECTED: 'Test redirected',
-  SIMULATED: 'Not delivered (no provider)',
+  SIMULATED: 'Not delivered (email not set up)',
   QUEUED: 'Queued',
   MANUAL: 'Logged',
 };
@@ -92,13 +93,11 @@ function PickupCard({ visit }: { visit: ReadyVisit }) {
     },
   });
 
-  const smsOutcome = outcomes.SMS ? outcomeOf(outcomes.SMS) : null;
   const emailOutcome = outcomes.EMAIL ? outcomeOf(outcomes.EMAIL) : null;
   const good = (o: string | null) => o === 'SENT' || o === 'DELIVERED' || o === 'TEST_REDIRECTED';
-  const smsSent = good(smsOutcome);
   const emailSent = good(emailOutcome);
   const callLogged = !!outcomes.MANUAL_CALL && outcomeOf(outcomes.MANUAL_CALL) !== 'FAILED';
-  const notified = smsSent || emailSent || callLogged;
+  const notified = emailSent || callLogged;
   const failures = Object.values(outcomes).filter((o) => outcomeOf(o) === 'FAILED' || outcomeOf(o) === 'SIMULATED');
   const btnTone = (o: string | null, active: string) =>
     good(o) ? 'bg-green-100 text-green-700 cursor-default' : o === 'FAILED' || o === 'SIMULATED' ? 'bg-red-100 text-red-700 hover:bg-red-200' : active;
@@ -114,31 +113,31 @@ function PickupCard({ visit }: { visit: ReadyVisit }) {
           {visit.vehiclePlate} {visit.vehicleDescription && `- ${visit.vehicleDescription}`}
         </div>
         <div className="text-xs text-gray-400 mt-0.5">
-          {visit.customerPhone}
-          {visit.customerEmail && ` | ${visit.customerEmail}`}
+          {visit.customerEmail ?? 'No email on file'}
+          {visit.customerPhone && ` | ${visit.customerPhone}`}
         </div>
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
+        {/* CR-2026-112 — one send action. A customer with no address on file gets
+            a disabled button and the reason, never a button that quietly does
+            nothing. Calling them is still an option, and is still recorded. */}
         <button
-          onClick={() => notifyMutation.mutate(['SMS'])}
-          disabled={smsSent || notifyMutation.isPending}
-          className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${btnTone(smsOutcome, 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50')}`}
-          title={outcomes.SMS?.failureReason ?? visit.customerPhone}
+          onClick={() => notifyMutation.mutate(['EMAIL'])}
+          disabled={emailSent || notifyMutation.isPending || !visit.customerEmail}
+          className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${btnTone(emailOutcome, 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50')}`}
+          title={
+            visit.customerEmail
+              ? (outcomes.EMAIL?.failureReason ?? visit.customerEmail)
+              : NO_EMAIL_ON_FILE
+          }
         >
-          {smsOutcome ? `SMS ${OUTCOME_LABEL[smsOutcome] ?? smsOutcome}${smsOutcome === 'FAILED' ? ' — retry' : ''}` : 'SMS'}
+          {emailOutcome
+            ? `Email ${OUTCOME_LABEL[emailOutcome] ?? emailOutcome}${emailOutcome === 'FAILED' ? ' — retry' : ''}`
+            : visit.customerEmail
+              ? 'Email Customer'
+              : 'No email on file'}
         </button>
-
-        {visit.customerEmail && (
-          <button
-            onClick={() => notifyMutation.mutate(['EMAIL'])}
-            disabled={emailSent || notifyMutation.isPending}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${btnTone(emailOutcome, 'bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50')}`}
-            title={outcomes.EMAIL?.failureReason ?? visit.customerEmail ?? undefined}
-          >
-            {emailOutcome ? `Email ${OUTCOME_LABEL[emailOutcome] ?? emailOutcome}${emailOutcome === 'FAILED' ? ' — retry' : ''}` : 'Email'}
-          </button>
-        )}
 
         <button
           onClick={() => notifyMutation.mutate(['MANUAL_CALL'])}

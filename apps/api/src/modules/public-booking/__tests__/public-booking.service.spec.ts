@@ -58,7 +58,7 @@ function build(o: Opts = {}) {
           ...data,
           scheduledEndAt: data.scheduledEndAt,
           services: [{ serviceType: { id: 'st-1', code: 'OIL-01', name: 'Oil Change', baseDurationMinutes: 30, sedanDurationMinutes: null, suvDurationMinutes: null } }],
-          customer: { id: data.customerId, firstName: 'Jane', phone: '876-555-0100', email: 'jane@example.com', notificationOptInSms: true, notificationOptInEmail: false },
+          customer: { id: data.customerId, firstName: 'Jane', phone: '876-555-0100', email: 'jane@example.com', notificationOptInEmail: true },
           vehicle: { id: data.vehicleId, plateNumber: 'ABC1234', make: 'Toyota', model: 'Corolla', modelYear: 2019 },
         };
         created.push(row);
@@ -90,7 +90,9 @@ function build(o: Opts = {}) {
     $transaction: vi.fn(async (cb: any) => cb(tx)),
   };
   const eta = { loadRules: vi.fn(async () => ({ ...ETA_DEFAULTS, capacity: o.capacity ?? 2 })) };
-  const notifications = { queueAppointmentMessage: vi.fn(async () => undefined) };
+  const notifications = {
+    queueAppointmentMessage: vi.fn(async (_kind: string, _input: Record<string, unknown>) => undefined),
+  };
   const audit = { log: vi.fn(async () => ({})) };
   const statusHistory = { record: vi.fn(async () => ({})) };
   const service = new PublicBookingService(prisma, eta as any, notifications as any, audit as any, statusHistory as any);
@@ -98,7 +100,7 @@ function build(o: Opts = {}) {
 }
 
 const newBooking = (start: Date) => ({
-  customer: { firstName: 'Jane', lastName: 'Doe', phone: '876-555-0100', email: 'jane@example.com', smsOptIn: true, emailOptIn: false },
+  customer: { firstName: 'Jane', lastName: 'Doe', phone: '876-555-0100', email: 'jane@example.com', emailOptIn: true },
   vehicle: { plateNumber: 'ABC 1234', make: 'Toyota', model: 'Corolla', modelYear: 2019 },
   serviceCodes: ['OIL-01'],
   scheduledStartAt: start.toISOString(),
@@ -150,7 +152,10 @@ describe('confirm — the locked reservation', () => {
     const res = await h.service.confirm(newBooking(start), 'ip1');
 
     expect(h.tx.$executeRaw).toHaveBeenCalled(); // advisory lock taken
-    expect(h.tx.customer.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ customerNumber: 'CUST-000042', notificationOptInEmail: false }) }));
+    expect(h.tx.customer.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ customerNumber: 'CUST-000042', notificationOptInEmail: true }) }));
+    // CR-2026-112 — the dormant SMS consent column is not written by the public
+    // flow any more; it keeps its schema default.
+    expect((h.tx.customer.create.mock.calls as any[])[0][0].data).not.toHaveProperty('notificationOptInSms');
     expect(h.tx.vehicle.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ vehicleCode: 'SCABC1234', plateNumber: 'ABC 1234' }) }));
     const data = (h.tx.appointment.create.mock.calls as any[])[0][0].data;
     expect(data).toMatchObject({ status: 'CONFIRMED', confirmationStatus: 'CONFIRMED', sourceChannel: 'CUSTOMER_SELF_SERVICE', createdByUserId: null });
@@ -163,7 +168,13 @@ describe('confirm — the locked reservation', () => {
 
     expect(h.statusHistory.record).toHaveBeenCalledWith(expect.objectContaining({ entityType: 'Appointment', fromStatus: null, toStatus: 'CONFIRMED' }));
     expect(h.audit.log).toHaveBeenCalledWith(expect.objectContaining({ actorUserId: null, action: 'APPOINTMENT_CREATED_ONLINE' }));
-    expect(h.notifications.queueAppointmentMessage).toHaveBeenCalledWith('CONFIRMED', expect.objectContaining({ phone: '876-555-0100', email: null, reference: data.appointmentNumber }));
+    // CR-2026-112 — the confirmation is an email, addressed to the customer,
+    // carrying the reference and the manage link. No phone is passed at all.
+    expect(h.notifications.queueAppointmentMessage).toHaveBeenCalledWith(
+      'CONFIRMED',
+      expect.objectContaining({ email: 'jane@example.com', reference: data.appointmentNumber }),
+    );
+    expect(h.notifications.queueAppointmentMessage.mock.calls[0][1]).not.toHaveProperty('phone');
   });
 
   it('CATALOGUE duration source uses the booked service length', async () => {

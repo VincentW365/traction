@@ -30,7 +30,7 @@ describe('renderEmailContent', () => {
   it('pickup-ready names the vehicle and the site', () => {
     const { subject, body } = renderEmailContent('pickup_ready', { vehiclePlate: '1234AB', vehicleDescription: '2020 Honda Grace', siteName: "Bert's" });
     expect(subject).toContain('2020 Honda Grace');
-    expect(body).toContain("ready for pickup at Bert's");
+    expect(body).toContain("ready for collection at Bert's");
   });
 
   it('the reminder carries the date and services', () => {

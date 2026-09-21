@@ -325,9 +325,11 @@ The CSV version lives in `data/business_rules.csv`.
 ### NOT-001 — Booking confirmation must be sent immediately after appointment creation or reschedule.
 
 - **Category:** Notifications
-- **Example:** Customer receives SMS/email with date, time, service summary, and instructions.
-- **Exception:** Customer opted out or channel unavailable.
-- **System response:** Queue notification with fallback channel if configured.
+- **Example:** Customer receives an email with date, time, service summary, and instructions.
+- **Exception:** Customer opted out, or has no email address on file.
+- **System response:** Queue the email; where no address exists, the screen says
+  so and the booking is confirmed on screen instead (CR-2026-112). Online
+  self-service booking requires an email address for this reason.
 - **Phase introduced:** 1
 
 

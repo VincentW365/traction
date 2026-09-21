@@ -147,6 +147,12 @@ enum TransportStatus {
   CANCELLED
 }
 
+// CR-2026-112 — EMAIL is the only channel this release can send on. SMS and
+// WHATSAPP are retained as VALUES ONLY: historical rows must stay readable and a
+// future SMS phase must not need a destructive migration. Nothing in the running
+// system selects them — the provider refuses a non-EMAIL send outright rather
+// than recording it as delivered. MANUAL_CALL is not a message: it records that
+// a member of staff telephoned the customer.
 enum NotificationChannel {
   SMS
   EMAIL
@@ -170,6 +176,11 @@ enum NotificationDeliveryStatus {
 }
 
 // CR-2026-096 — why a customer notification was sent. Legacy rows (pre-CR) have null.
+// CR-2026-112 — the appointment and customer-action reasons join the same
+// template-driven pipeline, so every customer email (staff-initiated or
+// automatic) has admin-editable wording and one audit trail. PICKUP_READY is
+// retained as the code for "Vehicle Ready for Collection": the label changed,
+// the stored value deliberately did not.
 enum NotificationReason {
   SERVICE_DUE
   QUEUE_CHECKED_IN
@@ -177,6 +188,11 @@ enum NotificationReason {
   QUEUE_UPDATE
   PICKUP_READY
   CUSTOM
+  CUSTOMER_ACTION_REQUIRED
+  APPOINTMENT_CONFIRMATION
+  APPOINTMENT_CHANGED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_REMINDER
 }
 
 // CR-2026-096 — follow-up status of a due-for-service customer. This is the BUSINESS

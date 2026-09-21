@@ -198,13 +198,15 @@ export class AppointmentsService {
   }
 
   /** CR-2026-106 — tell the customer when STAFF change an online booking. */
-  private async notifyOnlineBookingChange(kind: 'RESCHEDULED' | 'CANCELLED', appt: { id: string; sourceChannel: string | null; appointmentNumber: string | null; scheduledStartAt: Date; scheduledEndAt: Date | null; customer: { phone: string; email: string | null; notificationOptInSms: boolean; notificationOptInEmail: boolean }; vehicle: { plateNumber: string; make: string | null; model: string | null }; site: { name: string; timezone: string | null }; services: Array<{ serviceType: { name: string } }> }, userId: string) {
+  private async notifyOnlineBookingChange(kind: 'RESCHEDULED' | 'CANCELLED', appt: { id: string; sourceChannel: string | null; appointmentNumber: string | null; scheduledStartAt: Date; scheduledEndAt: Date | null; customer: { firstName?: string; phone: string; email: string | null; notificationOptInEmail: boolean }; vehicle: { plateNumber: string; make: string | null; model: string | null }; site: { name: string; timezone: string | null }; services: Array<{ serviceType: { name: string } }> }, userId: string) {
     if (appt.sourceChannel !== 'CUSTOMER_SELF_SERVICE' || !this.notifications) return;
     try {
+      // CR-2026-112 — email only. No address (or no consent) means no message,
+      // and the audit below records that plainly instead of claiming a send.
       await this.notifications.queueAppointmentMessage(kind, {
         appointmentId: appt.id,
-        phone: appt.customer.notificationOptInSms ? appt.customer.phone : null,
         email: appt.customer.notificationOptInEmail ? appt.customer.email : null,
+        customerFirstName: appt.customer.firstName ?? null,
         scheduledStartAt: appt.scheduledStartAt,
         durationMinutes: appt.scheduledEndAt ? Math.round((appt.scheduledEndAt.getTime() - appt.scheduledStartAt.getTime()) / 60_000) : 0,
         services: appt.services.map((s) => s.serviceType.name),
@@ -221,7 +223,14 @@ export class AppointmentsService {
         action: kind === 'RESCHEDULED' ? AUDIT_ACTIONS.APPOINTMENT_RESCHEDULED_BY_STAFF : AUDIT_ACTIONS.APPOINTMENT_CANCELLED_BY_STAFF,
         entityType: 'Appointment',
         entityId: appt.id,
-        afterJson: { appointmentNumber: appt.appointmentNumber, customerNotified: true, scheduledStartAt: appt.scheduledStartAt },
+        afterJson: {
+          appointmentNumber: appt.appointmentNumber,
+          // CR-2026-112 — the truth, not an assumption: a customer with no email
+          // address (or no email consent) was NOT notified.
+          customerNotified: !!(appt.customer.notificationOptInEmail && appt.customer.email),
+          notifiedBy: 'EMAIL',
+          scheduledStartAt: appt.scheduledStartAt,
+        },
       });
     } catch (err) {
       this.logger.error(`Online-booking ${kind} notification failed for ${appt.id}: ${(err as Error).message}`);

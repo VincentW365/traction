@@ -11,6 +11,7 @@ import { PageHeader } from '../../../../components/ui/page-header';
 import { LoadingState } from '../../../../components/ui/loading-state';
 import { StatusBadge } from '../../../../components/status-badge';
 import { CustomerNotificationComposer } from '../../../../components/notification-composer';
+import { NO_EMAIL_SHORT } from '../../../../lib/notification-copy';
 import { CommunicationHistory } from '../../../../components/communication-history';
 import { VisitHistory } from '../../../../components/visit-history';
 import { SendBookingLink } from '../../../../components/send-booking-link';
@@ -44,7 +45,6 @@ interface CustomerDetail {
   phoneRaw: string | null;
   email: string | null;
   hasLoyalty: boolean;
-  notificationOptInSms: boolean;
   notificationOptInEmail: boolean;
   staffNotes: string | null;
   vehicleCount: number;
@@ -159,7 +159,6 @@ export default function CustomerDetailPage() {
   const [emailInput, setEmailInput] = useState('');
 
   const [editingConsent, setEditingConsent] = useState(false);
-  const [smsOptInInput, setSmsOptInInput] = useState(true);
   const [emailOptInInput, setEmailOptInInput] = useState(true);
 
   const [editingNotes, setEditingNotes] = useState(false);
@@ -257,7 +256,6 @@ export default function CustomerDetailPage() {
   const updateConsentMutation = useMutation({
     mutationFn: () =>
       api.patch(`/customers/${customerId}`, {
-        notificationOptInSms: smsOptInInput,
         notificationOptInEmail: emailOptInInput,
       }),
     onSuccess: () => {
@@ -324,7 +322,7 @@ export default function CustomerDetailPage() {
           <div className="flex items-center gap-2">
             {customer.hasLoyalty && <span className="badge bg-amber-50 text-amber-700">★ Loyalty</span>}
             <span className="badge bg-slate-100 text-slate-700 font-mono text-xs">{customer.customerNumber}</span>
-            <button onClick={() => setShowComposer(true)} className="btn-primary text-sm">Contact Customer</button>
+            <button onClick={() => setShowComposer(true)} className="btn-primary text-sm">Email Customer</button>
           </div>
         }
       />
@@ -514,7 +512,7 @@ export default function CustomerDetailPage() {
             <h2 className="text-sm font-semibold text-slate-900">Preferences &amp; Consent</h2>
             {!editingConsent && (
               <button
-                onClick={() => { setSmsOptInInput(customer.notificationOptInSms); setEmailOptInInput(customer.notificationOptInEmail); setEditingConsent(true); }}
+                onClick={() => { setEmailOptInInput(customer.notificationOptInEmail); setEditingConsent(true); }}
                 className="text-xs text-blue-600 hover:underline font-medium"
               >
                 Edit
@@ -523,14 +521,8 @@ export default function CustomerDetailPage() {
           </div>
           {editingConsent ? (
             <div className="card-body space-y-3">
+              {/* CR-2026-112 — one channel, one consent question. */}
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="input-label">SMS Notifications</label>
-                  <select value={smsOptInInput ? 'yes' : 'no'} onChange={(e) => setSmsOptInInput(e.target.value === 'yes')} className="input-field">
-                    <option value="yes">Opted in</option>
-                    <option value="no">Opted out</option>
-                  </select>
-                </div>
                 <div>
                   <label className="input-label">Email Notifications</label>
                   <select value={emailOptInInput ? 'yes' : 'no'} onChange={(e) => setEmailOptInInput(e.target.value === 'yes')} className="input-field">
@@ -551,8 +543,13 @@ export default function CustomerDetailPage() {
             </div>
           ) : (
             <div className="card-body grid grid-cols-2 gap-x-6 gap-y-3">
-              <div><div className="input-label">SMS Notifications</div><ConsentBadge on={customer.notificationOptInSms} /></div>
               <div><div className="input-label">Email Notifications</div><ConsentBadge on={customer.notificationOptInEmail} /></div>
+              <div>
+                <div className="input-label">Email Address</div>
+                {customer.email
+                  ? <span className="text-sm text-slate-700">{customer.email}</span>
+                  : <span className="text-sm text-red-600">{NO_EMAIL_SHORT}</span>}
+              </div>
             </div>
           )}
         </div>
@@ -787,7 +784,7 @@ export default function CustomerDetailPage() {
           CONFIRMED appointment for this customer today (check-in is per-appointment). */}
       <div className="flex flex-wrap items-center gap-3">
         <Link href={`/appointments/new?customerId=${customer.id}`} className="btn-primary">Schedule Appointment</Link>
-        {/* CR-2026-106 — hand the customer the secure public booking link (WhatsApp / SMS / copy) */}
+        {/* CR-2026-106 — hand the customer the secure public booking link to copy and pass on */}
         <SendBookingLink phone={customer.phoneRaw ?? customer.phones?.[0] ?? null} />
         {hasCheckinableToday && (
           <Link href="/check-in" className="btn-secondary">Check In Today&apos;s Appointment</Link>

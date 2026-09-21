@@ -20,7 +20,7 @@ interface ApptDetail {
   notes: string | null;
   customer: {
     id: string; firstName: string; lastName: string; phone: string; email: string | null;
-    notificationOptInSms: boolean; notificationOptInEmail: boolean;
+    notificationOptInEmail: boolean;
   };
   vehicle: {
     id: string; plateNumber: string; make: string | null; model: string | null;
@@ -77,7 +77,6 @@ export function AppointmentDetailModal({
   const [oilGradeOther, setOilGradeOther] = useState('');
   const [weightClass, setWeightClass] = useState('STANDARD');
   const [color, setColor] = useState('');
-  const [optSms, setOptSms] = useState(false);
   const [optEmail, setOptEmail] = useState(false);
   // reschedule
   const [rDate, setRDate] = useState('');
@@ -102,7 +101,6 @@ export function AppointmentDetailModal({
         oilGrade: (oilGrade === 'Other' ? (oilGradeOther.trim() || 'Other') : oilGrade) || undefined,
         vehicleWeightClass: weightClass || undefined,
         color: color || undefined,
-        notificationOptInSms: optSms,
         notificationOptInEmail: optEmail,
       }),
     onSuccess: (data) => { setResult(data); onChanged?.(); },
@@ -128,7 +126,6 @@ export function AppointmentDetailModal({
     setOilBrand(''); setOilBrandOther(''); setOilGrade(''); setOilGradeOther('');
     setWeightClass(appt.vehicle?.weightClass ?? 'STANDARD');
     setColor(appt.vehicle?.color ?? '');
-    setOptSms(appt.customer.notificationOptInSms);
     setOptEmail(appt.customer.notificationOptInEmail);
     checkInMutation.reset();
     setMode('checkin');
@@ -294,7 +291,6 @@ export function AppointmentDetailModal({
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={optSms} onChange={(e) => setOptSms(e.target.checked)} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />Customer consents to SMS updates</label>
                     <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={optEmail} onChange={(e) => setOptEmail(e.target.checked)} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />Customer consents to email updates</label>
                   </div>
                   {requiresMileage && !mileageIn.trim() && <p className="text-xs text-amber-600">A mileage reading is required for these services.</p>}

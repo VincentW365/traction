@@ -48,13 +48,15 @@ export class MaintenanceReminderService {
       return null;
     }
 
-    // 2. Check customer opt-in
+    // 2. Check customer opt-in. CR-2026-112 — a reminder that could only ever
+    // be delivered by email is not worth scheduling for a customer who has no
+    // email address or has opted out of email.
     const customer = await this.prisma.customer.findUnique({
       where: { id: customerId },
-      select: { notificationOptInSms: true, notificationOptInEmail: true, firstName: true },
+      select: { notificationOptInEmail: true, email: true, firstName: true },
     });
-    if (!customer || (!customer.notificationOptInSms && !customer.notificationOptInEmail)) {
-      this.logger.debug(`Skipping reminder — customer ${customerId} not opted in`);
+    if (!customer || !customer.notificationOptInEmail || !customer.email) {
+      this.logger.debug(`Skipping reminder — customer ${customerId} has no email consent or no address on file`);
       return null;
     }
 
@@ -167,7 +169,6 @@ export class MaintenanceReminderService {
             firstName: true,
             phone: true,
             email: true,
-            notificationOptInSms: true,
             notificationOptInEmail: true,
           },
         },
@@ -183,9 +184,10 @@ export class MaintenanceReminderService {
     for (const reminder of reminders) {
       const { customer, vehicle, recommendation } = reminder;
 
-      // Re-check opt-in
-      if (!customer.notificationOptInSms && !customer.notificationOptInEmail) {
-        this.logger.debug(`Skipping reminder ${reminder.id} — customer opted out`);
+      // Re-check opt-in. CR-2026-112 — email is the channel, so an opted-out
+      // customer AND a customer with no address on file are both 'cannot send'.
+      if (!customer.notificationOptInEmail || !customer.email) {
+        this.logger.debug(`Skipping reminder ${reminder.id} — no email consent or no address on file`);
         skipped++;
         continue;
       }
@@ -212,34 +214,20 @@ export class MaintenanceReminderService {
         message: messageBody,
       };
 
-      // Send via opted-in channels. CR-2026-106 — keep EVERY log id so the outcome
-      // below reflects all channels, not just the last one queued.
-      let lastLogId: string | null = null;
-      const logIds: string[] = [];
-
-      if (customer.notificationOptInSms && customer.phone) {
-        lastLogId = await this.notifications.queue({
-          entityType: 'MaintenanceReminder',
-          entityId: reminder.id,
-          channel: 'SMS',
-          templateKey: 'maintenance_oil_change_reminder',
-          recipient: customer.phone,
-          templateData,
-        });
-        logIds.push(lastLogId);
-      }
-
-      if (customer.notificationOptInEmail && customer.email) {
-        lastLogId = await this.notifications.queue({
-          entityType: 'MaintenanceReminder',
-          entityId: reminder.id,
-          channel: 'EMAIL',
-          templateKey: 'maintenance_oil_change_reminder',
-          recipient: customer.email,
-          templateData,
-        });
-        logIds.push(lastLogId);
-      }
+      // CR-2026-106 — keep the log id so the outcome below is the provider's, not
+      // an assumption. CR-2026-112 — one channel, so one log.
+      const lastLogId: string = await this.notifications.queue({
+        entityType: 'MaintenanceReminder',
+        entityId: reminder.id,
+        channel: 'EMAIL',
+        templateKey: 'maintenance_oil_change_reminder',
+        reason: 'SERVICE_DUE',
+        recipient: customer.email,
+        templateData,
+        customerId: customer.id,
+        vehicleId: reminder.vehicleId,
+      });
+      const logIds: string[] = [lastLogId];
 
       // Update reminder status — CR-2026-106: from the logs' REAL outcome, never
       // assumed (a failed email used to be recorded as a sent reminder, docs/121 §C3).
@@ -250,10 +238,9 @@ export class MaintenanceReminderService {
         ? await this.prisma.notificationLog.findMany({ where: { id: { in: logIds } }, select: { id: true, status: true, failureReason: true } })
         : [];
       const anySent = logs.some((l) => l.status === 'SENT');
-      const outcome = logIds.length === 0 ? 'NO_CHANNEL' : anySent ? 'SENT' : 'FAILED';
-      if (outcome === 'FAILED') {
+      if (!anySent) {
         this.logger.warn(
-          `Maintenance reminder ${reminder.id}: no channel was accepted by a provider (${logs.map((l) => l.failureReason ?? 'unknown').join('; ')}) — left SCHEDULED for retry`,
+          `Maintenance reminder ${reminder.id}: the email was not accepted by the provider (${logs.map((l) => l.failureReason ?? 'unknown').join('; ')}) — left SCHEDULED for retry`,
         );
       }
       await this.prisma.maintenanceReminder.update({
@@ -272,10 +259,8 @@ export class MaintenanceReminderService {
         afterJson: {
           vehicleId: reminder.vehicleId,
           customerId: customer.id,
-          channels: [
-            customer.notificationOptInSms ? 'SMS' : null,
-            customer.notificationOptInEmail ? 'EMAIL' : null,
-          ].filter(Boolean),
+          channel: 'EMAIL',
+          delivered: anySent,
         },
       });
 

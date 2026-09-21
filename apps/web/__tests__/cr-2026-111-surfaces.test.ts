@@ -177,8 +177,10 @@ describe('§14 — the review step can edit every section', () => {
     expect(src).toContain('label="We will book"');
   });
 
-  it('cannot confirm without a time', () => {
-    expect(src).toMatch(/disabled=\{busy \|\| !slot\}/);
+  // CR-2026-112 — and, for a new customer, not without an email address
+  // either: the confirmation email carries the reference and manage link.
+  it('cannot confirm without a time, or without an email for a new customer', () => {
+    expect(src).toMatch(/disabled=\{busy \|\| !slot \|\| \(isNew && !email\.includes\('@'\)\)\}/);
   });
 });
 

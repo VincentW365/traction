@@ -1,6 +1,12 @@
 /**
  * CR-2026-096 — safe placeholder rendering for customer notification templates.
  *
+ * CR-2026-112 — email is the only channel this release sends on, so the SMS
+ * segment/encoding maths and the mobile-number validator were removed with the
+ * SMS provider. The placeholder set grew to cover the appointment and
+ * customer-action emails, which are now template-driven rather than rendered in
+ * application code.
+ *
  * Templates are plain text with `{{placeholder}}` tokens from a fixed allow-list —
  * no expressions, no executable content. Rendering substitutes placeholders that
  * have real values, reports the ones that don't, and tidies the surrounding text
@@ -26,6 +32,18 @@ export const ALLOWED_PLACEHOLDERS = [
   'staffEditableUpdate',
   'businessName',
   'siteName',
+  // CR-2026-112 — appointment emails (confirmation / changed / cancelled / reminder)
+  'appointmentReference',
+  'appointmentWhen',
+  'appointmentServices',
+  'appointmentDuration',
+  'appointmentInstructions',
+  'manageUrl',
+  // CR-2026-112 — customer action required: what the customer must decide, and
+  // by when. Both are written by the advisor; neither is ever auto-filled from
+  // internal state (see docs/131 §6).
+  'actionRequired',
+  'actionNeededBy',
 ] as const;
 
 export type PlaceholderKey = (typeof ALLOWED_PLACEHOLDERS)[number];
@@ -60,19 +78,39 @@ export interface RenderResult {
  * without a value are REMOVED from the text (reported in `unresolved`) and the
  * surrounding whitespace/punctuation is tidied — the customer must never see
  * `{{vehicleYear}}` or a double space where the year would have been.
+ *
+ * CR-2026-112 — a LABELLED line whose only value is missing is dropped whole.
+ * The appointment emails are written as "Vehicle: {{vehicleDescription}}" and a
+ * customer must never read a bare "Vehicle:" with nothing after it. A
+ * placeholder inside a sentence still just disappears, exactly as before.
  */
 export function renderTemplate(template: string, data: TemplateData): RenderResult {
   const unresolved: string[] = [];
-  let text = template.replace(PLACEHOLDER_RE, (_whole, key: string) => {
-    const value = (data as Record<string, unknown>)[key];
-    if (value === null || value === undefined || String(value).trim() === '') {
-      if (!unresolved.includes(key)) unresolved.push(key);
-      return '';
-    }
-    return String(value).trim();
+
+  const lines = template.split('\n').map((line) => {
+    let hadPlaceholder = false;
+    let resolvedOne = false;
+    const rendered = line.replace(PLACEHOLDER_RE, (_whole, key: string) => {
+      hadPlaceholder = true;
+      const value = (data as Record<string, unknown>)[key];
+      if (value === null || value === undefined || String(value).trim() === '') {
+        if (!unresolved.includes(key)) unresolved.push(key);
+        return '';
+      }
+      resolvedOne = true;
+      return String(value).trim();
+    });
+    return hadPlaceholder && !resolvedOne && isLabelOnly(rendered) ? null : rendered;
   });
-  text = tidyWhitespace(text);
+
+  const text = tidyWhitespace(lines.filter((l): l is string => l !== null).join('\n'));
   return { text, unresolved };
+}
+
+/** What is left of a line once its only value vanished: nothing, or a bare label. */
+function isLabelOnly(line: string): boolean {
+  const rest = line.trim();
+  return rest === '' || /^[^{}]{0,40}:$/.test(rest);
 }
 
 /** Collapse artefacts of removed placeholders: doubled spaces, space-before-comma, empty (). */
@@ -110,39 +148,6 @@ export function buildVehicleDescription(vehicle: {
 }
 
 // ---------------------------------------------------------------------------
-// SMS length / segments
-// ---------------------------------------------------------------------------
-
-/** Characters outside GSM-7 force UCS-2 encoding (70/67-char segments). */
-const GSM7_CHARS = new Set(
-  (
-    '@\u00a3$\u00a5\u00e8\u00e9\u00f9\u00ec\u00f2\u00c7\n\u00d8\u00f8\r\u00c5\u00e5\u0394_\u03a6\u0393\u039b\u03a9\u03a0\u03a8\u03a3\u0398\u039e\u00c6\u00e6\u00df\u00c9 !"#\u00a4%&\'()*+,-./0123456789:;<=>?' +
-    '\u00a1ABCDEFGHIJKLMNOPQRSTUVWXYZ\u00c4\u00d6\u00d1\u00dc\u00a7\u00bfabcdefghijklmnopqrstuvwxyz\u00e4\u00f6\u00f1\u00fc\u00e0^{}\\[~]|\u20ac'
-  ).split(''),
-);
-
-function isGsm7(body: string): boolean {
-  for (const ch of body) if (!GSM7_CHARS.has(ch)) return false;
-  return true;
-}
-
-export interface SmsSegmentInfo {
-  chars: number;
-  segments: number;
-  encoding: 'GSM-7' | 'UCS-2';
-}
-
-/** Estimated billable SMS segments for a message body. */
-export function smsSegmentInfo(body: string): SmsSegmentInfo {
-  const chars = body.length;
-  const gsm = isGsm7(body);
-  const single = gsm ? 160 : 70;
-  const multi = gsm ? 153 : 67;
-  const segments = chars === 0 ? 0 : chars <= single ? 1 : Math.ceil(chars / multi);
-  return { chars, segments, encoding: gsm ? 'GSM-7' : 'UCS-2' };
-}
-
-// ---------------------------------------------------------------------------
 // Contact validation
 // ---------------------------------------------------------------------------
 
@@ -150,17 +155,4 @@ export function smsSegmentInfo(body: string): SmsSegmentInfo {
 export function isValidEmail(email: string): boolean {
   if (!email || email.length > 254) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
-}
-
-/**
- * A phone number we can normalize to E.164 for Jamaica (+1 876/658) or a stored
- * NANP/E.164 number. Mirrors toE164Jamaica's accepted shapes — anything else is
- * NOT silently "+1"-prefixed, it is rejected.
- */
-export function isValidMobileNumber(raw: string): boolean {
-  const digits = (raw ?? '').replace(/\D/g, '');
-  if (digits.length === 11 && digits.startsWith('1')) return true;
-  if (digits.length === 10) return true;
-  if (digits.length === 7) return true; // local Jamaican number → +1876
-  return false;
 }

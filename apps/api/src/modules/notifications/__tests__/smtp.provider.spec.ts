@@ -40,11 +40,17 @@ describe('SmtpNotificationProvider', () => {
 });
 
 describe('ChannelRouterProvider', () => {
-  it('routes verify() to the email provider for EMAIL and reports when a provider cannot verify', async () => {
-    const sms = { send: vi.fn() };
+  it('routes verify() to the email provider and cannot verify a channel this release lacks', async () => {
     const email = { send: vi.fn(), verify: vi.fn(async () => ({ ok: true, detail: 'ok' })) };
-    const router = new ChannelRouterProvider(sms, email);
+    const router = new ChannelRouterProvider(email);
     expect(await router.verify('EMAIL')).toEqual({ ok: true, detail: 'ok' });
-    expect((await router.verify('SMS')).ok).toBe(false);
+    const sms = await router.verify('SMS');
+    expect(sms.ok).toBe(false);
+    expect(sms.detail).toMatch(/email only/i);
+  });
+
+  it('reports plainly when the email provider cannot verify its own transport', async () => {
+    const router = new ChannelRouterProvider({ send: vi.fn() });
+    expect(await router.verify('EMAIL')).toEqual({ ok: false, detail: 'provider cannot verify its transport' });
   });
 });

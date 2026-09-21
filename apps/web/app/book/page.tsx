@@ -141,7 +141,6 @@ export default function BookPage() {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
-  const [smsOptIn, setSmsOptIn] = useState(true);
   const [emailOptIn, setEmailOptIn] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -312,7 +311,7 @@ export default function BookPage() {
       const body = {
         sessionToken: identified?.known ? identified.sessionToken : undefined,
         customer: isNew
-          ? { firstName: firstName.trim(), lastName: lastName.trim(), phone: phone.trim(), email: email.trim() || undefined, smsOptIn, emailOptIn }
+          ? { firstName: firstName.trim(), lastName: lastName.trim(), phone: phone.trim(), email: email.trim(), emailOptIn }
           : undefined,
         vehicleId: !needsVehicleForm ? vehicleId ?? undefined : undefined,
         vehicle: needsVehicleForm
@@ -564,10 +563,16 @@ export default function BookPage() {
                   <label className="block"><span className="input-label">First name</span><input value={firstName} onChange={(e) => setFirstName(e.target.value)} className="input-field min-h-12" autoComplete="given-name" required /></label>
                   <label className="block"><span className="input-label">Last name</span><input value={lastName} onChange={(e) => setLastName(e.target.value)} className="input-field min-h-12" autoComplete="family-name" required /></label>
                 </div>
-                <label className="block"><span className="input-label">Email (optional)</span><input value={email} onChange={(e) => setEmail(e.target.value)} className="input-field min-h-12" type="email" inputMode="email" autoComplete="email" /></label>
+                {/* CR-2026-112 — the confirmation email carries the booking
+                    reference and the link to change or cancel, so an address is
+                    required to book online. */}
+                <label className="block">
+                  <span className="input-label">Email</span>
+                  <input value={email} onChange={(e) => setEmail(e.target.value)} className="input-field min-h-12" type="email" inputMode="email" autoComplete="email" required />
+                  <span className="mt-1 block text-xs text-slate-500">We email your confirmation and your link to change or cancel.</span>
+                </label>
                 <div className="flex flex-wrap gap-x-4 text-sm text-slate-700">
-                  <label className="flex min-h-11 cursor-pointer items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={smsOptIn} onChange={(e) => setSmsOptIn(e.target.checked)} /> Text me updates</label>
-                  <label className="flex min-h-11 cursor-pointer items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={emailOptIn} onChange={(e) => setEmailOptIn(e.target.checked)} /> Email me updates</label>
+                  <label className="flex min-h-11 cursor-pointer items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={emailOptIn} onChange={(e) => setEmailOptIn(e.target.checked)} /> Also email me service reminders</label>
                 </div>
               </>
             )}
@@ -814,7 +819,7 @@ export default function BookPage() {
 
             <ActionBar>
               <button type="button" onClick={() => setStep('appointment')} className="btn-secondary min-h-12" disabled={busy}>Back</button>
-              <button type="button" onClick={() => void handleConfirm()} disabled={busy || !slot} className="btn-primary min-h-12 flex-1 disabled:opacity-50" data-testid="confirm">
+              <button type="button" onClick={() => void handleConfirm()} disabled={busy || !slot || (isNew && !email.includes('@'))} className="btn-primary min-h-12 flex-1 disabled:opacity-50" data-testid="confirm">
                 {busy ? 'Reserving…' : 'Confirm appointment'}
               </button>
             </ActionBar>

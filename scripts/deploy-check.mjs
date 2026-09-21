@@ -205,11 +205,13 @@ if (dbOk) {
   // CR-2026-096 — customer notification templates. The API self-heals a missing
   // template from factory wording at compose time, so this is warn-only context,
   // but a fresh deploy should have them seeded.
+  // CR-2026-112 — count EMAIL templates only: legacy SMS rows are retained for
+  // history and must not be able to satisfy this check.
   try {
     const [{ nt }] = await prisma.$queryRawUnsafe(
-      `SELECT count(*)::int AS nt FROM notification_templates`,
+      `SELECT count(*)::int AS nt FROM notification_templates WHERE channel = 'EMAIL'`,
     );
-    check('notification templates', nt >= 10, `${nt} present${nt >= 10 ? '' : ' — run pnpm db:seed (API will self-heal from factory wording)'}`);
+    check('notification templates', nt >= 11, `${nt} email template(s) present${nt >= 11 ? '' : ' — run pnpm db:seed (API will self-heal from factory wording)'}`);
   } catch {
     check('notification templates', false, 'table missing — run pnpm db:migrate');
   }

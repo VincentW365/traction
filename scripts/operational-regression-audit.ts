@@ -250,7 +250,11 @@ async function main() {
     const booking = await call('/public/booking/confirm', {
       method: 'POST',
       body: JSON.stringify({
-        customer: { firstName: 'Audit', lastName: 'Customer', phone, smsOptIn: false, emailOptIn: false },
+        // CR-2026-112 — an online booking carries an email address: the
+        // confirmation is how the customer receives their reference and the
+        // link to change or cancel. emailOptIn stays false so this audit never
+        // signs a fictional customer up for service reminders.
+        customer: { firstName: 'Audit', lastName: 'Customer', phone, email: `audit.${Date.now()}@example.invalid`, emailOptIn: false },
         vehicle: { plateNumber: plate, make: 'Honda', model: 'Fit', modelYear: 2018 },
         serviceCodes: ['ASSESS-01'], scheduledStartAt: avail.nextAvailable.startAt,
         serviceRequest: { reasonForVisit: 'Other / Describe My Issue', concern, category: 'OTHER', mileage: 112_300 },

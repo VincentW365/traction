@@ -204,7 +204,7 @@ export default function VehicleDetailPage() {
             {!isEditing && (
               <button onClick={startEdit} className="btn-secondary text-xs">Edit</button>
             )}
-            <button onClick={() => setShowComposer(true)} className="btn-primary text-xs">Contact Customer</button>
+            <button onClick={() => setShowComposer(true)} className="btn-primary text-xs">Email Customer</button>
           </div>
         }
       />
