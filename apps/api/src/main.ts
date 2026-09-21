@@ -4,6 +4,7 @@ import { json, urlencoded } from 'express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { validateEnv } from '@bsop/config';
+import { resolveCorsOrigins } from './common/helpers/cors-origins';
 
 async function bootstrap() {
   const env = validateEnv(process.env);
@@ -24,9 +25,10 @@ async function bootstrap() {
   // Allow one or more web origins. A single value preserves prior behavior; a
   // comma-separated list (e.g. localhost + LAN IPs for dev access from other
   // devices) is parsed into a trimmed array.
-  const corsOrigin = env.API_CORS_ORIGIN.includes(',')
-    ? env.API_CORS_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean)
-    : env.API_CORS_ORIGIN;
+  // CR-2026-110 §5 — the API sends credentials, so the allowed origins must be
+  // named exactly. A wildcard here is refused at boot rather than served: see
+  // common/helpers/cors-origins.ts for why that is a hard failure.
+  const corsOrigin = resolveCorsOrigins(env.API_CORS_ORIGIN, process.env.NODE_ENV === 'production');
 
   app.enableCors({
     origin: corsOrigin,

@@ -32,8 +32,25 @@ export class ServiceTypesController {
     return this.readiness.audit();
   }
 
+  /**
+   * CR-2026-110 §3 — STAFF catalogue. This returns operational configuration —
+   * required skill and bay type, parts pre-positioning, overflow and light-slot
+   * eligibility, batching family, stand/jack handling — which is how the
+   * workshop is run, not something a customer needs.
+   *
+   * It was anonymously reachable, which mattered little while the API was only
+   * on the company network and matters a great deal once it is on the internet.
+   * The customer-facing catalogue is a different, deliberately narrower endpoint
+   * (GET /public/booking/services), so nothing customer-facing depends on this.
+   *
+   * QUEUE_VIEW because every staff role holds it: advisors, technicians and
+   * managers all read the catalogue on their own screens.
+   */
   @Get()
-  @ApiOperation({ summary: 'List all active service types (public)' })
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @ApiBearerAuth()
+  @RequirePermission(PERMISSIONS.QUEUE_VIEW)
+  @ApiOperation({ summary: 'List all active service types (staff)' })
   async findAll() {
     return this.prisma.serviceType.findMany({
       where: { isActive: true },
@@ -67,7 +84,10 @@ export class ServiceTypesController {
   }
 
   @Get(':code')
-  @ApiOperation({ summary: 'Get a single service type by code (public)' })
+  @UseGuards(JwtAuthGuard, RbacGuard)
+  @ApiBearerAuth()
+  @RequirePermission(PERMISSIONS.QUEUE_VIEW)
+  @ApiOperation({ summary: 'Get a single service type by code (staff)' })
   @ApiParam({ name: 'code', description: 'Unique service type code' })
   async findByCode(@Param('code') code: string) {
     const serviceType = await this.prisma.serviceType.findUnique({

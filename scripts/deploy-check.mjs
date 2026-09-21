@@ -49,12 +49,34 @@ check(
   (process.env.JWT_SECRET ?? '').length >= 32 ? 'ok' : 'must be at least 32 characters',
 );
 
-const prodOnly = ['API_CORS_ORIGIN'];
-for (const name of prodOnly) {
-  const v = process.env[name];
-  check(name, !!v, v ? 'configured' : 'not set — required in production', {
-    warnOnly: process.env.NODE_ENV !== 'production',
-  });
+// CR-2026-110 §5 — the API answers with credentials, so the allowed browser
+// origins must be named exactly: present, absolute, https in production, and
+// never a wildcard. "Configured" was not enough — API_CORS_ORIGIN=* passes a
+// presence check, is rejected by every browser, and is the first step towards
+// reflecting arbitrary origins. The API now refuses to boot on it; this fails
+// the deployment before it gets that far.
+{
+  const raw = (process.env.API_CORS_ORIGIN ?? '').trim();
+  const origins = raw.split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean);
+  const wildcards = new Set(['*', 'null', 'true', 'all', 'any']);
+  let ok = origins.length > 0;
+  let detail = ok ? `${origins.length} origin(s): ${origins.join(', ')}` : 'not set — no browser origin may call this API';
+  if (ok) {
+    const bad = origins.find((o) => wildcards.has(o.toLowerCase()));
+    if (bad) {
+      ok = false;
+      detail = `contains "${bad}" — a wildcard origin cannot be used with credentials. List the exact web origin(s).`;
+    } else {
+      for (const o of origins) {
+        let u;
+        try { u = new URL(o); } catch { ok = false; detail = `"${o}" is not an absolute origin (include https://)`; break; }
+        if (process.env.NODE_ENV === 'production' && u.protocol !== 'https:') {
+          ok = false; detail = `"${o}" must be https:// in production`; break;
+        }
+      }
+    }
+  }
+  check('API_CORS_ORIGIN', ok, detail, { warnOnly: process.env.NODE_ENV !== 'production' && origins.length > 0 });
 }
 
 // CR-2026-106 — customer-facing links (status page, booking manage link, booking
