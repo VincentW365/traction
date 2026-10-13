@@ -79,3 +79,6 @@ scripts/tmp-*
 
 # Visual QA screenshots (CR-2026-109/111) — generated, never committed
 .visual-qa/
+
+# Build-time check output from scripts/build-manual-pdf.mjs --preview
+docs/manual/print-preview.png

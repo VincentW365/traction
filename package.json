@@ -37,7 +37,8 @@
     "booking:visual-qa": "tsx scripts/visual-qa-booking.ts",
     "audit:operational": "tsx scripts/operational-regression-audit.ts",
     "notifications:collection-wording": "tsx scripts/set-collection-wording.ts",
-    "customers:email-quality": "tsx scripts/customer-email-quality.ts"
+    "customers:email-quality": "tsx scripts/customer-email-quality.ts",
+    "manual:pdf": "node scripts/build-manual-pdf.mjs"
   },
   "devDependencies": {
     "playwright": "^1.59.0",
