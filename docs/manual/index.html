@@ -1,0 +1,1189 @@
+<title>Traction Staff Manual</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  /* Layout: sticky section rail on the left, task cards on the right; one column under 920px. */
+  :root {
+    --bg: #f4f6f9;
+    --surface: #ffffff;
+    --surface-2: #e9eef4;
+    --fg: #15202c;
+    --fg-muted: #586877;
+    --fg-faint: #7d8c9b;
+    --line: #d7dfe8;
+    --line-strong: #b9c5d2;
+    --accent: #1b5bc7;
+    --accent-ink: #11419a;
+    --accent-soft: #e6eefb;
+    --warn: #8a5000;
+    --warn-soft: #fdf0d9;
+    --good: #16654a;
+    --good-soft: #e0f2e9;
+    --stop: #a32020;
+    --stop-soft: #fbe6e6;
+    --display: 'Barlow Condensed', 'Arial Narrow', Haettenschweiler, sans-serif;
+    --body: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --data: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10161d;
+      --surface: #182028;
+      --surface-2: #212b35;
+      --fg: #e8eef4;
+      --fg-muted: #a3b2c0;
+      --fg-faint: #7e8d9b;
+      --line: #2c3845;
+      --line-strong: #3c4b5a;
+      --accent: #6fa3f5;
+      --accent-ink: #a8c8fb;
+      --accent-soft: #1a2b45;
+      --warn: #e8b464;
+      --warn-soft: #33270f;
+      --good: #6cc49c;
+      --good-soft: #102b20;
+      --stop: #f09292;
+      --stop-soft: #331617;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #10161d;
+    --surface: #182028;
+    --surface-2: #212b35;
+    --fg: #e8eef4;
+    --fg-muted: #a3b2c0;
+    --fg-faint: #7e8d9b;
+    --line: #2c3845;
+    --line-strong: #3c4b5a;
+    --accent: #6fa3f5;
+    --accent-ink: #a8c8fb;
+    --accent-soft: #1a2b45;
+    --warn: #e8b464;
+    --warn-soft: #33270f;
+    --good: #6cc49c;
+    --good-soft: #102b20;
+    --stop: #f09292;
+    --stop-soft: #331617;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 0 64px; }
+
+  /* ---- masthead ---- */
+  .masthead { border-bottom: 2px solid var(--fg); padding-block: 28px 18px; margin-bottom: 22px; }
+  .eyebrow {
+    font-family: var(--display); font-size: 14px; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
+  }
+  h1 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(38px, 8vw, 62px); line-height: .95; letter-spacing: -.01em;
+    margin: 4px 0 10px; text-wrap: balance;
+  }
+  .standfirst { font-size: 17px; color: var(--fg-muted); max-width: 62ch; margin: 0; }
+  .masthead-meta {
+    display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 16px;
+    font-size: 13px; color: var(--fg-faint);
+  }
+
+  /* ---- role cards ---- */
+  .roles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
+  @media (max-width: 760px) { .roles { grid-template-columns: 1fr; } }
+  .role {
+    background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    padding: 14px 16px; min-width: 0; text-decoration: none; color: inherit; display: block;
+  }
+  .role:hover { border-color: var(--line-strong); border-left-color: var(--accent-ink); }
+  .role h3 { font-family: var(--display); font-size: 21px; font-weight: 700; margin: 0 0 2px; letter-spacing: .01em; }
+  .role p { margin: 0; font-size: 13.5px; color: var(--fg-muted); }
+
+  /* ---- toolbar ---- */
+  .toolbar {
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+    background: var(--bg); border-bottom: 1px solid var(--line);
+    padding-block: 12px; margin-bottom: 26px;
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  }
+  .search {
+    flex: 1 1 240px; min-width: 0;
+    font: inherit; color: var(--fg); background: var(--surface);
+    border: 1px solid var(--line-strong); border-radius: 2px; padding: 9px 12px;
+  }
+  .search::placeholder { color: var(--fg-faint); }
+  .search:focus-visible, .tab:focus-visible, .role:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tab {
+    font-family: var(--display); font-size: 15px; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; cursor: pointer;
+    background: var(--surface); color: var(--fg-muted);
+    border: 1px solid var(--line-strong); border-radius: 2px; padding: 7px 13px 6px;
+  }
+  .tab[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .count { font-size: 13px; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+
+  /* ---- layout ---- */
+  .cols { display: grid; grid-template-columns: 196px minmax(0, 1fr); gap: 36px; align-items: start; }
+  @media (max-width: 920px) { .cols { grid-template-columns: 1fr; gap: 20px; } }
+  .rail { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 72px); }
+  @media (max-width: 920px) { .rail { position: static; } }
+  .rail h4 {
+    font-family: var(--display); font-size: 13px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--fg-faint); margin: 0 0 8px; font-weight: 600;
+  }
+  .rail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+  @media (max-width: 920px) { .rail ol { flex-direction: row; flex-wrap: wrap; gap: 6px; } }
+  .rail a {
+    display: block; text-decoration: none; color: var(--fg-muted);
+    font-size: 13.5px; padding: 4px 8px; border-left: 2px solid var(--line);
+  }
+  @media (max-width: 920px) {
+    .rail a { border: 1px solid var(--line); border-left-width: 2px; padding: 4px 10px; }
+  }
+  .rail a:hover { color: var(--fg); border-left-color: var(--accent); background: var(--surface); }
+
+  /* ---- sections ---- */
+  section { margin-bottom: 44px; scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 84px); }
+  .sec-head { border-bottom: 1px solid var(--fg); padding-bottom: 6px; margin-bottom: 16px; }
+  .sec-num {
+    font-family: var(--data); font-size: 12px; color: var(--accent); font-weight: 500;
+  }
+  h2 {
+    font-family: var(--display); font-weight: 700; font-size: clamp(27px, 5vw, 36px);
+    line-height: 1.05; margin: 2px 0 0; letter-spacing: .005em; text-wrap: balance;
+  }
+  .sec-intro { color: var(--fg-muted); margin: 10px 0 18px; max-width: 66ch; }
+
+  /* ---- task cards ---- */
+  .task {
+    background: var(--surface); border: 1px solid var(--line);
+    padding: 16px 18px; margin-bottom: 12px;
+  }
+  .task h3 {
+    font-family: var(--display); font-size: 22px; font-weight: 700; letter-spacing: .01em;
+    margin: 0 0 4px; line-height: 1.12; text-wrap: balance;
+  }
+  .where {
+    font-size: 12.5px; color: var(--fg-faint); margin: 0 0 12px;
+    font-family: var(--data); font-weight: 500;
+  }
+  .task ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; }
+  .task ol li { padding-left: 2px; }
+  .task ol ol { margin-top: 7px; }
+  .task > p { margin: 0 0 10px; }
+  .task p:last-child, .task ol:last-child, .task ul:last-child { margin-bottom: 0; }
+  .task ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+
+  /* ---- inline bits ---- */
+  .btn {
+    font-family: var(--display); font-size: 14px; font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase; background: var(--accent); color: #fff;
+    padding: 2px 7px 1px; border-radius: 2px; white-space: nowrap;
+    display: inline-block; line-height: 1.5;
+  }
+  :root[data-theme="dark"] .btn, :root:not([data-theme="light"]) .btn { color: #0d1218; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .btn { color: #fff; } }
+  .path { font-family: var(--data); font-size: 13px; color: var(--fg-muted); white-space: nowrap; }
+  .data { font-family: var(--data); font-size: 13.5px; font-weight: 500; }
+  .field { border-bottom: 1.5px dotted var(--line-strong); font-weight: 500; }
+
+  .note, .careful, .yes {
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    padding: 11px 14px; margin: 12px 0 0; font-size: 14px;
+  }
+  .careful { border-left-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+  .yes { border-left-color: var(--good); background: var(--good-soft); color: var(--good); }
+  .careful strong, .yes strong, .note strong { font-weight: 600; }
+  .note:first-child, .careful:first-child { margin-top: 0; }
+
+  /* ---- tables ---- */
+  .t-scroll { overflow-x: auto; margin: 0 0 14px; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 460px; }
+  th, td { text-align: left; padding: 9px 13px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-family: var(--display); font-size: 13px; font-weight: 600; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--fg-faint); background: var(--surface-2);
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: 0; }
+  td .data { font-size: 13px; }
+
+  /* ---- queue order explainer ---- */
+  .ladder { list-style: none; margin: 0; padding: 0; counter-reset: rung; }
+  .ladder li {
+    display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 14px;
+    padding: 12px 0; border-bottom: 1px solid var(--line);
+  }
+  .ladder li:last-child { border-bottom: 0; }
+  .ladder li::before {
+    counter-increment: rung; content: counter(rung);
+    font-family: var(--display); font-size: 26px; font-weight: 700;
+    color: var(--accent); line-height: 1; padding-top: 2px;
+  }
+  .ladder strong { display: block; font-weight: 600; }
+  .ladder span { color: var(--fg-muted); font-size: 14px; }
+
+  .empty { display: none; color: var(--fg-muted); font-style: italic; padding: 8px 0; }
+  .no-hits { padding: 24px 0; color: var(--fg-muted); }
+
+  footer {
+    border-top: 2px solid var(--fg); margin-top: 48px; padding-top: 18px;
+    font-size: 13.5px; color: var(--fg-muted);
+  }
+  footer p { margin: 0 0 6px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Bert's Auto Parts Service Centre</div>
+    <h1>Traction Staff Manual</h1>
+    <p class="standfirst">
+      Every job the service platform does, in the order you would actually do it. Find your task,
+      follow the numbered steps. Button names in <span class="btn">this style</span> are exactly
+      what you will see on screen.
+    </p>
+    <div class="masthead-meta">
+      <span>Front desk &middot; Technicians &middot; Managers</span>
+      <span>Reviewed 13 October 2026</span>
+    </div>
+  </header>
+
+  <div class="roles">
+    <a class="role" href="#frontdesk">
+      <h3>I'm at the front desk</h3>
+      <p>Arrivals, walk-ins, appointments, the queue, keeping customers informed.</p>
+    </a>
+    <a class="role" href="#technician">
+      <h3>I'm a technician</h3>
+      <p>Your jobs, starting and stopping work, inspections, sending work to QC.</p>
+    </a>
+    <a class="role" href="#manager">
+      <h3>I'm the manager</h3>
+      <p>The floor at a glance, reports, staff, bays, services and settings.</p>
+    </a>
+  </div>
+
+  <div class="toolbar">
+    <input id="q" class="search" type="search" placeholder="Search this manual — try &ldquo;walk-in&rdquo;, &ldquo;parts&rdquo;, &ldquo;no-show&rdquo;" autocomplete="off">
+    <div class="tabs" role="group" aria-label="Show tasks for one role">
+      <button class="tab" type="button" data-role="all" aria-pressed="true">Everything</button>
+      <button class="tab" type="button" data-role="desk" aria-pressed="false">Front desk</button>
+      <button class="tab" type="button" data-role="tech" aria-pressed="false">Technician</button>
+      <button class="tab" type="button" data-role="mgr" aria-pressed="false">Manager</button>
+    </div>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="cols">
+
+    <nav class="rail" aria-label="Contents">
+      <h4>Contents</h4>
+      <ol id="rail">
+        <li><a href="#start">Before you start</a></li>
+        <li><a href="#frontdesk">Front desk</a></li>
+        <li><a href="#queue">The queue</a></li>
+        <li><a href="#technician">Technicians</a></li>
+        <li><a href="#floor">Dispatch &amp; the floor</a></li>
+        <li><a href="#manager">Manager</a></li>
+        <li><a href="#customers">What customers see</a></li>
+        <li><a href="#trouble">When it looks wrong</a></li>
+      </ol>
+    </nav>
+
+    <main>
+
+      <!-- ============ 1 ============ -->
+      <section id="start" data-roles="desk tech mgr">
+        <div class="sec-head">
+          <div class="sec-num">01</div>
+          <h2>Before you start</h2>
+        </div>
+        <p class="sec-intro">
+          The platform runs in a web browser. Nothing to install. Front desk and managers work on a
+          computer; technicians are expected to be on a tablet or phone, and every screen is built
+          to work at that size.
+        </p>
+
+        <article class="task" data-roles="desk tech mgr">
+          <h3>Sign in</h3>
+          <p class="where">/login</p>
+          <ol>
+            <li>Open the address your manager gave you. You will see <strong>Welcome back</strong>.</li>
+            <li>Enter your work email and password.</li>
+            <li>Tick <span class="field">Remember me</span> on a device only you use. Never on the shared front-desk machine.</li>
+          </ol>
+          <div class="careful">
+            <strong>Forgotten password?</strong> There is no self-service reset. Ask your manager, who
+            can set a new one from <span class="path">Setup &rsaquo; Staff</span>.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk tech mgr">
+          <h3>What your role lets you see</h3>
+          <p>There are three roles. The menu down the left only shows what your role can use, so if
+          a screen in this manual is not in your menu, your role does not have it.</p>
+          <div class="t-scroll">
+            <table>
+              <thead>
+                <tr><th>Role</th><th>Sees</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Service Advisor</strong></td>
+                  <td>Check-In, Queue Board, Dispatch, Schedule, Inspections, Appointments, Customers, Complaints</td>
+                </tr>
+                <tr>
+                  <td><strong>Technician</strong></td>
+                  <td>My Jobs, Queue Board, Inspections</td>
+                </tr>
+                <tr>
+                  <td><strong>Manager</strong></td>
+                  <td>Everything, plus Control Center, Reports, Settings and the whole Setup section</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="note">
+            Every change you make is recorded against your name &mdash; who, what and when. That is
+            not surveillance, it is how a disputed job gets settled later.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk tech mgr">
+          <h3>Find your way around the menu</h3>
+          <p>The left menu is grouped by the kind of work, not by screen name.</p>
+          <div class="t-scroll">
+            <table>
+              <thead>
+                <tr><th>Group</th><th>What lives there</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><strong>Operations</strong></td><td>Check-In, Queue Board, Dispatch, Schedule, Inspections &mdash; today's work</td></tr>
+                <tr><td><strong>Bookings</strong></td><td>Appointments, Customers, Complaints &mdash; people and future work</td></tr>
+                <tr><td><strong>Technician</strong></td><td>My Jobs &mdash; a technician's own list</td></tr>
+                <tr><td><strong>Management</strong></td><td>Control Center, the six reports, Settings</td></tr>
+                <tr><td><strong>Setup</strong></td><td>Staff, bays, services, availability, templates, audit logs</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <!-- ============ 2 ============ -->
+      <section id="frontdesk" data-roles="desk mgr">
+        <div class="sec-head">
+          <div class="sec-num">02</div>
+          <h2>Front desk</h2>
+        </div>
+        <p class="sec-intro">
+          This is the busiest screen in the building. Everything here is built for speed: one search
+          box that takes a phone number, a licence plate or a name, and large buttons you can hit
+          without looking twice.
+        </p>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Check in a customer who has an appointment</h3>
+          <p class="where">Operations &rsaquo; Check-In</p>
+          <ol>
+            <li>Type the phone number, licence plate or name into the search box and press Enter.</li>
+            <li>Pick the customer from <strong>Search Results</strong>. Their booked appointment appears with it.</li>
+            <li>Check the vehicle is the one in front of you. If they have brought a different car, pick the right vehicle or add it.</li>
+            <li>Fill in <strong>Intake Details</strong> &mdash; mileage, and the oil brand and grade if they have a preference
+              (Castrol, Valvoline, Amsoil, Liqui Moly, or type your own).</li>
+            <li>Confirm the vehicle's <span class="field">Vehicle Weight</span>: Light, Standard or Heavy. This decides which
+              bays can take it, so getting it wrong can send the car to a position that cannot lift it.</li>
+            <li>Press the check-in button. A <strong>Ticket Number</strong> is issued and an
+              <strong>Estimated Start</strong> is shown.</li>
+            <li>Read the estimated start to the customer, and offer them the
+              <strong>Customer Status Link</strong> (see below).</li>
+          </ol>
+          <div class="yes">
+            <strong>On time matters.</strong> An appointment checked in within its protected window keeps its
+            place ahead of the walk-ins. Late, and it joins the queue by arrival time like everyone else.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Register a walk-in</h3>
+          <p class="where">Operations &rsaquo; Check-In</p>
+          <ol>
+            <li>Search by phone or plate first &mdash; most walk-ins have been here before, and a found
+              record saves you the whole form and keeps their history in one place.</li>
+            <li>If there is genuinely no record, press <span class="btn">Create New Customer</span> and take
+              name, mobile and the vehicle.</li>
+            <li>Under <strong>Walk-In Service Selection</strong>, search the service by name, family or code
+              and tick what they are asking for.</li>
+            <li>Fill in mileage, oil preference and <span class="field">Vehicle Color</span> &mdash; the colour is
+              what lets you find the right car in a full yard.</li>
+            <li>Set <span class="field">Vehicle Weight</span>, then check in. The ticket number is issued and the
+              customer takes their place in the queue by arrival time.</li>
+          </ol>
+          <div class="note">
+            <strong>Email address.</strong> Ask for it, but do not invent one. Never type
+            <span class="data">N/A</span>, a dash or a fake address to get past the field &mdash; the platform
+            treats a placeholder as a real address and the customer's messages go nowhere. Leaving it
+            blank is honest and harmless.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Book an appointment for someone on the phone</h3>
+          <p class="where">Bookings &rsaquo; Appointments &rsaquo; New Appointment</p>
+          <p>Six short steps, each one a single question:</p>
+          <ol>
+            <li><strong>Customer</strong> &mdash; search, or create a new record.</li>
+            <li><strong>Vehicle</strong> &mdash; pick theirs, or add it.</li>
+            <li><strong>Service request</strong> &mdash; what they need.</li>
+            <li><strong>Date</strong>.</li>
+            <li><strong>Available time</strong> &mdash; only times the workshop can genuinely take are offered.</li>
+            <li><strong>Review</strong> &mdash; read it back to the customer, then confirm.</li>
+          </ol>
+          <div class="note">
+            If the day is full you will get a warning, not a wall. You can still book &mdash; the warning
+            is there so you make that choice deliberately, and it is recorded.
+          </div>
+          <div class="careful">
+            <strong>A staff booking does not need an email address.</strong> Only the customer's own online
+            booking does. If they have no email, book them anyway and tell them you will call.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Give a customer their live status link</h3>
+          <p class="where">Check-In, or Queue Board &rsaquo; any ticket</p>
+          <ol>
+            <li>Open the ticket and find <strong>Customer Status Link</strong>.</li>
+            <li>Copy it and send it to the customer, or let them scan it.</li>
+          </ol>
+          <p>They then see their own vehicle move through four stages &mdash; <strong>Checked In</strong>,
+            <strong>In Queue</strong>, <strong>In Service</strong>, <strong>Ready</strong> &mdash; with no login and
+            without seeing anybody else's details. It is the single best way to stop
+            &ldquo;is it ready yet?&rdquo; calls.</p>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Email a customer</h3>
+          <p class="where">Queue Board &rsaquo; ticket &rsaquo; Customer Communication</p>
+          <ol>
+            <li>Press <span class="btn">Email Customer</span>.</li>
+            <li>Choose the message you need &mdash; ready for collection, something needed from the customer,
+              a delay, or vehicle due for service.</li>
+            <li>The wording is filled in from the template. Read it. Edit anything that does not fit this
+              customer before you send.</li>
+            <li>Send. The attempt is recorded on the customer's profile and on the visit, whether it
+              succeeded or failed.</li>
+          </ol>
+          <div class="careful">
+            <strong>Email is the only channel.</strong> There is no SMS. If a customer has no email address on
+            file the platform will tell you so and stop &mdash; add a real address or pick up the phone.
+            Do not fabricate one to force the message through.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Say whether parts are ready</h3>
+          <p class="where">Queue Board &rsaquo; ticket &rsaquo; Parts Readiness</p>
+          <p>Parts and labour live on your existing systems. What this platform needs from you is one
+            honest answer: are the parts for this job here or not?</p>
+          <ol>
+            <li>Open the ticket and find <strong>Parts Readiness</strong>.</li>
+            <li>Tick <strong>Acknowledge parts prepositioned</strong> once the parts are physically on hand.</li>
+          </ol>
+          <div class="careful">
+            Until that is ticked, the job is <strong>Blocked</strong> and will not be handed to a technician.
+            That is deliberate &mdash; it stops a car taking a bay it cannot leave. Never tick it to get a job
+            moving if the parts are not actually there.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Move someone up the queue</h3>
+          <p class="where">Queue Board &rsaquo; ticket &rsaquo; Set Queue Override</p>
+          <ol>
+            <li>Open the ticket and press <span class="btn">Set Queue Override</span>.</li>
+            <li>Give the position and the reason. The reason is required.</li>
+            <li>The ticket shows <strong>Override Active</strong> from then on, and stays pinned where you put it.</li>
+          </ol>
+          <div class="note">
+            Overrides are fully recorded against your name. Use them for real reasons &mdash; a stranded
+            customer, a vehicle blocking a bay &mdash; and expect to be able to explain them.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Handle a no-show or an abandoned vehicle</h3>
+          <p class="where">Queue Board &rsaquo; ticket</p>
+          <ol>
+            <li>Try the customer first, and log the call on the ticket.</li>
+            <li>If there is no answer and they are not coming, press
+              <span class="btn">Mark No-Show / Abandoned</span> and give the reason.</li>
+          </ol>
+          <p>The ticket leaves the live queue, the position is freed, and the record stays so the
+            pattern shows up in reporting later.</p>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Close a visit</h3>
+          <p class="where">Queue Board &rsaquo; ticket</p>
+          <ol>
+            <li>Check the work is finished and quality-checked, and enter <strong>Mileage Out</strong>.</li>
+            <li>Press <span class="btn">Close Visit</span>.</li>
+          </ol>
+          <div class="careful">
+            A visit left open sits in the queue and in the reports for ever, and quietly consumes a
+            slot in tomorrow's availability. Close them the same day.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Log a complaint</h3>
+          <p class="where">Bookings &rsaquo; Complaints &rsaquo; New</p>
+          <ol>
+            <li>Record the customer, the subject and what happened, in their words where you can.</li>
+            <li>Set the severity. <strong>Critical</strong> and <strong>Medium</strong> carry a response
+              deadline and will show as <strong>Overdue</strong> if it passes.</li>
+            <li>Acknowledge it so the customer knows it was received, then work it to
+              <strong>Resolved</strong>.</li>
+          </ol>
+        </article>
+      </section>
+
+      <!-- ============ 3 ============ -->
+      <section id="queue" data-roles="desk tech mgr">
+        <div class="sec-head">
+          <div class="sec-num">03</div>
+          <h2>The queue</h2>
+        </div>
+        <p class="sec-intro">
+          The <strong>Queue Board</strong> is the shared picture of the day. Everyone can see it, it
+          refreshes itself every five seconds, and nobody needs to ask anybody else what is going on.
+        </p>
+
+        <article class="task" data-roles="desk tech mgr">
+          <h3>How the order is decided</h3>
+          <p>The queue is <strong>arrival order first</strong>. It is not a scoring system, and nobody's
+            place is quietly recalculated. Four things, in this order, decide the board:</p>
+          <ol class="ladder">
+            <li>
+              <strong>Arrival order</strong>
+              <span>First checked in, first served. This is the default and it covers most of the day.</span>
+            </li>
+            <li>
+              <strong>On-time appointments jump ahead</strong>
+              <span>An appointment checked in inside its protected window goes in front of the walk-ins.
+                That is the whole value of booking. Arrive late and the protection is gone.</span>
+            </li>
+            <li>
+              <strong>A manager override pins a position</strong>
+              <span>Set deliberately, with a reason, by a person. It stays until it is removed.</span>
+            </li>
+            <li>
+              <strong>Blocked work steps aside</strong>
+              <span>Missing parts, no qualified technician, no suitable bay &mdash; the ticket keeps its
+                number but stands out of the way until the block is cleared. It does not lose its place in line.</span>
+            </li>
+          </ol>
+          <div class="note">
+            <strong>The ticket number is not the running order.</strong> A ticket number never changes and is
+            what you say to a customer. The position on the board moves with the day. Read the position,
+            quote the number.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk tech mgr">
+          <h3>Read the board</h3>
+          <p class="where">Operations &rsaquo; Queue Board</p>
+          <p>Each row carries the <strong>Ticket</strong>, the customer and vehicle, the
+            <strong>Services</strong> asked for, the <strong>Source</strong> (appointment or walk-in),
+            the <strong>Status</strong>, and how long they have been <strong>Waiting</strong>.</p>
+          <ul>
+            <li>Labels such as fast-track, late or missed are <strong>descriptions, not instructions</strong>.
+              They tell you what happened; they do not move anyone.</li>
+            <li><strong>Blocked</strong> means the job cannot start yet. Open it and the reason is on the
+              ticket.</li>
+            <li>Click any row to open the full ticket, which is where almost every front-desk action lives.</li>
+          </ul>
+        </article>
+      </section>
+
+      <!-- ============ 4 ============ -->
+      <section id="technician" data-roles="tech mgr">
+        <div class="sec-head">
+          <div class="sec-num">04</div>
+          <h2>Technicians</h2>
+        </div>
+        <p class="sec-intro">
+          One screen, one list, big buttons. The platform asks you for as little admin as it can get
+          away with: start, stop, finished. Everything else is worked out from those three.
+        </p>
+
+        <article class="task" data-roles="tech mgr">
+          <h3>Find your work</h3>
+          <p class="where">Technician &rsaquo; My Jobs</p>
+          <p>The screen answers two questions, kept apart on purpose:</p>
+          <ul>
+            <li><strong>My Workday</strong> &mdash; how your day is going. Time on the clock, jobs
+              <strong>Completed Today</strong>.</li>
+            <li><strong>My Jobs</strong> &mdash; what to work on now and next.</li>
+          </ul>
+          <p>Your jobs are always in the same order, so your eye learns it:
+            <strong>Working</strong> &rarr; <strong>Up Next</strong> &rarr; <strong>Waiting</strong> &rarr;
+            <strong>Rework</strong> &rarr; <strong>Awaiting QC</strong> &rarr; Completed.
+            The registration number leads every card, because that is what you are looking for in the yard.</p>
+        </article>
+
+        <article class="task" data-roles="tech mgr">
+          <h3>Start a job</h3>
+          <p class="where">My Jobs &rsaquo; the card</p>
+          <ol>
+            <li>Find the card, check the registration matches the vehicle in front of you.</li>
+            <li>Press <span class="btn">Start Work</span>.</li>
+          </ol>
+          <p>Your clock starts at that moment. The card moves to <strong>Working</strong> and the
+            customer's status page now reads <strong>In Service</strong>.</p>
+          <div class="careful">
+            <strong>You can only have one job running at a time.</strong> If you try to start a second, the
+            platform will stop you and ask what happened to the first. That is what keeps job times
+            honest &mdash; two clocks running at once means neither figure is true.
+          </div>
+        </article>
+
+        <article class="task" data-roles="tech mgr">
+          <h3>Stop for a hold-up</h3>
+          <p class="where">My Jobs &rsaquo; the working card</p>
+          <ol>
+            <li>Press <span class="btn">Pause / Hold-up</span>.</li>
+            <li>Pick the reason. For a missing part, choose the parts reason and the button becomes
+              <span class="btn">Mark Waiting for Parts</span>; otherwise press <span class="btn">Confirm Pause</span>.</li>
+            <li>Add a note if there is anything the advisor needs to know.</li>
+          </ol>
+          <p>The clock stops the moment you confirm &mdash; <strong>from your timestamp, not from when
+            somebody gets round to acknowledging it</strong>. An advisor or manager then acknowledges the
+            stop. Their acknowledgement does not change your time.</p>
+          <div class="yes">
+            Pausing honestly is always the right call. The time is held against the hold-up, not against
+            you, and it is the only way the shop can see where its day actually goes.
+          </div>
+        </article>
+
+        <article class="task" data-roles="tech mgr">
+          <h3>Get back on a job</h3>
+          <p class="where">My Jobs &rsaquo; the waiting card</p>
+          <ol>
+            <li>Press <span class="btn">Resume Work</span>. If it was waiting on a part, the button reads
+              <span class="btn">Parts Arrived &mdash; Resume</span>.</li>
+            <li>If you have another job running, finish or pause that one first &mdash; the same
+              one-at-a-time rule applies on resume.</li>
+          </ol>
+          <p>To move back to a job you stepped away from, use <strong>Back to this job</strong> on its card
+            and say why you are switching.</p>
+        </article>
+
+        <article class="task" data-roles="tech mgr">
+          <h3>Finish a job</h3>
+          <p class="where">My Jobs &rsaquo; the working card</p>
+          <ol>
+            <li>Press <span class="btn">Finished &rarr; QC</span>.</li>
+          </ol>
+          <p>Your clock stops and the job moves to <strong>Awaiting QC</strong>. It is not closed and the
+            customer is not told it is ready &mdash; an advisor or manager does the quality check first.</p>
+        </article>
+
+        <article class="task" data-roles="tech mgr">
+          <h3>Pick up rework</h3>
+          <p class="where">My Jobs &rsaquo; Rework</p>
+          <p>If a quality check sends work back, it reappears in your <strong>Rework</strong> group with
+            what needs doing. Start it the same way as any other job. The original work and times are
+            kept &mdash; rework is recorded alongside them, not written over them.</p>
+        </article>
+
+        <article class="task" data-roles="tech mgr">
+          <h3>Record an inspection</h3>
+          <p class="where">Operations &rsaquo; Inspections</p>
+          <ol>
+            <li>Press <span class="btn">New Vehicle Inspection</span>, or open the vehicle's
+              <strong>Job Sheet</strong>.</li>
+            <li>Work down the checklist. Anything that does not apply can be marked
+              <strong>Skipped</strong> &mdash; say so rather than leaving it blank.</li>
+            <li>Add photographs where they tell the story better than words. Keep them to what matters.</li>
+            <li>Sign off. The record then shows as <strong>Signed off</strong> and cannot be quietly edited.</li>
+          </ol>
+          <div class="note">
+            A saved draft is yours to come back to. Only a signed-off inspection counts as a finding you
+            can show a customer.
+          </div>
+        </article>
+
+        <article class="task" data-roles="tech mgr">
+          <h3>Report something, without editing records</h3>
+          <p>You have read-only access to a vehicle's history, which is there so you can see what was
+            done last time. If something in the record is wrong, do not try to correct it &mdash; add a
+            note on the job saying what you found. An advisor or manager makes the correction, and the
+            trail shows where the information came from.</p>
+        </article>
+      </section>
+
+      <!-- ============ 5 ============ -->
+      <section id="floor" data-roles="desk mgr">
+        <div class="sec-head">
+          <div class="sec-num">05</div>
+          <h2>Dispatch &amp; the floor</h2>
+        </div>
+        <p class="sec-intro">
+          The <strong>Dispatch Board</strong> is live resource control &mdash; who is working, which bays
+          are free, what is stuck, what is waiting on a quality check. It is the screen to leave open
+          on the second monitor.
+        </p>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Read the dispatch board</h3>
+          <p class="where">Operations &rsaquo; Dispatch</p>
+          <div class="t-scroll">
+            <table>
+              <thead><tr><th>Panel</th><th>What it is telling you</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Needs Attention</strong></td><td>Anything that needs a person right now. Start here.</td></tr>
+                <tr><td><strong>Pause Approval Required</strong></td><td>A technician has stopped and is waiting for you to acknowledge it.</td></tr>
+                <tr><td><strong>Needs Dispatch</strong></td><td>Checked in, not blocked, waiting for a bay and a technician.</td></tr>
+                <tr><td><strong>Technician Load</strong></td><td>Who is on what, and who is free. Absent staff show here too.</td></tr>
+                <tr><td><strong>Bay &amp; Resource View</strong></td><td>Service bays, light-task slots, overflow and power wash, each free, occupied or reserved.</td></tr>
+                <tr><td><strong>Blocked</strong></td><td>Jobs that cannot start, with the reason &mdash; usually parts.</td></tr>
+                <tr><td><strong>Ready for QC</strong></td><td>Work a technician has finished, waiting on a quality check.</td></tr>
+                <tr><td><strong>Overdue</strong></td><td>Running past the time the customer was promised. Someone should be calling.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Send the next vehicle in</h3>
+          <p class="where">Dispatch &rsaquo; Call Next</p>
+          <ol>
+            <li>Press <span class="btn">Call Next</span>.</li>
+          </ol>
+          <p>The platform takes the next eligible ticket in queue order &mdash; skipping anything blocked
+            &mdash; and puts it in a bay that suits the vehicle and the work. You do not have to pick;
+            that is the point. Use it as the default way to pull work onto the floor.</p>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Assign a technician yourself</h3>
+          <p class="where">Dispatch &rsaquo; Needs Dispatch &rsaquo; Assign</p>
+          <ol>
+            <li>Press <span class="btn">Assign</span> on the card. The full ticket opens.</li>
+            <li>Choose the technician and the bay. Only qualified technicians and suitable bays are
+              offered &mdash; if your choice is missing, that is a skill or bay-type constraint, not a bug.</li>
+            <li>For a visit with several orders you can give them all to one technician in one action.</li>
+          </ol>
+          <p>To move a job already underway, use <strong>Reassign technician</strong> on the ticket. Work
+            already done stays credited to the technician who did it.</p>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Acknowledge a technician's pause</h3>
+          <p class="where">Dispatch &rsaquo; Pause Approval Required</p>
+          <ol>
+            <li>Read who stopped, why, and since when.</li>
+            <li>Press <span class="btn">Approve</span> to acknowledge it.</li>
+            <li>Press <span class="btn">Reject</span> only if the work should not have stopped. A reason is
+              required and the work resumes.</li>
+          </ol>
+          <div class="note">
+            <strong>Acknowledging never moves the clock.</strong> The stop has been counted from the
+            technician's own timestamp since the moment they confirmed it, so there is no rush and no
+            advantage in being slow. The original request is kept either way.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Do the quality check and finish the order</h3>
+          <p class="where">Queue Board &rsaquo; ticket</p>
+          <p>A job moves through fixed stages, and the button on the ticket always says what pressing it
+            actually does:</p>
+          <div class="t-scroll">
+            <table>
+              <thead><tr><th>Stage</th><th>What you can do</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Assigned</strong></td><td>Nothing here &mdash; the technician starts it.</td></tr>
+                <tr><td><strong>In progress</strong></td><td><span class="btn">Mark Work Complete</span>, or park it as waiting for parts or waiting on the customer.</td></tr>
+                <tr><td><strong>Waiting</strong></td><td><span class="btn">Resume Work</span> once the hold-up clears.</td></tr>
+                <tr><td><strong>Quality check</strong></td><td><span class="btn">Complete Quality Check</span> when the work passes. If it does not, open rework instead.</td></tr>
+                <tr><td><strong>Ready to invoice</strong></td><td><span class="btn">Close Order</span>.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="careful">
+            Only once the quality check is complete should the customer be told the vehicle is ready.
+            Sending that email earlier is how a car gets collected mid-job.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Change what a job covers</h3>
+          <p class="where">Queue Board &rsaquo; ticket &rsaquo; Edit services</p>
+          <p>The platform keeps three different things apart on purpose: what the customer
+            <strong>asked for</strong>, what was <strong>approved</strong>, and what was actually
+            <strong>done</strong>. When the customer approves extra work, add it to the order rather than
+            editing the original request &mdash; so the record still shows what they came in for.</p>
+        </article>
+      </section>
+
+      <!-- ============ 6 ============ -->
+      <section id="manager" data-roles="mgr">
+        <div class="sec-head">
+          <div class="sec-num">06</div>
+          <h2>Manager</h2>
+        </div>
+        <p class="sec-intro">
+          Visibility first. These screens are for finding the bottleneck and changing how the shop runs
+          without anyone touching code.
+        </p>
+
+        <article class="task" data-roles="mgr">
+          <h3>See the whole floor</h3>
+          <p class="where">Management &rsaquo; Control Center</p>
+          <p>Today's position in one view, with <strong>Quick Actions</strong> through to the screens you
+            reach for most &mdash; staff, availability, settings and reports.</p>
+        </article>
+
+        <article class="task" data-roles="mgr">
+          <h3>Pick the right report</h3>
+          <p class="where">Management &rsaquo; Reports</p>
+          <div class="t-scroll">
+            <table>
+              <thead><tr><th>Report</th><th>Answers</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Reports</strong></td><td>The overview &mdash; throughput and the shape of the day.</td></tr>
+                <tr><td><strong>Service Mix</strong></td><td>What work you are actually selling, by service family.</td></tr>
+                <tr><td><strong>Technician KPI</strong></td><td>Output per technician, on the measures you mapped.</td></tr>
+                <tr><td><strong>Shared Jobs</strong></td><td>Jobs more than one technician touched, so credit is split properly.</td></tr>
+                <tr><td><strong>Appointments Report</strong></td><td>Booked against arrived &mdash; on time, late, missed.</td></tr>
+                <tr><td><strong>Due for Contact</strong></td><td>Customers whose vehicles are coming due for service.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="note">
+            Benchmark and KPI vocabulary belongs here, in management reporting. The operational screens
+            deliberately speak plainly instead &mdash; the front desk should never have to decode a metric
+            name mid-shift.
+          </div>
+        </article>
+
+        <article class="task" data-roles="mgr">
+          <h3>Change how the shop runs</h3>
+          <p class="where">Management &rsaquo; Settings</p>
+          <p>Every rule the platform follows is a setting, in plain language, with the consequence spelled
+            out. Nothing here needs a redeployment, and every change is recorded with your name and the
+            old value.</p>
+          <div class="t-scroll">
+            <table>
+              <thead><tr><th>Group</th><th>Controls</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Booking &amp; Scheduling</strong></td><td>Online booking on or off, notice periods, how far ahead customers may book, closed dates, latest start time, and the Booking Simulator switch.</td></tr>
+                <tr><td><strong>Capacity &amp; Resources</strong></td><td>How many jobs can overlap, and whether capacity comes from a fixed number or from the bays themselves.</td></tr>
+                <tr><td><strong>Customer Experience</strong></td><td>What customers are told, and how estimated times are worked out.</td></tr>
+                <tr><td><strong>Queue &amp; Arrival Rules</strong></td><td>The appointment protection window and how same-day arrivals are handled.</td></tr>
+                <tr><td><strong>Notifications</strong></td><td>Reminders, consent, service-due reminders, daily follow-ups.</td></tr>
+                <tr><td><strong>Workshop Operations</strong></td><td>Opening hours, job timing, the customer display board, servicing defaults.</td></tr>
+                <tr><td><strong>Services &amp; Catalogue</strong></td><td>Service names, lengths, and which are offered online.</td></tr>
+                <tr><td><strong>System &amp; Testing</strong></td><td>Booking Simulator, bay confirmation, deployment checks, audit logs.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="careful">
+            Settings marked with a consequence change what customers experience immediately. Read the
+            sentence under the control before you move it.
+          </div>
+        </article>
+
+        <article class="task" data-roles="mgr">
+          <h3>Set up people, bays and services</h3>
+          <p class="where">Setup</p>
+          <div class="t-scroll">
+            <table>
+              <thead><tr><th>Screen</th><th>Use it to</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Staff</strong></td><td>Add people, set their role, set passwords, record skills.</td></tr>
+                <tr><td><strong>Availability</strong></td><td>Say who is working when. Absence here is why a technician stops being offered for assignment.</td></tr>
+                <tr><td><strong>Assignments</strong></td><td>Default pairings of people to work.</td></tr>
+                <tr><td><strong>Resources &amp; Bays</strong></td><td>What each position is and what it can take &mdash; weight, vehicle class, type of work.</td></tr>
+                <tr><td><strong>Services</strong></td><td>The catalogue: names, how long each takes, required skill and bay, and whether customers may book it online.</td></tr>
+                <tr><td><strong>Performance</strong> / <strong>KPI Mapping</strong></td><td>Define what counts as output before you read the KPI report.</td></tr>
+                <tr><td><strong>Notifications</strong></td><td>The customer email templates &mdash; subject, body, and the placeholders that get filled in.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="careful">
+            <strong>Placeholders in templates.</strong> Anything in double braces is replaced with the real
+            customer's details when the email goes out. Edit the wording around them freely; never retype
+            or translate a placeholder, or that part of the message will arrive blank.
+          </div>
+        </article>
+
+        <article class="task" data-roles="mgr">
+          <h3>Check what happened, and why</h3>
+          <p class="where">Setup &rsaquo; Audit Logs</p>
+          <p>Every override, every settings change, every acknowledged pause, every closed visit, with who
+            and when. This is the first place to look when two people remember a day differently.</p>
+          <p><span class="path">Setup &rsaquo; Data Review</span> is the related screen for cleaning up
+            historical records imported from the old system &mdash; visits whose customer could not be
+            matched automatically.</p>
+        </article>
+
+        <article class="task" data-roles="mgr">
+          <h3>Try something without touching real data</h3>
+          <p class="where">Setup &rsaquo; Booking Simulator</p>
+          <p>Two jobs, both useful when a customer says a time &ldquo;should&rdquo; be available:</p>
+          <ol>
+            <li>Pick a service and a date range and run the simulation. Every slot comes back with the
+              reason it is or is not offered &mdash; capacity, opening hours, notice period, bay type.</li>
+            <li>Start a test booking session to walk the real customer booking flow. Anything it creates
+              is tagged as test data and its emails are captured rather than sent.</li>
+          </ol>
+          <div class="note">
+            This is a setup tool. If you would rather it were not on the menu at all, switch it off at
+            <span class="path">Settings &rsaquo; Booking &amp; Scheduling &rsaquo; Testing tools</span> and it
+            disappears &mdash; screen, menu entry and all. Turning it back on is the same one switch.
+          </div>
+        </article>
+      </section>
+
+      <!-- ============ 7 ============ -->
+      <section id="customers" data-roles="desk mgr">
+        <div class="sec-head">
+          <div class="sec-num">07</div>
+          <h2>What customers see</h2>
+        </div>
+        <p class="sec-intro">
+          Four things reach customers. Knowing exactly what is on each one saves a lot of explaining
+          at the counter.
+        </p>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Online booking</h3>
+          <p class="where">/book &mdash; no login</p>
+          <p>Five plain steps: <strong>Let's find you</strong> &rarr; <strong>What do you need?</strong> &rarr;
+            <strong>Pick a time</strong> &rarr; <strong>A few details</strong> &rarr;
+            <strong>Please confirm</strong>. Nothing is held until they confirm, and only times the
+            workshop can genuinely take are shown.</p>
+          <ul>
+            <li>They identify themselves with their mobile number plus licence plate. New customers enter
+              the same two things and a record is created.</li>
+            <li>What they tell the booking form goes straight onto the job sheet, so they are not asked
+              again on arrival.</li>
+            <li><strong>Online booking does require an email address</strong>, because the confirmation and
+              the manage link have nowhere else to go. Booking at the desk does not.</li>
+          </ul>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>The manage link in their confirmation</h3>
+          <p>Their confirmation email carries a private link that lets them reschedule or cancel on their
+            own, up to the cutoff you set in Settings. It is single-purpose and expires &mdash; it is not
+            an account and it shows them nothing but their own booking.</p>
+          <div class="note">
+            If a customer says the link does not work, it has most likely expired or already been used.
+            Make the change for them at the desk.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>The waiting-room screen</h3>
+          <p class="where">Workshop Operations &rsaquo; Customer display board</p>
+          <ol>
+            <li>Get the display address from
+              <span class="path">Settings &rsaquo; Workshop Operations &rsaquo; Customer display board</span>.</li>
+            <li>Open it on the waiting-room screen and leave it. No login, and it refreshes itself.</li>
+          </ol>
+          <p>It shows three columns &mdash; <strong>In Queue</strong>, <strong>In Service</strong>,
+            <strong>Ready</strong> &mdash; by ticket number only. No names, no phone numbers, no plates.
+            That is deliberate: it is a public screen in a public room.</p>
+          <div class="careful">
+            The address contains a private token. Do not post it anywhere public. If it leaks, a manager
+            can change the token in the same setting and the old address stops working.
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk mgr">
+          <h3>Emails they receive</h3>
+          <p>Email is the only channel. Every message is a template you can edit, and every send is
+            recorded against the customer and the visit:</p>
+          <ul>
+            <li>Booking confirmation, and reminders before the appointment.</li>
+            <li>Vehicle ready for collection.</li>
+            <li>Something is needed from the customer, or a delay.</li>
+            <li>Vehicle due for service.</li>
+          </ul>
+          <div class="note">
+            Operational messages about a vehicle in your care are always sent. Marketing is the only kind
+            that depends on consent, and an imported record with no answer recorded counts as
+            <strong>unknown</strong>, not as a refusal.
+          </div>
+        </article>
+      </section>
+
+      <!-- ============ 8 ============ -->
+      <section id="trouble" data-roles="desk tech mgr">
+        <div class="sec-head">
+          <div class="sec-num">08</div>
+          <h2>When it looks wrong</h2>
+        </div>
+        <p class="sec-intro">
+          Most of these are the platform doing its job rather than failing at it. Check here before
+          escalating.
+        </p>
+
+        <article class="task" data-roles="desk tech mgr">
+          <h3>Common things, explained</h3>
+          <div class="t-scroll">
+            <table>
+              <thead><tr><th>What you see</th><th>What it means</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>A job will not start</td>
+                  <td>Parts not acknowledged, no qualified technician on shift, or no suitable bay. Open the ticket &mdash; the reason is on it.</td>
+                </tr>
+                <tr>
+                  <td>&ldquo;One job at a time&rdquo; when starting work</td>
+                  <td>Working as intended. Finish or pause the job already on your clock.</td>
+                </tr>
+                <tr>
+                  <td>A technician is not offered for assignment</td>
+                  <td>Marked absent in Availability, lacks the required skill, or is already loaded.</td>
+                </tr>
+                <tr>
+                  <td>A time the customer wants is not offered</td>
+                  <td>Run it through the Booking Simulator &mdash; it names the exact rule, which is usually notice period, latest start or capacity.</td>
+                </tr>
+                <tr>
+                  <td>The email button refuses</td>
+                  <td>No real email address on file. Add one, or call instead. Do not enter a placeholder.</td>
+                </tr>
+                <tr>
+                  <td>Waiting times look impossible</td>
+                  <td>Almost always an old visit nobody closed. Check for open visits from previous days.</td>
+                </tr>
+                <tr>
+                  <td>A ticket's position moved</td>
+                  <td>An on-time appointment arrived, or a manager set an override. The ticket number itself never changes.</td>
+                </tr>
+                <tr>
+                  <td>A screen in this manual is not in your menu</td>
+                  <td>Your role does not have it. Ask your manager if you need it.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="task" data-roles="desk tech mgr">
+          <h3>Habits worth keeping</h3>
+          <ul>
+            <li><strong>Close visits the same day.</strong> Open visits distort the queue, the waiting times
+              and tomorrow's availability.</li>
+            <li><strong>Search before you create.</strong> A duplicate customer splits their history in two.</li>
+            <li><strong>Never type a placeholder into a contact field.</strong> Blank is honest; fake is worse
+              than nothing.</li>
+            <li><strong>Pause honestly.</strong> Held time is counted against the hold-up, not the technician.</li>
+            <li><strong>Give a reason on an override.</strong> You will be asked about it eventually, and the
+              record is what answers for you.</li>
+          </ul>
+        </article>
+      </section>
+
+      <p class="no-hits" id="nohits" hidden>Nothing in the manual matches that. Try a shorter word &mdash;
+        &ldquo;parts&rdquo;, &ldquo;queue&rdquo;, &ldquo;email&rdquo;, &ldquo;bay&rdquo;.</p>
+
+    </main>
+  </div>
+
+  <footer>
+    <p><strong>Bert's Service Operations Platform</strong> &mdash; one platform, one queue, one record of
+      what happened.</p>
+    <p>Something in here no longer matches the screen? Tell your manager, who can have the manual
+      corrected. A manual nobody trusts is worse than no manual.</p>
+  </footer>
+</div>
+
+<script>
+  (function () {
+    var q = document.getElementById('q');
+    var countEl = document.getElementById('count');
+    var noHits = document.getElementById('nohits');
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+    var sections = Array.prototype.slice.call(document.querySelectorAll('section'));
+    var tasks = Array.prototype.slice.call(document.querySelectorAll('.task'));
+    var role = 'all';
+
+    // Remember the chosen role between visits; a front-desk tablet should open where it was left.
+    try {
+      var saved = localStorage.getItem('traction-manual-role');
+      if (saved && ['all', 'desk', 'tech', 'mgr'].indexOf(saved) !== -1) role = saved;
+    } catch (e) { /* private window, blocked storage — the default is fine */ }
+
+    function matchesRole(el) {
+      if (role === 'all') return true;
+      return (el.getAttribute('data-roles') || '').split(' ').indexOf(role) !== -1;
+    }
+
+    function apply() {
+      var needle = q.value.trim().toLowerCase();
+      var shown = 0;
+
+      tasks.forEach(function (t) {
+        var ok = matchesRole(t) && (!needle || t.textContent.toLowerCase().indexOf(needle) !== -1);
+        t.hidden = !ok;
+        if (ok) shown++;
+      });
+
+      sections.forEach(function (s) {
+        var any = Array.prototype.some.call(s.querySelectorAll('.task'), function (t) { return !t.hidden; });
+        s.hidden = !any;
+      });
+
+      countEl.textContent = shown + (shown === 1 ? ' task' : ' tasks');
+      noHits.hidden = shown !== 0;
+
+      tabs.forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b.getAttribute('data-role') === role));
+      });
+    }
+
+    tabs.forEach(function (b) {
+      b.addEventListener('click', function () {
+        role = b.getAttribute('data-role');
+        try { localStorage.setItem('traction-manual-role', role); } catch (e) { /* ignore */ }
+        apply();
+      });
+    });
+
+    q.addEventListener('input', apply);
+
+    // A rail or role-card link must not land on a section the current filter is hiding.
+    document.addEventListener('click', function (ev) {
+      var a = ev.target.closest && ev.target.closest('a[href^="#"]');
+      if (!a) return;
+      var target = document.querySelector(a.getAttribute('href'));
+      if (target && target.hidden) {
+        role = 'all';
+        q.value = '';
+        apply();
+      }
+    });
+
+    apply();
+  })();
+</script>
