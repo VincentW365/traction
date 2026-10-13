@@ -142,8 +142,14 @@
   @media (max-width: 1040px) { .stages { grid-template-columns: repeat(4, 1fr); } }
   @media (max-width: 620px) { .stages { grid-template-columns: repeat(2, 1fr); } }
   .stage {
-    min-width: 0; border-top: 4px solid var(--h);
+    position: relative; min-width: 0; border-top: 4px solid var(--h);
     background: var(--hs); padding: 8px 10px 9px;
+  }
+  .stage:not(:last-child)::after {
+    content: ""; position: absolute; right: -6px; top: 50%; z-index: 1;
+    width: 7px; height: 7px; border-right: 2px solid var(--line-strong);
+    border-bottom: 2px solid var(--line-strong);
+    transform: translateY(-50%) rotate(-45deg); background: var(--surface);
   }
   .stage b {
     display: block; font-family: var(--display); font-size: 17px; font-weight: 700;
@@ -234,12 +240,16 @@
     grid-column: 2; grid-row: 1; font-family: var(--display); font-size: 13px; font-weight: 600;
     letter-spacing: .12em; text-transform: uppercase; color: var(--h); margin-bottom: 2px;
   }
-  .sec-intro { color: var(--fg-muted); margin: 0 0 18px; max-width: 66ch; font-size: 15.5px; }
+  .sec-intro {
+    color: var(--fg-muted); margin: 0 0 18px; max-width: 64ch; font-size: 15.5px;
+    border-left: 2px solid var(--he); padding-left: 14px;
+  }
 
   /* ---------- task cards ---------- */
   .task {
     background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--h);
-    margin-bottom: 12px;
+    border-radius: 0 3px 3px 0; margin-bottom: 13px;
+    box-shadow: 0 1px 2px rgba(18, 28, 38, .05), 0 1px 1px rgba(18, 28, 38, .04);
   }
   .task-head { background: var(--hs); border-bottom: 1px solid var(--he); padding: 11px 18px 10px; }
   .task h3 {
@@ -288,7 +298,7 @@
   .careful strong, .yes strong, .note strong { font-weight: 700; }
 
   /* ---------- tables ---------- */
-  .t-scroll { overflow-x: auto; margin: 0 0 12px; border: 1px solid var(--line); }
+  .t-scroll { overflow-x: auto; margin: 0 0 12px; border: 1px solid var(--line); border-radius: 3px; }
   table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 460px; background: var(--surface); }
   th, td { text-align: left; padding: 9px 13px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th {
@@ -301,23 +311,23 @@
   td .data { font-size: 13px; }
 
   /* ---------- queue order ladder ---------- */
-  .ladder { list-style: none; margin: 0 0 11px; padding: 0; counter-reset: rung; }
-  .ladder li {
+  .task-body ol.ladder { list-style: none; margin: 0 0 11px; padding: 0; counter-reset: rung; }
+  .task-body ol.ladder li {
     counter-increment: rung; position: relative; padding: 12px 0 12px 56px;
     border-bottom: 1px solid var(--line); min-height: 54px;
   }
-  .ladder li:last-child { border-bottom: 0; }
-  .ladder li::before {
-    content: counter(rung); position: absolute; left: 0; top: 12px;
+  .task-body ol.ladder li:last-child { border-bottom: 0; }
+  .task-body ol.ladder li::before {
+    content: counter(rung); position: absolute; left: 0; top: 12px; border-radius: 0;
     font-family: var(--display); font-size: 30px; font-weight: 700; line-height: .9;
     color: var(--btn-ink); background: var(--h); display: grid; place-items: center;
     width: 42px; height: 42px;
   }
-  .ladder li:nth-child(2)::before { opacity: .82; }
-  .ladder li:nth-child(3)::before { opacity: .64; }
-  .ladder li:nth-child(4)::before { opacity: .46; }
-  .ladder strong { display: block; font-weight: 700; font-size: 15.5px; }
-  .ladder span { color: var(--fg-muted); font-size: 14px; }
+  .task-body ol.ladder li:nth-child(2)::before { opacity: .88; }
+  .task-body ol.ladder li:nth-child(3)::before { opacity: .78; }
+  .task-body ol.ladder li:nth-child(4)::before { opacity: .68; }
+  .task-body ol.ladder strong { display: block; font-weight: 700; font-size: 15.5px; }
+  .task-body ol.ladder span { color: var(--fg-muted); font-size: 14px; }
 
   .no-hits { padding: 24px 0; color: var(--fg-muted); }
 
@@ -374,7 +384,7 @@
       <div class="stage" data-hue="desk"><b>Checked in</b><span>Front desk issues the ticket</span></div>
       <div class="stage" data-hue="all"><b>In queue</b><span>Arrival order decides</span></div>
       <div class="stage" data-hue="desk"><b>Dispatched</b><span>Given a bay and a technician</span></div>
-      <div class="stage" data-hue="tech"><b>Work on</b><span>Technician's clock runs</span></div>
+      <div class="stage" data-hue="tech"><b>Being worked on</b><span>Technician's clock runs</span></div>
       <div class="stage" data-hue="desk"><b>Quality check</b><span>Advisor signs it off</span></div>
       <div class="stage" data-hue="desk"><b>Ready</b><span>Customer told it's collectable</span></div>
       <div class="stage" data-hue="desk"><b>Closed</b><span>Mileage out, visit closed</span></div>
@@ -440,6 +450,12 @@
                 <strong>Estimated Start</strong> is shown.</li>
               <li>Read the estimated start to the customer, and offer them the <strong>Customer Status Link</strong>.</li>
             </ol>
+            <div class="note">
+              <strong>Two numbers, and only one is the customer's.</strong> The big number on screen is the short
+              one, like <span class="data">B01-003</span> &mdash; that is what the waiting-room board shows and
+              what the customer should write down. The longer <strong>Reference</strong> underneath is for your
+              own enquiries later. Quote the short one at the counter.
+            </div>
             <div class="yes">
               <strong>On time matters.</strong> An appointment checked in within its protected window keeps its
               place ahead of the walk-ins. Late, and it joins the queue by arrival time like everyone else.
@@ -486,7 +502,7 @@
               <li><strong>Vehicle</strong> &mdash; pick theirs, or add it.</li>
               <li><strong>Service request</strong> &mdash; what they need.</li>
               <li><strong>Date</strong>.</li>
-              <li><strong>Available time</strong> &mdash; only times the workshop can genuinely take are offered.</li>
+              <li><strong>Available time</strong> &mdash; what the workshop can take that day.</li>
               <li><strong>Review</strong> &mdash; read it back to the customer, then confirm.</li>
             </ol>
             <div class="note">
@@ -619,10 +635,27 @@
           <div class="task-body">
             <ol>
               <li>Record the customer, the subject and what happened, in their words where you can.</li>
-              <li>Set the severity. <strong>Critical</strong> and <strong>Medium</strong> carry a response deadline
-                and will show as <strong>Overdue</strong> if it passes.</li>
+              <li>Set the severity. Every severity carries a response deadline &mdash; the severity decides how
+                long you have.</li>
               <li>Acknowledge it so the customer knows it was received, then work it to <strong>Resolved</strong>.</li>
             </ol>
+            <div class="t-scroll">
+              <table>
+                <thead><tr><th>Severity</th><th>Respond within</th></tr></thead>
+                <tbody>
+                  <tr><td><strong>Critical</strong></td><td>4 hours</td></tr>
+                  <tr><td><strong>High</strong></td><td>24 hours</td></tr>
+                  <tr><td><strong>Medium</strong></td><td>72 hours</td></tr>
+                  <tr><td><strong>Low</strong></td><td>120 hours</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="note">
+              Past the deadline the complaint shows as <strong>Overdue</strong> on the list. A manager can change
+              these hours in Settings, so check them against what your shop has agreed. Changing a complaint's
+              severity recalculates the deadline from when it was <em>logged</em>, never from now &mdash; you
+              cannot buy time by downgrading it.
+            </div>
           </div>
         </article>
       </section>
@@ -668,9 +701,9 @@
               </li>
             </ol>
             <div class="note">
-              <strong>The ticket number is not the running order.</strong> A ticket number never changes and is
-              what you say to a customer. The position on the board moves with the day. Read the position,
-              quote the number.
+              <strong>The ticket number is not the running order.</strong> A ticket number never changes and is what
+              you say to a customer &mdash; the short one, the same number the waiting-room board shows. The
+              position on the board moves with the day. Read the position, quote the number.
             </div>
           </div>
         </article>
@@ -872,7 +905,7 @@
                   <tr><td><strong>Needs Attention</strong></td><td>Anything that needs a person right now. Start here.</td></tr>
                   <tr><td><strong>Pause Approval Required</strong></td><td>A technician has stopped and is waiting for you to acknowledge it.</td></tr>
                   <tr><td><strong>Needs Dispatch</strong></td><td>Checked in, not blocked, waiting for a bay and a technician.</td></tr>
-                  <tr><td><strong>Technician Load</strong></td><td>Who is on what, and who is free. Absent staff show here too.</td></tr>
+                  <tr><td><strong>Technician Load</strong></td><td>Who is on what, and who is free. Anyone marked absent in Availability shows here too.</td></tr>
                   <tr><td><strong>Bay &amp; Resource View</strong></td><td>Service bays, light-task slots, overflow and power wash, each free, occupied or reserved.</td></tr>
                   <tr><td><strong>Blocked</strong></td><td>Jobs that cannot start, with the reason &mdash; usually parts.</td></tr>
                   <tr><td><strong>Ready for QC</strong></td><td>Work a technician has finished, waiting on a quality check.</td></tr>
@@ -906,12 +939,20 @@
           <div class="task-body">
             <ol>
               <li>Press <span class="btn">Assign</span> on the card. The full ticket opens.</li>
-              <li>Choose the technician and the bay. Only qualified technicians and suitable bays are offered
-                &mdash; if your choice is missing, that is a skill or bay-type constraint, not a bug.</li>
+              <li>Choose the technician. If they do not hold a skill the services need, the assignment is
+                refused and the message names the missing skill. That is the platform working, not a fault.</li>
+              <li>Choose the bay, or leave it and the platform takes the first compatible free one. Naming a bay
+                whose type does not match the work is refused the same way.</li>
               <li>For a visit with several orders you can give them all to one technician in one action.</li>
             </ol>
             <p>To move a job already underway, use <strong>Reassign technician</strong> on the ticket. Work
               already done stays credited to the technician who did it.</p>
+            <div class="careful">
+              <strong>Absence is shown, not enforced.</strong> Marking someone absent in Availability puts them
+              on this board as absent and raises it on the manager's dashboard &mdash; but it does not stop you
+              assigning work to them. Check the board before you assign; the platform will not catch this one
+              for you.
+            </div>
           </div>
         </article>
 
@@ -1068,8 +1109,8 @@
                 <thead><tr><th>Screen</th><th>Use it to</th></tr></thead>
                 <tbody>
                   <tr><td><strong>Staff</strong></td><td>Add people, set their role, set passwords, record skills.</td></tr>
-                  <tr><td><strong>Availability</strong></td><td>Say who is working when. Absence here is why a technician stops being offered for assignment.</td></tr>
-                  <tr><td><strong>Assignments</strong></td><td>Default pairings of people to work.</td></tr>
+                  <tr><td><strong>Availability</strong></td><td>A weekly calendar of who is working: available, on break, off the floor or absent.</td></tr>
+                  <tr><td><strong>Assignments</strong></td><td>Every technician job assignment in one list, for checking who has what.</td></tr>
                   <tr><td><strong>Resources &amp; Bays</strong></td><td>What each position is and what it can take &mdash; weight, vehicle class, type of work.</td></tr>
                   <tr><td><strong>Services</strong></td><td>The catalogue: names, how long each takes, required skill and bay, and whether customers may book it online.</td></tr>
                   <tr><td><strong>Performance</strong> / <strong>KPI Mapping</strong></td><td>Define what counts as output before you read the KPI report.</td></tr>
@@ -1238,7 +1279,7 @@
                 <tbody>
                   <tr><td>A job will not start</td><td>Parts not acknowledged, no qualified technician on shift, or no suitable bay. Open the ticket &mdash; the reason is on it.</td></tr>
                   <tr><td>&ldquo;One job at a time&rdquo; when starting work</td><td>Working as intended. Finish or pause the job already on your clock.</td></tr>
-                  <tr><td>A technician is not offered for assignment</td><td>Marked absent in Availability, lacks the required skill, or is already loaded.</td></tr>
+                  <tr><td>An assignment is refused</td><td>The technician lacks a skill the services need, or the named bay is the wrong type. The message says which.</td></tr>
                   <tr><td>A time the customer wants is not offered</td><td>Run it through the Booking Simulator &mdash; it names the exact rule, usually notice period, latest start or capacity.</td></tr>
                   <tr><td>The email button refuses</td><td>No real email address on file. Add one, or call instead. Do not enter a placeholder.</td></tr>
                   <tr><td>Waiting times look impossible</td><td>Almost always an old visit nobody closed. Check for open visits from previous days.</td></tr>

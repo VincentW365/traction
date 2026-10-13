@@ -30,6 +30,10 @@ const PRINT_CSS = `
   .cols { display: block !important; }
   .wrap { max-width: none !important; padding-inline: 0 !important; padding-block: 0 !important; }
 
+  /* A shadow does nothing on paper and is rasterised into the file — it cost
+     1.2MB across 38 cards. The hue edge already separates them. */
+  .task { box-shadow: none !important; }
+
   body { background: #fff !important; font-size: 10.4pt; line-height: 1.5; }
   h1 { font-size: 36pt !important; }
   h2 { font-size: 22pt !important; }
