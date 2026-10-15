@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CustomerNotificationsService } from '../customer-notifications.service';
 import { NotificationTemplateStore } from '../templates/template-store.service';
 import { CommunicationPreferenceService } from '../communication-preference.service';
+import { NotificationRoutingService } from '../notification-routing.service';
 import { PERMISSIONS } from '../../../common/constants/permissions';
 import type { NotificationCapabilities } from '../providers/notification-provider.interface';
 
@@ -153,6 +154,9 @@ function build(opts?: {
     caps,
     new NotificationTemplateStore(prisma as never),
     new CommunicationPreferenceService(prisma as never, audit as never),
+    // CR-2026-117 — the real resolver over a rule table with no rows, so these
+    // specs exercise the environment fallback rather than a stub of it.
+    new NotificationRoutingService(prisma as never),
   );
 
   return { service, prisma, provider, audit, createdLogs };
@@ -445,7 +449,7 @@ describe('test routing', () => {
     const { service, provider } = build({ caps: { mode: 'TEST', emailConfigured: true, testEmailTo: undefined } });
     await expect(
       service.send({ ...SEND_BASE, email: EMAIL('Hi.') }, 'user-1'),
-    ).rejects.toThrow(/TEST mode/);
+    ).rejects.toThrow(/no test recipient is set/);
     expect(provider.send).not.toHaveBeenCalled();
   });
 

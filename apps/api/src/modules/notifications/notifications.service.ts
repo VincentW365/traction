@@ -14,6 +14,7 @@ import { buildVehicleDescription, type TemplateData } from './templates/template
 import { NO_EMAIL_ON_FILE, UNSUPPORTED_CHANNEL_REASON } from './notification-messages';
 import { purposeForTemplateKey, type CommunicationPurposeName } from './consent-policy';
 import { CommunicationPreferenceService } from './communication-preference.service';
+import { NotificationRoutingService } from './notification-routing.service';
 
 /**
  * CR-2026-106 — the ONE mapping from a NotificationLog row to what a person is
@@ -156,6 +157,9 @@ export class NotificationsService {
     // and appended for the same reason; absent = fall back to the legacy boolean,
     // which is exactly the pre-CR behaviour.
     @Optional() private preferences?: CommunicationPreferenceService,
+    // CR-2026-117 — resolves test-vs-live at send time. @Optional and appended
+    // for the same reason; absent = the boot-time env value, i.e. pre-CR behaviour.
+    @Optional() private routing?: NotificationRoutingService,
   ) {}
 
   /**
@@ -164,21 +168,26 @@ export class NotificationsService {
    * configured test recipient (recorded, never concealed). A real provider in
    * TEST mode with no test recipient refuses rather than reaching a customer.
    */
-  private routeRecipient(
+  private async routeRecipient(
     intended: string,
-  ): { to: string; testRouted: boolean; simulated: boolean; blocked?: string } {
-    const configured = this.caps.emailConfigured;
-    if (this.caps.mode === 'LIVE') {
+  ): Promise<{ to: string; testRouted: boolean; simulated: boolean; blocked?: string }> {
+    // CR-2026-117 — read now, not at boot, so a manager turning live sending on
+    // in Settings takes effect on the next message rather than the next deploy.
+    const effective = this.routing ? await this.routing.resolve(this.caps) : this.caps;
+    const configured = effective.emailConfigured;
+    if (effective.mode === 'LIVE') {
       return { to: intended, testRouted: false, simulated: !configured };
     }
-    const testTo = this.caps.testEmailTo;
+    const testTo = effective.testEmailTo;
     if (testTo) return { to: testTo, testRouted: true, simulated: !configured };
     if (configured) {
       return {
         to: intended,
         testRouted: false,
         simulated: false,
-        blocked: 'TEST mode without NOTIFICATION_TEST_EMAIL_TO — refused to contact a real customer',
+        blocked:
+          'Test routing is on but no test recipient is set — refused to contact a real customer. ' +
+          'Set a test recipient in Settings, or turn live sending on.',
       };
     }
     return { to: intended, testRouted: false, simulated: true };
@@ -231,7 +240,7 @@ export class NotificationsService {
       return captured.id;
     }
 
-    const routing = this.routeRecipient(input.recipient);
+    const routing = await this.routeRecipient(input.recipient);
 
     const log = await this.prisma.notificationLog.create({
       data: {

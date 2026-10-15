@@ -29,6 +29,7 @@ import {
   type CommunicationPurposeName,
 } from './consent-policy';
 import { CommunicationPreferenceService } from './communication-preference.service';
+import { NotificationRoutingService } from './notification-routing.service';
 import { PERMISSIONS } from '../../common/constants/permissions';
 import {
   buildVehicleDescription,
@@ -109,17 +110,26 @@ export class CustomerNotificationsService {
     // CR-2026-114 — what the customer has actually told us (UNKNOWN / ALLOWED /
     // DECLINED), rather than a boolean that cannot tell the first two apart.
     private preferences: CommunicationPreferenceService,
+    // CR-2026-117 — test vs live is read at send time, not frozen at boot.
+    private routing: NotificationRoutingService,
   ) {}
 
   // -------------------------------------------------------------------------
   // Capabilities — what this deployment can actually deliver
   // -------------------------------------------------------------------------
 
-  capabilities() {
+  async capabilities() {
+    // CR-2026-117 — the screen must show what WILL happen on the next send, not
+    // what the environment said at boot.
+    const effective = await this.routing.resolve(this.caps);
     return {
-      emailConfigured: this.caps.emailConfigured,
-      mode: this.caps.mode,
-      testRoutingActive: this.caps.mode === 'TEST',
+      emailConfigured: effective.emailConfigured,
+      mode: effective.mode,
+      testRoutingActive: effective.mode === 'TEST',
+      testEmailTo: effective.testEmailTo ?? null,
+      // Where the live/test answer came from, so nobody hunts for a setting that
+      // is not in charge yet.
+      modeSource: effective.source,
     };
   }
 
@@ -449,7 +459,7 @@ export class CustomerNotificationsService {
     const generated = template ? renderTemplate(template.body, context.templateData).text : null;
 
     // --- Test routing (never concealed; intended recipient always retained)
-    const routing = this.resolveRouting(recipient);
+    const routing = await this.resolveRouting(recipient);
 
     // --- Record first (DRAFT→SENDING semantics collapsed into one row)
     const log = await this.prisma.notificationLog.create({
@@ -782,19 +792,23 @@ export class CustomerNotificationsService {
     return this.templates.resolve(reason);
   }
 
-  private resolveRouting(intended: string): { to: string; testRouted: boolean; simulated: boolean } {
-    const configured = this.caps.emailConfigured;
-    if (this.caps.mode === 'LIVE') {
+  private async resolveRouting(intended: string): Promise<{ to: string; testRouted: boolean; simulated: boolean }> {
+    // CR-2026-117 — resolved per send, so Settings decides rather than the boot
+    // environment. The mailbox itself is still env-only; see notification-routing.
+    const effective = await this.routing.resolve(this.caps);
+    const configured = effective.emailConfigured;
+    if (effective.mode === 'LIVE') {
       return { to: intended, testRouted: false, simulated: !configured };
     }
     // TEST mode
-    if (this.caps.testEmailTo) {
-      return { to: this.caps.testEmailTo, testRouted: true, simulated: !configured };
+    if (effective.testEmailTo) {
+      return { to: effective.testEmailTo, testRouted: true, simulated: !configured };
     }
     if (configured) {
       // A real provider in TEST mode with no test recipient must never reach a customer.
       throw new BadRequestException(
-        'TEST mode is active but NOTIFICATION_TEST_EMAIL_TO is not configured. Configure a test recipient or set NOTIFICATION_MODE=LIVE.',
+        'Test routing is on but no test recipient is set, so this message has nowhere safe to go. ' +
+          'Set a test recipient under Settings > Notifications, or turn live sending on there.',
       );
     }
     // Stub provider: nothing real is sent either way — record as simulated.

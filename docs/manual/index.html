@@ -1084,7 +1084,7 @@
                   <tr><td><strong>Capacity &amp; Resources</strong></td><td>How many jobs can overlap, and whether capacity comes from a fixed number or from the bays themselves.</td></tr>
                   <tr><td><strong>Customer Experience</strong></td><td>What customers are told, and how estimated times are worked out.</td></tr>
                   <tr><td><strong>Queue &amp; Arrival Rules</strong></td><td>The appointment protection window and how same-day arrivals are handled.</td></tr>
-                  <tr><td><strong>Notifications</strong></td><td>Reminders, consent, service-due reminders, daily follow-ups.</td></tr>
+                  <tr><td><strong>Notifications</strong></td><td>Whether email reaches real customers or is held at a test address, plus reminders, consent, service-due reminders and daily follow-ups.</td></tr>
                   <tr><td><strong>Workshop Operations</strong></td><td>Opening hours, job timing, the customer display board, servicing defaults.</td></tr>
                   <tr><td><strong>Services &amp; Catalogue</strong></td><td>Service names, lengths, and which are offered online.</td></tr>
                   <tr><td><strong>System &amp; Testing</strong></td><td>Booking Simulator, bay confirmation, deployment checks, audit logs.</td></tr>
@@ -1251,6 +1251,14 @@
               depends on consent, and an imported record with no answer recorded counts as
               <strong>unknown</strong>, not as a refusal.
             </div>
+            <div class="careful">
+              <strong>Check whether email is actually going out.</strong> Under
+              <span class="path">Settings &rsaquo; Notifications &rsaquo; Where customer email goes</span>, the
+              <strong>Send Email to Customers</strong> switch decides whether messages reach real customers or
+              are held at a test address while you check the wording. While it is off, every send still looks
+              successful on screen and is recorded &mdash; it simply went to the test address, not the customer.
+              Look here first if a customer says they were never told.
+            </div>
           </div>
         </article>
       </section>
@@ -1282,6 +1290,7 @@
                   <tr><td>An assignment is refused</td><td>The technician lacks a skill the services need, or the named bay is the wrong type. The message says which.</td></tr>
                   <tr><td>A time the customer wants is not offered</td><td>Run it through the Booking Simulator &mdash; it names the exact rule, usually notice period, latest start or capacity.</td></tr>
                   <tr><td>The email button refuses</td><td>No real email address on file. Add one, or call instead. Do not enter a placeholder.</td></tr>
+                  <tr><td>A customer says they never got the email</td><td>Check Settings &rsaquo; Notifications: if <strong>Send Email to Customers</strong> is off, it went to the test address instead. The send still shows as successful.</td></tr>
                   <tr><td>Waiting times look impossible</td><td>Almost always an old visit nobody closed. Check for open visits from previous days.</td></tr>
                   <tr><td>A ticket's position moved</td><td>An on-time appointment arrived, or a manager set an override. The ticket number itself never changes.</td></tr>
                   <tr><td>A screen in this manual is not in your menu</td><td>Your role does not have it. Ask your manager if you need it.</td></tr>

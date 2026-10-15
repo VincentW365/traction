@@ -12,6 +12,7 @@ import { NotificationsController } from './notifications.controller';
 import { CustomerNotificationsService } from './customer-notifications.service';
 import { TestRecordResolver } from './test-record.resolver';
 import { StubNotificationProvider } from './providers/stub.provider';
+import { NotificationRoutingService } from './notification-routing.service';
 import { NotificationTemplateStore } from './templates/template-store.service';
 import { CommunicationPreferenceService } from './communication-preference.service';
 import {
@@ -97,6 +98,8 @@ function notificationCapabilitiesFactory(): NotificationCapabilities {
     NotificationTemplateStore,
     // CR-2026-114 — what the customer has actually told us, with provenance.
     CommunicationPreferenceService,
+    // CR-2026-117 — test vs live, resolved per send from Settings.
+    NotificationRoutingService,
     // CR-2026-108 Stage 1 — decides, per record, whether a message is about a
     // test run and must be captured rather than transmitted.
     TestRecordResolver,
@@ -109,6 +112,13 @@ function notificationCapabilitiesFactory(): NotificationCapabilities {
     TestRecordResolver,
     NotificationTemplateStore,
     CommunicationPreferenceService,
+    // CR-2026-117 — @Global() publishes only what a module EXPORTS. Without
+    // these two, ConfigService injected undefined capabilities and the
+    // live-sending guard refused every flip with "no mailbox connected" on an
+    // installation that had one — a manager would have gone back to the
+    // deployment holder for something already done.
+    NOTIFICATION_CAPABILITIES,
+    NotificationRoutingService,
   ],
 })
 export class NotificationsModule {}

@@ -510,6 +510,33 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
     links: [{ label: 'Message templates', href: '/admin/notifications' }],
     sections: [
       {
+        // CR-2026-117 — first, because it is the question everything else in
+        // this category depends on: is any of it actually reaching anyone?
+        title: 'Where customer email goes',
+        help: 'Whether messages reach customers, or are held at a test address while you check the wording.',
+        settings: [
+          {
+            key: 'notifications_live_sending',
+            label: 'Send Email to Customers',
+            help: 'Off holds every customer email at the test address below. On delivers to the real customer.',
+            control: 'toggle',
+            impact:
+              'Turning this on starts sending real email to real customers immediately — confirmations, reminders, ready-for-collection and service-due notices. Check the wording under Message templates first.',
+          },
+          {
+            key: 'notifications_test_email_to',
+            label: 'Test Address',
+            help: 'Where customer email goes while the switch above is off. Leave empty to use the address set when the system was installed.',
+            control: 'text',
+            activeWhen: {
+              key: 'notifications_live_sending',
+              equals: 'false',
+              inactiveNote: 'Email is going to real customers, so nothing is being held at this address.',
+            },
+          },
+        ],
+      },
+      {
         title: 'Appointment reminders',
         settings: [
           {

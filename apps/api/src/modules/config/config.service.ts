@@ -1,7 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { ResourceReadinessService } from '../resources/resource-readiness.service';
+import {
+  LIVE_SENDING_RULE,
+  NotificationRoutingService,
+} from '../notifications/notification-routing.service';
+import {
+  NOTIFICATION_CAPABILITIES,
+  type NotificationCapabilities,
+} from '../notifications/providers/notification-provider.interface';
 
 /**
  * CR-2026-108 Stage 5C §14 — the values of `booking_capacity_mode` that hand
@@ -16,6 +24,13 @@ export class ConfigService {
     private prisma: PrismaService,
     private auditService: AuditService,
     private readonly readiness: ResourceReadinessService,
+    // CR-2026-117 — whether a mailbox is wired at all. @Optional so the existing
+    // config specs that construct this service directly keep compiling; absent
+    // means the live-sending guard cannot confirm a mailbox and refuses, which
+    // is the safe direction.
+    @Optional()
+    @Inject(NOTIFICATION_CAPABILITIES)
+    private readonly emailCapabilities?: NotificationCapabilities,
   ) {}
 
   async listRules(siteId?: string) {
@@ -45,6 +60,21 @@ export class ConfigService {
     effectiveFrom?: string,
     notes?: string,
   ) {
+    // CR-2026-117 §4 — turning live sending on is the moment this installation
+    // starts writing to real customers, so it may not be done on a deployment
+    // that cannot actually send. A switch reading ON while every message is
+    // still recorded as simulated is worse than one that refuses: the first
+    // anyone would learn of it is a customer who never got told their car was
+    // ready.
+    if (ruleKey === LIVE_SENDING_RULE && value === true) {
+      if (!this.emailCapabilities?.emailConfigured) {
+        throw new BadRequestException({
+          code: 'EMAIL_MAILBOX_NOT_CONFIGURED',
+          message: NotificationRoutingService.mailboxMissingMessage(),
+        });
+      }
+    }
+
     // CR-2026-108 §14 — handing customer-facing capacity decisions to the resource
     // model is the one config change that can strand a real vehicle, so it is the
     // one that has to earn it. Everything else on this path is unchanged.

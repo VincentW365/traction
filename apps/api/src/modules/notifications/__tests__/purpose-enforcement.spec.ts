@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { CustomerNotificationsService } from '../customer-notifications.service';
 import { NotificationTemplateStore } from '../templates/template-store.service';
 import { CommunicationPreferenceService } from '../communication-preference.service';
+import { NotificationRoutingService } from '../notification-routing.service';
+import { CONSENT_POLICY_RULE_KEY } from '../consent-policy';
 import { PERMISSIONS } from '../../../common/constants/permissions';
 import type { NotificationCapabilities } from '../providers/notification-provider.interface';
 
@@ -60,7 +62,11 @@ function build(opts?: { preference?: 'UNKNOWN' | 'ALLOWED' | 'DECLINED'; policy?
       update: vi.fn(),
     },
     businessRuleConfig: {
-      findFirst: vi.fn(async () => (opts?.policy ? { valueJson: opts.policy } : null)),
+      // Answer only the key that was asked for. A fake that returns the consent
+      // policy for every rule hands the wrong shape to any other rule read.
+      findFirst: vi.fn(async (args?: { where?: { ruleKey?: string } }) =>
+        args?.where?.ruleKey === CONSENT_POLICY_RULE_KEY && opts?.policy ? { valueJson: opts.policy } : null,
+      ),
     },
     customerCommunicationPreference: {
       findUnique: vi.fn(async () => ({ status: opts?.preference ?? 'UNKNOWN' })),
@@ -88,6 +94,9 @@ function build(opts?: { preference?: 'UNKNOWN' | 'ALLOWED' | 'DECLINED'; policy?
     caps,
     new NotificationTemplateStore(prisma as never),
     new CommunicationPreferenceService(prisma as never, audit as never),
+    // CR-2026-117 — the real resolver over a rule table with no rows, so these
+    // specs exercise the environment fallback rather than a stub of it.
+    new NotificationRoutingService(prisma as never),
   );
   return { service, provider, createdLogs, audit };
 }
