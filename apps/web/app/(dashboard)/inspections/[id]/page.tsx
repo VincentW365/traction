@@ -610,13 +610,6 @@ function VehicleInspectionFormInner({
         </div>
       </div>
 
-      {/* CR-2026-118 §3E — the Vehicle Inspection had no way to attach a photograph
-          at all; only the pre-inspection did. Same section, same endpoint, same
-          camera control, so a finding can be shown rather than described. */}
-      <div className="mt-3">
-        <PhotoSection inspection={inspection} editable={editable} onChanged={invalidate} />
-      </div>
-
       {/* Paperwork actions — under the form, as asked */}
       <div className="flex items-center gap-2 mt-3">
         <Link href={`/inspections/${inspection.id}/print`} className="btn-secondary text-xs">Print</Link>
@@ -919,7 +912,7 @@ function PhotoSection({ inspection, editable, onChanged }: {
             {/* CR-2026-118 §3 — live camera where the browser allows it, the capture
                 input where it does not, a separate upload action, and a preview with
                 Retake / Use Photo / Cancel before anything is stored. */}
-            <CameraCapture onCapture={upload} disabled={uploading} busyLabel="Uploading…" />
+            <CameraCapture onCapture={upload} disabled={uploading} busyLabel="Uploading…" takeLabel="Take Photo" uploadLabel="Upload Image" />
           </div>
         )}
       </div>
