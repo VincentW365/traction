@@ -236,7 +236,8 @@ async function main() {
           data: {
             technicianId: tech.id,
             skillCode: skill.code,
-            proficiencyLevel: skill.level,
+            // CR-2026-119 — a skill is held or it is not; the 1–5 level is no
+            // longer set anywhere. Column default (1) applies; nothing reads it.
             isPrimary: skill.code === 'GENERAL',
           },
         });

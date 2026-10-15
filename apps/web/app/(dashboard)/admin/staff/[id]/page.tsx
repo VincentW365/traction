@@ -47,7 +47,6 @@ export default function StaffDetailPage() {
 
   // Add skill form state
   const [newSkillCode, setNewSkillCode] = useState('');
-  const [newSkillLevel, setNewSkillLevel] = useState(1);
   const [linkEmployeeCode, setLinkEmployeeCode] = useState('');
 
   const { data: staff, isLoading, error } = useQuery<StaffDetail>({
@@ -99,12 +98,11 @@ export default function StaffDetailPage() {
   });
 
   const addSkillMutation = useMutation({
-    mutationFn: (data: { skillCode: string; proficiencyLevel: number }) =>
+    mutationFn: (data: { skillCode: string }) =>
       api.post(`/technicians/${staff?.technician?.id}/skills`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['staff-detail', staffId] });
       setNewSkillCode('');
-      setNewSkillLevel(1);
     },
   });
 
@@ -133,7 +131,7 @@ export default function StaffDetailPage() {
     mutationFn: (codes: string[]) =>
       Promise.all(
         codes.map((code) =>
-          api.post(`/technicians/${staff?.technician?.id}/skills`, { skillCode: code, proficiencyLevel: 3 }),
+          api.post(`/technicians/${staff?.technician?.id}/skills`, { skillCode: code }),
         ),
       ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['staff-detail', staffId] }),
@@ -394,7 +392,10 @@ export default function StaffDetailPage() {
                         <div key={skill.id} className="flex items-center justify-between border border-slate-200 rounded-md px-3 py-2">
                           <div className="flex items-center gap-3">
                             <span className="text-sm font-mono font-medium text-slate-900">{skill.skillCode}</span>
-                            <span className="text-xs text-slate-500">Level {skill.proficiencyLevel}</span>
+                            {/* CR-2026-119 — a skill is held or it is not. The 1–5 level was a
+                                Phase-0 placeholder (TECH-002) that no assignment, QC or
+                                scheduling decision ever read; showing it invited people to
+                                set a number nothing would act on. */}
                             {skill.isPrimary && (
                               <span className="badge bg-blue-50 text-blue-700 text-[10px]">Primary</span>
                             )}
@@ -430,20 +431,8 @@ export default function StaffDetailPage() {
                               ))}
                             </select>
                           </div>
-                          <div>
-                            <label className="input-label">Level</label>
-                            <select
-                              value={newSkillLevel}
-                              onChange={(e) => setNewSkillLevel(Number(e.target.value))}
-                              className="input-field w-20"
-                            >
-                              {[1, 2, 3, 4, 5].map((l) => (
-                                <option key={l} value={l}>{l}</option>
-                              ))}
-                            </select>
-                          </div>
                           <button
-                            onClick={() => addSkillMutation.mutate({ skillCode: newSkillCode, proficiencyLevel: newSkillLevel })}
+                            onClick={() => addSkillMutation.mutate({ skillCode: newSkillCode })}
                             disabled={!newSkillCode || addSkillMutation.isPending}
                             className="btn-primary text-xs"
                           >

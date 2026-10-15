@@ -208,12 +208,16 @@ The CSV version lives in `data/business_rules.csv`.
 - **Phase introduced:** 2
 
 
-### TECH-002 — Complex repairs must be assigned to named specialists or technicians meeting the configured proficiency threshold.
+### TECH-002 — A skill is held or it is not; there is no proficiency level.
 
 - **Category:** Technician & Bay
-- **Example:** A/C repair requires AC skill and proficiency level >= configured minimum.
+- **Rule:** A technician either holds a skill code or does not. Assignment checks presence only. Quality-check sign-off is a separate, explicit flag on the technician (`isSenior`, CR-2026-087), not a level on a skill.
+- **Example:** A/C repair requires the AC skill. A technician who holds AC may be assigned; one who does not is refused with the missing skill named.
 - **Exception:** Manager temporary assignment with explicit supervision flag.
-- **System response:** Filter assignment candidates by skill and level.
+- **System response:** Filter assignment candidates by skill presence.
+- **History (CR-2026-119):** The original wording called for a "configured proficiency threshold" and a 1–5 level per skill. The level was recorded (`TechnicianSkill.proficiencyLevel`) but no assignment, scheduling or QC decision ever read it — CR-2026-087 confirmed this and chose the separate seniority flag instead. Management ruled on 2026-10-15 that skills are binary. The column remains (default 1) so no data migration was needed; the Staff screen no longer shows or asks for it.
+- **Configurable?** No.
+- **Approval needed?** Recorded as a management decision, 2026-10-15.
 - **Phase introduced:** 2
 
 
