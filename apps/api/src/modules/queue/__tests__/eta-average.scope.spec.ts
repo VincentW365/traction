@@ -36,7 +36,13 @@ function ticket(queueRank: number) {
 function buildService() {
   const prisma: any = {
     queueTicket: { findMany: vi.fn(async () => []) },
-    businessRuleConfig: { findFirst: vi.fn(async () => null) }, // use defaults (30d / 20)
+    businessRuleConfig: {
+      findFirst: vi.fn(async () => null), // use defaults (30d / 20)
+      // CR-2026-118 §5 — the display board reads its three presentation rules in
+      // one findMany; no rows means the documented defaults (plates on, unmasked,
+      // ready for 4h), which is the path this spec should exercise.
+      findMany: vi.fn(async () => []),
+    },
     $queryRaw: vi.fn(async () => [{ count: 0n, avg: null }]),
     site: { findUnique: vi.fn(async () => ({ name: 'Bert Service Centre' })) },
     resourceOccupancy: { findMany: vi.fn(async () => []) },

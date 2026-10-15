@@ -65,7 +65,13 @@ describe('scan order and sections (§3/§16)', () => {
   it('greeting header with the technician name', () => {
     expect(src).toContain('Good morning');
     expect(src).toContain('Good afternoon');
-    expect(src).toContain('firstName');
+    // CR-2026-118 §6 — the WHOLE recorded name, never its first word. Taking
+    // `split(' ')[0]` greeted every "J. Walters" as "J." for months.
+    expect(src).toContain('displayName');
+    expect(src).not.toMatch(/fullName\?\.split\(' '\)\[0\]/);
+    expect(src).toContain('Welcome back, ${displayName}');
+    // §7.4D — an unrecorded name falls back to a greeting, not to a fragment or "undefined".
+    expect(src).toContain('Welcome to your Technician Workspace');
   });
 
   it('Completed Today is collapsed by default', () => {

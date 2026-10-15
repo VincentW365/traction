@@ -12,6 +12,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { withReturn } from '../../../../../lib/return-to';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSiteId } from '../../../../../hooks/use-site';
 import { useQueueSocket } from '../../../../../hooks/use-queue-socket';
@@ -517,7 +518,7 @@ export default function TechnicianJobWorkspace() {
             {/* §5 — the job sheet, one tap, always */}
             <div className="grid grid-cols-2 gap-2">
               <Link
-                href={`/inspections/job-sheet/${visit.id}`}
+                href={withReturn(`/inspections/job-sheet/${visit.id}`, `/technician/jobs/${orderId}`)}
                 className="block text-center rounded-lg border border-blue-200 bg-blue-50 py-3 text-sm font-bold text-blue-800"
               >
                 VIEW JOB SHEET
@@ -527,7 +528,7 @@ export default function TechnicianJobWorkspace() {
               </Link>
               {ctx.inspections[0] ? (
                 <Link
-                  href={`/inspections/${ctx.inspections[0].id}`}
+                  href={withReturn(`/inspections/${ctx.inspections[0].id}`, `/technician/jobs/${orderId}`)}
                   className="block text-center rounded-lg border border-slate-200 py-3 text-sm font-bold text-slate-700"
                 >
                   INSPECTION

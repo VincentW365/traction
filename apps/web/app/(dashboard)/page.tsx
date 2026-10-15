@@ -31,7 +31,10 @@ export default function DashboardHomePage() {
   return (
     <div className="page-container">
       <PageHeader
-        title={`Welcome back, ${user?.fullName?.split(' ')[0] ?? 'there'}`}
+        // CR-2026-118 §6 — the whole recorded name. Taking the first word produced
+        // "Welcome back, J." for every account stored as initial-plus-surname.
+        // An unrecorded name falls back to a greeting, never to a fragment.
+        title={user?.fullName?.trim() ? `Welcome back, ${user.fullName.trim()}` : 'Welcome to Traction'}
         subtitle="Traction — Service Operations"
         breadcrumbs={[{ label: 'Dashboard' }]}
       />

@@ -855,9 +855,22 @@
                 <strong>Job Sheet</strong>.</li>
               <li>Work down the checklist. Anything that does not apply can be marked <strong>Skipped</strong>
                 &mdash; say so rather than leaving it blank.</li>
-              <li>Add photographs where they tell the story better than words. Keep them to what matters.</li>
+              <li>Add photographs where they tell the story better than words. Press
+                <span class="btn">Take Picture</span> and the tablet's camera opens on screen &mdash; tap the
+                shutter, then <span class="btn">Use Photo</span> if it is clear or <span class="btn">Retake</span>
+                if it is not. Nothing is saved until you choose. <span class="btn">Upload existing photo</span>
+                takes one already on the device instead.</li>
               <li>Sign off. The record then shows as <strong>Signed off</strong> and cannot be quietly edited.</li>
+              <li>Press <span class="btn">&larr; Back to My Job</span> at the top. It takes you to the job you
+                opened this from &mdash; not to the general Inspections list &mdash; and asks first if you have
+                unsaved ticks.</li>
             </ol>
+            <div class="careful">
+              <strong>The camera needs the secure address.</strong> If the tablet is on a plain
+              <span class="data">http://</span> address, the browser will not open the live camera and
+              <span class="btn">Take Picture</span> falls back to the device's own camera app or gallery. Use the
+              <span class="data">https://</span> address your manager gave you.
+            </div>
             <div class="note">
               A saved draft is yours to come back to. Only a signed-off inspection counts as a finding you can
               show a customer.
@@ -1108,7 +1121,7 @@
               <table>
                 <thead><tr><th>Screen</th><th>Use it to</th></tr></thead>
                 <tbody>
-                  <tr><td><strong>Staff</strong></td><td>Add people, set their role, set passwords, record skills.</td></tr>
+                  <tr><td><strong>Staff</strong></td><td>Add people, set their role, set passwords, record skills. <strong>Edit name</strong> corrects how someone is recorded &mdash; several technicians were entered as an initial and surname ("J. Walters"), which is why their welcome screen showed only an initial. Enter the first and last name and the greeting follows.</td></tr>
                   <tr><td><strong>Availability</strong></td><td>A weekly calendar of who is working: available, on break, off the floor or absent.</td></tr>
                   <tr><td><strong>Assignments</strong></td><td>Every technician job assignment in one list, for checking who has what.</td></tr>
                   <tr><td><strong>Resources &amp; Bays</strong></td><td>What each position is and what it can take &mdash; weight, vehicle class, type of work.</td></tr>
@@ -1222,9 +1235,20 @@
                 <span class="path">Settings &rsaquo; Workshop Operations &rsaquo; Customer display board</span>.</li>
               <li>Open it on the waiting-room screen and leave it. No login, and it refreshes itself.</li>
             </ol>
-            <p>It shows three columns &mdash; <strong>In Queue</strong>, <strong>In Service</strong>,
-              <strong>Ready</strong> &mdash; by ticket number only. No names, no phone numbers, no plates. That is
-              deliberate: it is a public screen in a public room.</p>
+            <p>It shows three columns &mdash; <strong>Waiting</strong>, <strong>In Service</strong>,
+              <strong>Ready</strong> &mdash; and each vehicle leads with its <strong>licence plate</strong>, with
+              the short ticket number underneath, because a customer recognises their car before they
+              remember a number. A car being checked shows as <strong>Quality Check</strong>. The estimated
+              completion appears only when the platform has one; it never invents a time. No names, no phone
+              numbers, nothing else: it is a public screen in a public room.</p>
+            <ul>
+              <li>A vehicle with no plate recorded says <em>No plate recorded</em> and goes by its ticket number.</li>
+              <li>A <strong>Ready</strong> car drops off the screen after a few hours (set under the same display
+                settings), so one collected without its visit being closed does not sit there all day.</li>
+              <li>If management would rather not show full plates, <strong>Mask Licence Plates</strong> in the same
+                settings shows only the last three characters &mdash; enough to find your own car, not enough to
+                read anyone else's.</li>
+            </ul>
             <div class="careful">
               The address contains a private token. Do not post it anywhere public. If it leaks, a manager can
               change the token in the same setting and the old address stops working.

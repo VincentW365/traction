@@ -396,7 +396,9 @@ export default function TechnicianWorkView() {
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const firstName = user?.fullName?.split(' ')[0] ?? '';
+  // CR-2026-118 §6 — the whole recorded name. Taking the first word produced
+  // "Good morning, J." for every technician stored as initial-plus-surname.
+  const displayName = user?.fullName?.trim() ?? '';
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
   if (myAssignmentsQuery.isLoading) {
@@ -445,10 +447,16 @@ export default function TechnicianWorkView() {
       <div className="max-w-2xl mx-auto space-y-4">
         {/* ---- Technician header (§3) ---- */}
         <div>
+          {/* CR-2026-118 §6 — a readable name from the authenticated account, never a
+              fragment of one. When no name is recorded the heading still reads as a
+              welcome rather than as a missing value. */}
           <h1 className="text-xl font-bold text-slate-900">
-            {greeting}{firstName ? `, ${firstName}` : ''}
+            {displayName ? `Welcome back, ${displayName}` : 'Welcome to your Technician Workspace'}
           </h1>
-          <p className="text-xs text-slate-500">{today} · Technician workspace</p>
+          <p className="text-sm text-slate-600">{greeting} · Your Service Centre workspace</p>
+          <p className="text-xs text-slate-500">
+            <span className="font-semibold text-slate-700">Technician</span> · Service Centre · {today}
+          </p>
         </div>
 
         {/* ================= MY WORKDAY (§1/§9) ================= */}

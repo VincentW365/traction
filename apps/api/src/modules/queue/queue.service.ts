@@ -52,6 +52,32 @@ const ETA_DEFAULT_MIN_LIVE_SAMPLE = 20;
 // CR-2026-015 — outlier trimming. 0 = disabled (no trimming; default behavior).
 const ETA_DEFAULT_OUTLIER_CAP_MINUTES = 0;
 
+/** CR-2026-118 §5 — what the lobby screen may show about a vehicle. */
+export interface DisplayBoardConfig {
+  showPlates: boolean;
+  maskPlates: boolean;
+  readyHours: number;
+}
+
+/**
+ * The registration as the lobby screen shows it. Pure, so it is testable.
+ *
+ * - Nothing recorded → null. The screen says so; it never invents a plate.
+ * - Normalised: upper-case, one space at most, no stray punctuation, so
+ *   "8376 jz" and "8376JZ" are the same car to the person reading it.
+ * - Masked when management asks: only the tail survives, enough to recognise
+ *   your own car and not enough to identify someone else's.
+ */
+export function presentPlate(raw: string | null | undefined, cfg: DisplayBoardConfig): string | null {
+  if (!cfg.showPlates) return null;
+  const plate = (raw ?? '').toUpperCase().replace(/[^A-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  if (!plate) return null;
+  if (!cfg.maskPlates) return plate;
+  const compact = plate.replace(/ /g, '');
+  const keep = Math.min(3, compact.length);
+  return '•'.repeat(Math.max(0, compact.length - keep)) + compact.slice(-keep);
+}
+
 @Injectable()
 export class QueueService {
   private readonly logger = new Logger(QueueService.name);
@@ -734,6 +760,10 @@ export class QueueService {
   async getPublicDisplayBoard(siteId: string) {
     const now = new Date();
 
+    // CR-2026-118 §5 — what the lobby screen is allowed to show, and for how long.
+    const board = await this.displayBoardConfig(siteId);
+    const readyCutoff = new Date(now.getTime() - board.readyHours * 60 * 60 * 1000);
+
     const [site, tickets, occupancies, readyVisits] =
       await Promise.all([
         this.prisma.site.findUnique({ where: { id: siteId }, select: { name: true, timezone: true } }),
@@ -766,6 +796,9 @@ export class QueueService {
                 status: true,
                 currentEtaStartAt: true,
                 currentEtaCompleteAt: true,
+                // CR-2026-118 §5 — the registration is what a customer in the lobby
+                // recognises. Still no names, phones, emails, VIN or notes.
+                vehicle: { select: { plateNumber: true } },
                 appointment: { select: { scheduledStartAt: true } },
                 serviceOrders: {
                   where: { status: { notIn: ['CANCELLED', 'CLOSED'] } },
@@ -783,9 +816,13 @@ export class QueueService {
         // CR-2026-006 exempt (already live): READY_FOR_PICKUP excludes terminal
         // historical visits.
         this.prisma.serviceVisit.findMany({
-          where: { siteId, status: 'READY_FOR_PICKUP' },
+          // CR-2026-118 §5 — only recently-ready vehicles. One that has been ready
+          // longer than the configured window has almost certainly been collected
+          // without the visit being closed, and should not hold a row for ever.
+          where: { siteId, status: 'READY_FOR_PICKUP', updatedAt: { gte: readyCutoff } },
           select: {
             queueTicket: { select: { ticketNumber: true, displayTicketNumber: true } },
+            vehicle: { select: { plateNumber: true } },
             updatedAt: true,
           },
           orderBy: { updatedAt: 'desc' },
@@ -820,12 +857,15 @@ export class QueueService {
         }),
       );
 
+    const plateFor = (plate: string | null | undefined) => presentPlate(plate, board);
+
     const inService = tickets
       .filter((t) => t.displayStatus === 'CALLED' || t.displayStatus === 'IN_SERVICE')
       .map((t) => ({
         // CR-2026-089 — customers read the short number (B01-003); a legacy ticket
         // falls back to the only number it has.
         ticketNumber: t.displayTicketNumber ?? t.ticketNumber,
+        plate: plateFor(t.serviceVisit.vehicle?.plateNumber),
         bay: bayByVisit.get(t.serviceVisitId) ?? null,
         // CR-2026-086 — a car in QC reads as "finishing up" on the lobby screen.
         stage: t.serviceVisit.status === 'QC' ? ('QC' as const) : ('IN_SERVICE' as const),
@@ -838,6 +878,7 @@ export class QueueService {
       )
       .map((t) => ({
         ticketNumber: t.displayTicketNumber ?? t.ticketNumber,
+        plate: plateFor(t.serviceVisit.vehicle?.plateNumber),
         position: t.queueRank,
         ...publicEtaFor(t),
       }));
@@ -846,6 +887,7 @@ export class QueueService {
       .filter((v) => v.queueTicket?.ticketNumber)
       .map((v) => ({
         ticketNumber: v.queueTicket!.displayTicketNumber ?? v.queueTicket!.ticketNumber,
+        plate: plateFor(v.vehicle?.plateNumber),
       }));
 
     return {
@@ -855,10 +897,36 @@ export class QueueService {
       // regardless of the device's own timezone (CR-2026-079). PII-free.
       timezone: site?.timezone ?? 'America/Jamaica',
       generatedAt: now.toISOString(),
+      showPlates: board.showPlates,
       totalInQueue: inQueue.length,
       inQueue,
       inService,
       ready,
+    };
+  }
+
+  /**
+   * CR-2026-118 §5 — the lobby screen's presentation rules. Three business
+   * rules, all with safe defaults when the row is missing:
+   *   display_board_show_plates  (true)  — show the registration at all
+   *   display_board_plate_mask   (false) — show only the last characters
+   *   display_board_ready_hours  (4)     — how long a ready car stays listed
+   */
+  private async displayBoardConfig(siteId: string): Promise<DisplayBoardConfig> {
+    const rows = await this.prisma.businessRuleConfig.findMany({
+      where: {
+        ruleKey: { in: ['display_board_show_plates', 'display_board_plate_mask', 'display_board_ready_hours'] },
+        OR: [{ siteId }, { siteId: null }],
+        effectiveTo: null,
+      },
+      select: { ruleKey: true, valueJson: true },
+    });
+    const v = (k: string) => rows.find((r) => r.ruleKey === k)?.valueJson;
+    const hours = Number(v('display_board_ready_hours'));
+    return {
+      showPlates: v('display_board_show_plates') !== false,
+      maskPlates: v('display_board_plate_mask') === true,
+      readyHours: Number.isFinite(hours) && hours > 0 ? hours : 4,
     };
   }
 

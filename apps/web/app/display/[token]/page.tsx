@@ -21,17 +21,41 @@ function resolveSocketUrl(): string {
   return resolveApiBaseUrl().replace(/\/api\/v\d+\/?$/, '');
 }
 
+/**
+ * CR-2026-118 §5 — the lobby screen leads with the licence plate.
+ *
+ * A customer in the waiting area recognises their car, not a ticket number they
+ * were handed twenty minutes ago. Every row now carries `plate` (already
+ * normalised, and masked if management has asked for that) and the plate is the
+ * largest thing on the card; the ticket number stays underneath as the tie-break.
+ * `plate` is null when nothing is recorded — the card says so rather than
+ * inventing one — and `showPlates` is false when management has switched plates
+ * off, in which case the ticket number leads again.
+ *
+ * The three lanes are the three customer-facing states. Quality Check is shown by
+ * name in the In Service lane: a car that has been worked on and is being checked
+ * is neither "waiting" nor "ready", and the old "finishing up" wording hid that.
+ *
+ * Each lane shows about five rows — the directive's figure for a 32-inch screen at
+ * seating distance — and cycles through the rest slowly rather than scrolling.
+ */
 interface DisplayBoard {
   siteId: string;
   siteName: string;
   timezone: string; // site-anchored; drives the header clock/date (CR-2026-079)
   generatedAt: string;
+  showPlates: boolean;
   totalInQueue: number;
   // CR-2026-105b — each card carries the public-safe estimate (times + ON_TIME/DELAYED only).
-  inQueue: ({ ticketNumber: string; position: number | null } & PublicEta)[];
-  inService: ({ ticketNumber: string; bay: string | null; stage: 'IN_SERVICE' | 'QC' } & PublicEta)[];
-  ready: { ticketNumber: string }[];
+  inQueue: ({ ticketNumber: string; plate: string | null; position: number | null } & PublicEta)[];
+  inService: ({ ticketNumber: string; plate: string | null; bay: string | null; stage: 'IN_SERVICE' | 'QC' } & PublicEta)[];
+  ready: { ticketNumber: string; plate: string | null }[];
 }
+
+/** Rows visible per lane at once, before the lane starts cycling. */
+const ROWS_PER_PAGE = 5;
+/** How long each page of a lane stays up. Slow on purpose — this is read, not watched. */
+const PAGE_MS = 9000;
 
 function useClock() {
   const [now, setNow] = useState<Date | null>(null);
@@ -74,11 +98,25 @@ const SERVICE_TIPS = [
 function useRotatingIndex(length: number, intervalMs: number): number {
   const [i, setI] = useState(0);
   useEffect(() => {
+    setI(0);
     if (length <= 1) return;
     const id = setInterval(() => setI((prev) => (prev + 1) % length), intervalMs);
     return () => clearInterval(id);
   }, [length, intervalMs]);
   return i;
+}
+
+/**
+ * CR-2026-118 §5 — which page of a lane is showing. A lane with more vehicles
+ * than fit cycles through them a page at a time; one that fits does nothing.
+ */
+function useLanePage<T>(items: T[]): { page: T[]; pageIndex: number; pageCount: number; from: number; to: number } {
+  const pageCount = Math.max(1, Math.ceil(items.length / ROWS_PER_PAGE));
+  const pageIndex = useRotatingIndex(pageCount, PAGE_MS);
+  const safeIndex = Math.min(pageIndex, pageCount - 1);
+  const from = safeIndex * ROWS_PER_PAGE;
+  const page = items.slice(from, from + ROWS_PER_PAGE);
+  return { page, pageIndex: safeIndex, pageCount, from: items.length ? from + 1 : 0, to: from + page.length };
 }
 
 // CR-2026-105b — the customer-facing estimate on a card. Times only, in the site's
@@ -91,6 +129,7 @@ function EtaLines({ item, tz, mode }: { item: PublicEta; tz: string; mode: 'queu
     <div className="text-[clamp(0.75rem,1vw,1.1rem)] font-semibold uppercase tracking-wider text-amber-300">Delayed</div>
   );
 
+  // §5.6C — when there is no reliable estimate, say nothing rather than invent a time.
   if (!item.estimatedCompletion) return delayed ? <div className="mt-2">{delayedTag}</div> : null;
 
   if (mode === 'queue') {
@@ -102,7 +141,7 @@ function EtaLines({ item, tz, mode }: { item: PublicEta; tz: string; mode: 'queu
           </div>
         )}
         <div>
-          Est. done <span className={value}>{fmtEtaWindow(item.estimatedCompletion, item.showRange, tz)}</span>
+          Est. completion <span className={value}>{fmtEtaWindow(item.estimatedCompletion, item.showRange, tz)}</span>
         </div>
       </div>
     );
@@ -119,8 +158,7 @@ function EtaLines({ item, tz, mode }: { item: PublicEta; tz: string; mode: 'queu
         </>
       ) : (
         <div>
-          {mode === 'qc' ? 'Finishing up · est. ' : 'Est. completion '}
-          <span className={value}>{fmtEtaWindow(item.estimatedCompletion, item.showRange, tz)}</span>
+          Est. completion <span className={value}>{fmtEtaWindow(item.estimatedCompletion, item.showRange, tz)}</span>
         </div>
       )}
     </div>
@@ -172,6 +210,12 @@ export default function DisplayBoardPage() {
     };
   }, [siteId, refetch]);
 
+  // Lane paging hooks are unconditional (rules of hooks); they see empty lists
+  // while loading and simply do nothing.
+  const queueLane = useLanePage(data?.inQueue ?? []);
+  const serviceLane = useLanePage(data?.inService ?? []);
+  const readyLane = useLanePage(data?.ready ?? []);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -211,6 +255,7 @@ export default function DisplayBoardPage() {
         day: 'numeric',
       })
     : '';
+  const showPlates = data.showPlates !== false;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white flex flex-col">
@@ -231,7 +276,7 @@ export default function DisplayBoardPage() {
               {data.siteName}
             </div>
             <div className="mt-1 text-[clamp(0.7rem,1.1vw,1.15rem)] font-semibold uppercase tracking-[0.25em] text-blue-300/80">
-              Live Service Queue
+              Live Service Status
             </div>
           </div>
         </div>
@@ -261,22 +306,21 @@ export default function DisplayBoardPage() {
       {/* Lanes */}
       <main className="relative flex-1 grid grid-cols-3 gap-[clamp(0.75rem,1.4vw,1.5rem)] p-[clamp(0.75rem,1.6vw,1.75rem)] overflow-hidden">
         <Lane
-          title="In Queue"
+          title="Waiting"
           subtitle="Waiting to be serviced"
           count={data.inQueue.length}
+          paging={queueLane}
           accent={ACCENTS.blue}
           icon={<ClockIcon />}
           empty="No vehicles waiting"
         >
-          {data.inQueue.map((item) => (
-            <TicketCard key={item.ticketNumber} ticket={item.ticketNumber} accent={ACCENTS.blue}>
+          {queueLane.page.map((item) => (
+            <VehicleCard key={item.ticketNumber} plate={item.plate} ticket={item.ticketNumber} showPlates={showPlates} accent={ACCENTS.blue}>
               {item.position != null ? (
                 <div className="text-right leading-none">
-                  <div className="text-[clamp(1.75rem,3vw,3.5rem)] font-bold tabular-nums text-slate-100">
-                    #{item.position}
-                  </div>
-                  <div className="mt-1 text-[clamp(0.75rem,1vw,1.1rem)] font-medium text-slate-400">
-                    of {data.totalInQueue}
+                  <div className="text-[clamp(1.1rem,1.8vw,2.1rem)] font-semibold text-blue-200">Waiting</div>
+                  <div className="mt-1 text-[clamp(0.75rem,1vw,1.1rem)] font-medium text-slate-400 tabular-nums">
+                    #{item.position} of {data.totalInQueue}
                   </div>
                   <EtaLines item={item} tz={data.timezone} mode="queue" />
                 </div>
@@ -287,7 +331,7 @@ export default function DisplayBoardPage() {
                   </div>
                 </div>
               )}
-            </TicketCard>
+            </VehicleCard>
           ))}
         </Lane>
 
@@ -295,25 +339,25 @@ export default function DisplayBoardPage() {
           title="In Service"
           subtitle="Being worked on now"
           count={data.inService.length}
+          paging={serviceLane}
           accent={ACCENTS.amber}
           icon={<WrenchIcon />}
           empty="No active jobs"
         >
-          {data.inService.map((item) => (
-            <TicketCard key={item.ticketNumber} ticket={item.ticketNumber} accent={ACCENTS.amber}>
+          {serviceLane.page.map((item) => (
+            <VehicleCard key={item.ticketNumber} plate={item.plate} ticket={item.ticketNumber} showPlates={showPlates} accent={ACCENTS.amber}>
               <div className="text-right leading-none">
-                {/* This lane is for vehicles already under work. "Called — please
-                    proceed" belonged to the waiting lane's vocabulary and told a
-                    customer whose car was on the lift to come forward for nothing. */}
+                {/* §5.6B — Quality Check is its own, honest status: worked on, being
+                    checked, not yet ready. */}
                 <div className="text-[clamp(1.1rem,1.8vw,2.1rem)] font-semibold text-amber-200">
-                  {item.bay ?? 'In Workshop'}
+                  {item.stage === 'QC' ? 'Quality Check' : 'In Service'}
                 </div>
                 <div className="mt-1 text-[clamp(0.7rem,0.95vw,1.05rem)] font-medium uppercase tracking-wider text-amber-400/70">
-                  {item.bay ? 'Service Bay' : 'Vehicle being worked on'}
+                  {item.stage === 'QC' ? 'Final check before collection' : item.bay ? item.bay : 'Vehicle being worked on'}
                 </div>
                 <EtaLines item={item} tz={data.timezone} mode={item.stage === 'QC' ? 'qc' : 'service'} />
               </div>
-            </TicketCard>
+            </VehicleCard>
           ))}
         </Lane>
 
@@ -321,14 +365,17 @@ export default function DisplayBoardPage() {
           title="Ready"
           subtitle="Ready for collection"
           count={data.ready.length}
+          paging={readyLane}
           accent={ACCENTS.emerald}
           icon={<CheckBadgeIcon />}
           empty="Nothing ready yet"
         >
-          {data.ready.map((item) => (
-            <TicketCard
+          {readyLane.page.map((item) => (
+            <VehicleCard
               key={item.ticketNumber}
+              plate={item.plate}
               ticket={item.ticketNumber}
+              showPlates={showPlates}
               accent={ACCENTS.emerald}
               highlight
             >
@@ -341,9 +388,9 @@ export default function DisplayBoardPage() {
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                 </svg>
-                Ready
+                Ready for Collection
               </span>
-            </TicketCard>
+            </VehicleCard>
           ))}
         </Lane>
       </main>
@@ -362,14 +409,13 @@ export default function DisplayBoardPage() {
             {SERVICE_TIPS[tipIndex]}
           </p>
         </div>
-        {/*
-          CR-2026-086 — "Please listen for your ticket number" described a workflow
-          this shop does not run: nobody calls numbers out loud. The board is the
-          notification, so the copy now tells the customer to watch it.
-        */}
         <p className="mt-1 text-[clamp(0.75rem,1vw,1.1rem)] font-medium text-slate-500">
-          Find your <span className="text-slate-300">ticket number</span> on this board — it was given to
-          you at check-in. The board updates by itself as your vehicle moves through service.
+          {showPlates ? (
+            <>Find your <span className="text-slate-300">licence plate</span> on this board. Your ticket number is shown underneath it.</>
+          ) : (
+            <>Find your <span className="text-slate-300">ticket number</span> on this board — it was given to you at check-in.</>
+          )}{' '}
+          The board updates by itself as your vehicle moves through service.
         </p>
       </footer>
 
@@ -415,10 +461,13 @@ const ACCENTS = {
   },
 } satisfies Record<string, Accent>;
 
+type Paging = { pageIndex: number; pageCount: number; from: number; to: number };
+
 function Lane({
   title,
   subtitle,
   count,
+  paging,
   accent,
   icon,
   empty,
@@ -427,6 +476,7 @@ function Lane({
   title: string;
   subtitle: string;
   count: number;
+  paging: Paging;
   accent: Accent;
   icon: ReactNode;
   empty: string;
@@ -456,7 +506,7 @@ function Lane({
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-[clamp(0.6rem,1vw,1.1rem)] pb-[clamp(0.6rem,1vw,1.1rem)] space-y-[clamp(0.5rem,0.8vw,0.85rem)]">
+      <div className="flex-1 overflow-hidden px-[clamp(0.6rem,1vw,1.1rem)] pb-[clamp(0.6rem,1vw,1.1rem)] space-y-[clamp(0.5rem,0.8vw,0.85rem)]">
         {count === 0 ? (
           <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-600">
             <span className="opacity-40">{icon}</span>
@@ -466,21 +516,49 @@ function Lane({
           children
         )}
       </div>
+
+      {/* CR-2026-118 §5 — more vehicles than fit: say which page is up, and cycle. */}
+      {paging.pageCount > 1 && (
+        <div className="flex items-center justify-between px-[clamp(1rem,1.6vw,1.75rem)] py-[clamp(0.4rem,0.7vw,0.8rem)] border-t border-white/5 text-[clamp(0.7rem,0.95vw,1.05rem)] text-slate-400 tabular-nums">
+          <span>
+            Showing {paging.from}–{paging.to} of {count}
+          </span>
+          <span className="flex items-center gap-1.5" aria-label={`Page ${paging.pageIndex + 1} of ${paging.pageCount}`}>
+            {Array.from({ length: paging.pageCount }, (_, i) => (
+              <span
+                key={i}
+                className={`inline-block h-2 w-2 rounded-full ${i === paging.pageIndex ? 'bg-slate-200' : 'bg-slate-600'}`}
+              />
+            ))}
+          </span>
+        </div>
+      )}
     </section>
   );
 }
 
-function TicketCard({
+/**
+ * CR-2026-118 §5 — one vehicle on the board. The licence plate is the largest
+ * thing on the card; the ticket number sits under it. No plate recorded → the
+ * card says so and the ticket number carries the row.
+ */
+function VehicleCard({
+  plate,
   ticket,
+  showPlates,
   accent,
   children,
   highlight,
 }: {
+  plate: string | null;
   ticket: string;
+  showPlates: boolean;
   accent: Accent;
   children: ReactNode;
   highlight?: boolean;
 }) {
+  const lead = showPlates && plate ? plate : ticket;
+  const sub = showPlates ? (plate ? `Ticket ${ticket}` : 'No plate recorded') : null;
   return (
     <div
       className={`flex items-center justify-between gap-[clamp(0.75rem,1.4vw,1.5rem)] rounded-xl px-[clamp(0.9rem,1.4vw,1.6rem)] py-[clamp(0.7rem,1.1vw,1.25rem)] ring-1 ${
@@ -489,10 +567,20 @@ function TicketCard({
           : `bg-slate-800/60 ${accent.ring}`
       }`}
     >
-      {/* min-w-0 + break-words lets long ticket numbers (e.g. QTK-BERT-01-20260707-0001)
-          wrap cleanly instead of overflowing into the position block. */}
-      <div className={`min-w-0 flex-1 text-[clamp(1.25rem,2vw,2.5rem)] font-extrabold tabular-nums leading-tight break-words ${accent.text}`}>
-        {ticket}
+      {/* min-w-0 + break-words lets a long registration or ticket wrap instead of
+          overflowing into the status block. */}
+      <div className="min-w-0 flex-1">
+        <div
+          className={`text-[clamp(1.6rem,2.6vw,3.25rem)] font-extrabold tracking-wide tabular-nums leading-tight break-words ${accent.text}`}
+          aria-label={showPlates && plate ? `Licence plate ${plate}` : `Ticket ${ticket}`}
+        >
+          {lead}
+        </div>
+        {sub && (
+          <div className={`mt-0.5 text-[clamp(0.75rem,1vw,1.15rem)] font-medium tabular-nums ${plate ? 'text-slate-400' : 'text-slate-500 italic'}`}>
+            {sub}
+          </div>
+        )}
       </div>
       <div className="shrink-0 text-right">{children}</div>
     </div>

@@ -5,6 +5,9 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, getToken } from '../../../../lib/api-client';
+import { useReturnTo, withReturn } from '../../../../lib/return-to';
+import { useUnsavedChanges, confirmLeave } from '../../../../lib/unsaved-changes';
+import { CameraCapture } from '../../../../components/camera-capture';
 import { LoadingState } from '../../../../components/ui/loading-state';
 
 /**
@@ -174,6 +177,9 @@ export default function InspectionWorkspacePage() {
   });
 
   const visitId = opened.data?.serviceVisit?.id;
+  // CR-2026-118 §4 — where this document was opened from; the visit when unknown.
+  // Called here, before any early return, so the hook order never changes.
+  const ret = useReturnTo(visitId ? `/visits/${visitId}` : '/inspections');
 
   // Everything this visit carries, so the tabs can address both kinds at once.
   const siblings = useQuery<{ items: SiblingRow[] }>({
@@ -218,7 +224,7 @@ export default function InspectionWorkspacePage() {
       {/* Vehicle strip + tabs */}
       <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
         <div className="flex items-center gap-3 min-w-0">
-          <Link href="/inspections" className="text-xs text-blue-600 hover:underline shrink-0">← Inspections</Link>
+          <Link href={ret.path} onClick={(e) => { if (!confirmLeave()) e.preventDefault(); }} className="text-xs text-blue-600 hover:underline shrink-0">← {ret.label}</Link>
           <span className="text-sm font-semibold text-slate-900 truncate">
             {v ? `${v.modelYear ?? ''} ${v.make ?? ''} ${v.model ?? ''}`.trim() : 'Vehicle'} · {v?.plateNumber ?? '—'}
           </span>
@@ -227,7 +233,7 @@ export default function InspectionWorkspacePage() {
         {visitId && (
           <div className="flex items-center gap-1.5 shrink-0">
             <Link href={`/visits/${visitId}`} className="btn-secondary text-xs" title="The complete record of this visit">Visit Record</Link>
-            <Link href={`/inspections/job-sheet/${visitId}`} className="btn-secondary text-xs">Job Sheet</Link>
+            <Link href={withReturn(`/inspections/job-sheet/${visitId}`, ret.from)} className="btn-secondary text-xs">Job Sheet</Link>
           </div>
         )}
       </div>
@@ -363,6 +369,8 @@ function VehicleInspectionFormInner({
   const [damageNotes, setDamageNotes] = useState(inspection.priorBodyDamageNotes ?? '');
   const [comments, setComments] = useState(inspection.comments ?? '');
   const [dirty, setDirty] = useState(false);
+  // CR-2026-118 §4E — unsaved ticks must survive a Back or a closed tab.
+  useUnsavedChanges(dirty);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['inspection', inspection.id] });
 
@@ -398,9 +406,11 @@ function VehicleInspectionFormInner({
     mutationFn: (reason: string) => api.post(`/inspections/${inspection.id}/skip`, { reason }),
     onSuccess: invalidate,
   });
+  // CR-2026-118 §4 — back to where this was opened from; the visit if unknown.
+  const ret = useReturnTo(inspection.serviceVisit?.id ? `/visits/${inspection.serviceVisit.id}` : '/inspections');
   const cancel = useMutation({
     mutationFn: () => api.post(`/inspections/${inspection.id}/cancel`, {}),
-    onSuccess: () => router.push('/inspections'),
+    onSuccess: () => router.push(ret.path),
   });
 
   const notInspectedCount = useMemo(
@@ -598,6 +608,13 @@ function VehicleInspectionFormInner({
             Not Inspected
           </span>
         </div>
+      </div>
+
+      {/* CR-2026-118 §3E — the Vehicle Inspection had no way to attach a photograph
+          at all; only the pre-inspection did. Same section, same endpoint, same
+          camera control, so a finding can be shown rather than described. */}
+      <div className="mt-3">
+        <PhotoSection inspection={inspection} editable={editable} onChanged={invalidate} />
       </div>
 
       {/* Paperwork actions — under the form, as asked */}
@@ -854,8 +871,6 @@ function PhotoSection({ inspection, editable, onChanged }: {
   editable: boolean;
   onChanged: () => void;
 }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const cameraRef = useRef<HTMLInputElement>(null);
   const [category, setCategory] = useState<string>('OTHER');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -901,16 +916,10 @@ function PhotoSection({ inspection, editable, onChanged }: {
                 <option key={cat} value={cat}>{PHOTO_CATEGORY_LABEL[cat]}</option>
               ))}
             </select>
-            <button onClick={() => cameraRef.current?.click()} disabled={uploading} className="btn-primary text-xs">
-              {uploading ? 'Uploading…' : 'Take Photo'}
-            </button>
-            <button onClick={() => fileRef.current?.click()} disabled={uploading} className="btn-secondary text-xs">
-              Upload Image
-            </button>
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-              onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
-            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
-              onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
+            {/* CR-2026-118 §3 — live camera where the browser allows it, the capture
+                input where it does not, a separate upload action, and a preview with
+                Retake / Use Photo / Cancel before anything is stored. */}
+            <CameraCapture onCapture={upload} disabled={uploading} busyLabel="Uploading…" />
           </div>
         )}
       </div>
@@ -1042,6 +1051,8 @@ function PreInspectionInner({ inspection }: { inspection: Inspection }) {
     odometerReading: inspection.odometerReading ?? inspection.serviceVisit?.mileageIn ?? null,
   });
   const [dirty, setDirty] = useState(false);
+  // CR-2026-118 §4E — unsaved ticks must survive a Back or a closed tab.
+  useUnsavedChanges(dirty);
   const [noPhotoDialog, setNoPhotoDialog] = useState(false);
   const [noPhotoReason, setNoPhotoReason] = useState<string>('CAMERA_UNAVAILABLE');
   const set = <K extends keyof typeof form>(k: K, val: (typeof form)[K]) => {
@@ -1071,9 +1082,11 @@ function PreInspectionInner({ inspection }: { inspection: Inspection }) {
     mutationFn: (reason: string) => api.post(`/inspections/${inspection.id}/skip`, { reason }),
     onSuccess: invalidate,
   });
+  // CR-2026-118 §4 — back to where this was opened from; the visit if unknown.
+  const ret = useReturnTo(inspection.serviceVisit?.id ? `/visits/${inspection.serviceVisit.id}` : '/inspections');
   const cancel = useMutation({
     mutationFn: () => api.post(`/inspections/${inspection.id}/cancel`, {}),
-    onSuccess: () => router.push('/inspections'),
+    onSuccess: () => router.push(ret.path),
   });
 
   const onComplete = async () => {

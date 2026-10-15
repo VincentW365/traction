@@ -475,6 +475,10 @@ async function main() {
     // is the safe state; the mailbox itself stays in deployment config.
     { ruleKey: 'notifications_live_sending', valueJson: false, notes: 'CR-2026-117: OFF routes every customer email to the test recipient. ON sends to real customers. Requires a mailbox connected in deployment config.' },
     { ruleKey: 'notifications_test_email_to', valueJson: '', notes: 'CR-2026-117: where customer email goes while live sending is off. Empty falls back to NOTIFICATION_TEST_EMAIL_TO.' },
+    // CR-2026-118 §5 — what the lobby screen shows about a vehicle, and for how long.
+    { ruleKey: 'display_board_show_plates', valueJson: true, notes: 'CR-2026-118: show the vehicle registration on the waiting-room display.' },
+    { ruleKey: 'display_board_plate_mask', valueJson: false, notes: 'CR-2026-118: show only the last characters of each registration on the display.' },
+    { ruleKey: 'display_board_ready_hours', valueJson: 4, notes: 'CR-2026-118: hours a Ready vehicle stays on the display before dropping off.' },
     { ruleKey: 'booking_simulator_enabled', valueJson: true, notes: 'CR-2026-116: shows or hides Setup -> Booking Simulator and its test-booking sessions. Off also refuses the endpoints behind it, so the tool is genuinely gone rather than merely unlisted.' },
   ];
 

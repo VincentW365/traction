@@ -16,6 +16,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useQueueSocket } from '../../../../hooks/use-queue-socket';
 import { CONFIDENCE_CLASS, CONFIDENCE_LABEL, fmtEtaUpdated, fmtEtaWindow, type EtaView } from '../../../../lib/eta-format';
 import Link from 'next/link';
+import { withReturn } from '../../../../lib/return-to';
 import { api, getToken } from '../../../../lib/api-client';
 import { useAuth } from '../../../../hooks/use-auth';
 import { PageHeader } from '../../../../components/ui/page-header';
@@ -439,12 +440,12 @@ export default function VisitRecordPage() {
                     Last saved {fmtDT(v.jobSheet.updatedAt)}{v.jobSheet.updatedBy ? ` by ${v.jobSheet.updatedBy}` : ''}
                   </p>
                 </div>
-                <Link href={`/inspections/job-sheet/${v.id}`} className="btn-primary text-sm">Open Job Sheet</Link>
+                <Link href={withReturn(`/inspections/job-sheet/${v.id}`, `/visits/${v.id}`)} className="btn-primary text-sm">Open Job Sheet</Link>
               </div>
             ) : (
               <div className="text-center py-6">
                 <p className="text-sm text-slate-500 mb-3">No job sheet has been saved for this visit.</p>
-                <Link href={`/inspections/job-sheet/${v.id}`} className="btn-secondary text-sm">Open Blank Job Sheet</Link>
+                <Link href={withReturn(`/inspections/job-sheet/${v.id}`, `/visits/${v.id}`)} className="btn-secondary text-sm">Open Blank Job Sheet</Link>
               </div>
             )}
           </div>
@@ -474,7 +475,7 @@ export default function VisitRecordPage() {
                     {i._count.recommendations} observation{i._count.recommendations === 1 ? '' : 's'} · {i._count.photos} image{i._count.photos === 1 ? '' : 's'}
                   </p>
                 </div>
-                <Link href={`/inspections/${i.id}`} className="btn-secondary text-sm">View Inspection</Link>
+                <Link href={withReturn(`/inspections/${i.id}`, `/visits/${v.id}`)} className="btn-secondary text-sm">View Inspection</Link>
               </div>
             </div>
           ))}
@@ -495,8 +496,8 @@ export default function VisitRecordPage() {
                   {g.sourceLabel}
                   {g.inspectionNumber && <span className="font-mono text-xs text-slate-400 ml-2">{g.inspectionNumber}</span>}
                 </h2>
-                {g.inspectionId && <Link href={`/inspections/${g.inspectionId}`} className="text-xs text-blue-600 hover:underline">Open source record</Link>}
-                {g.source === 'JOB_SHEET' && <Link href={`/inspections/job-sheet/${v.id}`} className="text-xs text-blue-600 hover:underline">Open job sheet</Link>}
+                {g.inspectionId && <Link href={withReturn(`/inspections/${g.inspectionId}`, `/visits/${v.id}`)} className="text-xs text-blue-600 hover:underline">Open source record</Link>}
+                {g.source === 'JOB_SHEET' && <Link href={withReturn(`/inspections/job-sheet/${v.id}`, `/visits/${v.id}`)} className="text-xs text-blue-600 hover:underline">Open job sheet</Link>}
               </div>
               <div className="card-body">
                 {g.photos && g.photos.length > 0 ? (

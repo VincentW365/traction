@@ -18,15 +18,27 @@ describe('CR-2026-105b — authoritative ETA surfaces', () => {
     expect(read('hooks/use-queue-socket.ts')).toContain("'queue:updated'");
   });
 
-  it('lobby display shows estimated start/done, delayed copy, and never confidence reasons', () => {
+  it('lobby display shows estimated start/completion, delayed copy, and never confidence reasons', () => {
     const src = read('app/display/[token]/page.tsx');
     expect(src).toContain('Est. start');
-    expect(src).toContain('Est. done');
+    // CR-2026-118 §5 — "Estimated Completion" is the directive's own label, and the
+    // same wording the status page uses, so a customer sees one phrase everywhere.
+    expect(src).toContain('Est. completion');
     expect(src).toContain('Updated est.');
-    expect(src).toContain('Finishing up');
+    // §5.6B — a car being checked is neither waiting nor ready; it says so by name.
+    expect(src).toContain('Quality Check');
     expect(src).toContain('PublicEta');
     expect(src).not.toContain('CONFIDENCE_LABEL');
     expect(src).not.toContain('AT_RISK');
+  });
+
+  it('lobby display leads with the licence plate and never invents one (CR-2026-118 §5)', () => {
+    const src = read('app/display/[token]/page.tsx');
+    expect(src).toContain('plate: string | null');
+    expect(src).toContain('No plate recorded');
+    expect(src).toContain('showPlates');
+    // Nothing personal reaches the lobby screen: the type carries no name, phone or email.
+    expect(src).not.toMatch(/customerName|phone|email/i);
   });
 
   it('customer status page shows the estimate without confidence reasons', () => {

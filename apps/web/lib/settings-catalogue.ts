@@ -681,6 +681,30 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
             control: 'text',
             advanced: true,
           },
+          // CR-2026-118 §5 — what the lobby screen shows about a vehicle.
+          {
+            key: 'display_board_show_plates',
+            label: 'Show Licence Plates',
+            help: "Shows each vehicle's registration on the waiting-area display so customers can recognise their car.",
+            control: 'toggle',
+            impact: 'Turning this off hides every registration from the lobby screen; customers then have only their ticket number to go by.',
+          },
+          {
+            key: 'display_board_plate_mask',
+            label: 'Mask Licence Plates',
+            help: "Shows only the last characters of each registration, so a customer can recognise their own car without reading anyone else's.",
+            control: 'toggle',
+            activeWhen: { key: 'display_board_show_plates', equals: 'true', inactiveNote: 'Plates are hidden entirely, so there is nothing to mask.' },
+          },
+          {
+            key: 'display_board_ready_hours',
+            label: 'Keep Ready Vehicles Listed For',
+            help: 'How long a vehicle stays in the Ready column after it is ready for collection. A car collected without its visit being closed drops off after this.',
+            control: 'number',
+            unit: 'hours',
+            min: 1,
+            max: 24,
+          },
         ],
       },
       {

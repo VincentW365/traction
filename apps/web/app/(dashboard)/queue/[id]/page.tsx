@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { withReturn } from '../../../../lib/return-to';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useQueueSocket } from '../../../../hooks/use-queue-socket';
 import { CONFIDENCE_CLASS, CONFIDENCE_LABEL, fmtEtaUpdated, fmtEtaWindow, type EtaView } from '../../../../lib/eta-format';
@@ -310,13 +311,14 @@ export default function QueueTicketDetailPage() {
   const startInspection = useMutation({
     mutationFn: (kind: 'VEHICLE_INSPECTION' | 'PRE_INSPECTION') =>
       api.post<{ id: string }>('/inspections', { serviceVisitId: ticket!.serviceVisit.id, kind }),
-    onSuccess: (created) => router.push(`/inspections/${created.id}`),
+    // CR-2026-118 §4 — the ticket travels with the form, so Back lands here.
+    onSuccess: (created) => router.push(withReturn(`/inspections/${created.id}`, `/queue/${ticketId}`)),
   });
   const openOrStart = (kind: 'VEHICLE_INSPECTION' | 'PRE_INSPECTION') => {
     const existing = (inspectionsQuery.data?.items ?? [])
       .filter((i) => i.kind === kind && i.status !== 'CANCELLED')
       .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))[0];
-    if (existing) router.push(`/inspections/${existing.id}`);
+    if (existing) router.push(withReturn(`/inspections/${existing.id}`, `/queue/${ticketId}`));
     else startInspection.mutate(kind);
   };
 
@@ -1711,7 +1713,7 @@ export default function QueueTicketDetailPage() {
           {(inspectionsQuery.data?.items ?? []).length > 0 && (
             <div className="space-y-2">
               {inspectionsQuery.data!.items.map((insp) => (
-                <Link key={insp.id} href={`/inspections/${insp.id}`} className="flex items-center justify-between gap-2 border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300">
+                <Link key={insp.id} href={withReturn(`/inspections/${insp.id}`, `/queue/${ticketId}`)} className="flex items-center justify-between gap-2 border border-slate-200 rounded-md px-3 py-2 hover:border-blue-300">
                   <span className="font-mono text-xs font-semibold text-blue-600">{insp.inspectionNumber}</span>
                   <span className={`badge text-[10px] ${insp.kind === 'PRE_INSPECTION' ? 'bg-cyan-50 text-cyan-700' : 'bg-indigo-50 text-indigo-700'}`}>
                     {insp.kind === 'PRE_INSPECTION' ? 'Pre-Inspection' : 'Vehicle'}
@@ -1731,7 +1733,7 @@ export default function QueueTicketDetailPage() {
                 <button onClick={() => openOrStart('PRE_INSPECTION')} disabled={startInspection.isPending} className="btn-secondary text-xs">
                   Pre-Inspection
                 </button>
-                <Link href={`/inspections/job-sheet/${ticket!.serviceVisit.id}`} className="btn-secondary text-xs">
+                <Link href={withReturn(`/inspections/job-sheet/${ticket!.serviceVisit.id}`, `/queue/${ticketId}`)} className="btn-secondary text-xs">
                   Job Sheet
                 </Link>
               </div>

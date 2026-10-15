@@ -109,6 +109,19 @@ export default function StaffDetailPage() {
   });
 
   // CR-2026-087 — mark this technician senior (eligible to be assigned a quality check).
+  // CR-2026-118 §6 — twelve technician accounts were recorded as "J. Walters":
+  // an initial and a surname. The greeting cannot show a first name that was
+  // never entered, and until now nothing in the UI let a manager enter one —
+  // the API accepted fullName on PATCH /staff/:id, the screen never offered it.
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const renameMutation = useMutation({
+    mutationFn: (fullName: string) => api.patch(`/staff/${staffId}`, { fullName }),
+    onSuccess: () => {
+      setEditingName(false);
+      queryClient.invalidateQueries({ queryKey: ['staff-detail', staffId] });
+    },
+  });
   const seniorityMutation = useMutation({
     mutationFn: (isSenior: boolean) =>
       api.patch(`/staff/${staffId}/technician/seniority`, { isSenior }),
@@ -165,6 +178,37 @@ export default function StaffDetailPage() {
         ]}
         actions={
           <div className="flex items-center gap-2">
+            {editingName ? (
+              <form
+                className="flex items-center gap-1.5"
+                onSubmit={(e) => { e.preventDefault(); const v = nameDraft.trim(); if (v.length >= 2) renameMutation.mutate(v); }}
+              >
+                <input
+                  autoFocus
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  placeholder="First and last name"
+                  className="input-field text-sm py-1 w-56"
+                  aria-label="Full name"
+                />
+                <button type="submit" disabled={renameMutation.isPending || nameDraft.trim().length < 2} className="btn-primary text-xs">
+                  {renameMutation.isPending ? 'Saving…' : 'Save'}
+                </button>
+                <button type="button" onClick={() => setEditingName(false)} className="btn-secondary text-xs">Cancel</button>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { setNameDraft(staff.fullName); setEditingName(true); }}
+                className="btn-secondary text-xs"
+                title="Correct how this person's name is recorded"
+              >
+                Edit name
+              </button>
+            )}
+            {renameMutation.isError && (
+              <span className="text-xs text-red-600">{renameMutation.error instanceof Error ? renameMutation.error.message : 'The name could not be saved.'}</span>
+            )}
             <StatusBadge status={staff.status} />
             <span className="badge bg-slate-100 text-slate-700">
               {ROLE_LABELS[staff.roleCode] ?? staff.roleCode}

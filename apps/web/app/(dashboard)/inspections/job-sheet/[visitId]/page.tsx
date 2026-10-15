@@ -7,6 +7,8 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../../../../lib/api-client';
 import { SignaturePad } from '../../../../../components/signature-pad';
 import { LoadingState } from '../../../../../components/ui/loading-state';
+import { useReturnTo, withReturn } from '../../../../../lib/return-to';
+import { confirmLeave, useUnsavedChanges } from '../../../../../lib/unsaved-changes';
 
 /**
  * CR-2026-093 — the Service Centre Job Card, digital.
@@ -135,6 +137,9 @@ function TickBox({ on, onToggle, label }: { on: boolean; onToggle: () => void; l
 
 export default function JobSheetPage() {
   const { visitId } = useParams<{ visitId: string }>();
+  // CR-2026-118 §4 — where this job sheet was opened from; the visit if unknown.
+  // Called before any early return so the hook order never changes.
+  const ret = useReturnTo(`/visits/${visitId}`);
   const q = useQuery<JobSheetData>({
     queryKey: ['job-sheet', visitId],
     queryFn: () => api.get(`/service-visits/${visitId}/job-sheet`),
@@ -145,6 +150,8 @@ export default function JobSheetPage() {
   const [signature, setSignature] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // CR-2026-118 §4E — unsaved ticks must survive a Back or a closed tab.
+  useUnsavedChanges(dirty);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const setField = (key: string) => (v: string) => {
     setFields((prev) => ({ ...prev, [key]: v }));
@@ -254,7 +261,7 @@ export default function JobSheetPage() {
     <div className="page-container max-w-3xl">
       <div className="flex items-center justify-between mb-3 print:hidden">
         <div className="flex items-center gap-3">
-          <Link href="/inspections" className="text-xs text-blue-600 hover:underline">← Inspections</Link>
+          <Link href={ret.path} onClick={(e) => { if (!confirmLeave()) e.preventDefault(); }} className="text-xs text-blue-600 hover:underline">← {ret.label}</Link>
           <Link href={`/visits/${visitId}`} className="text-xs text-blue-600 hover:underline" title="The complete record of this visit">Visit Record</Link>
           {q.data?.visitNumber && (
             <span className="text-[11px] font-mono text-slate-400" title="Job sheet number (derived from the visit number)">JS-{q.data.visitNumber}</span>

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { withReturn } from '../../../lib/return-to';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../../lib/api-client';
 import { useSiteId } from '../../../hooks/use-site';
@@ -190,7 +191,7 @@ export default function InspectionsHubPage() {
                   return (
                     <tr
                       key={r.id}
-                      onClick={() => router.push(`/inspections/${r.id}`)}
+                      onClick={() => router.push(withReturn(`/inspections/${r.id}`, '/inspections'))}
                       className="cursor-pointer hover:bg-slate-50"
                     >
                       <td className="font-mono text-xs text-blue-700">{r.inspectionNumber}</td>
@@ -258,7 +259,7 @@ function VisitPicker({
       api.post<{ id: string }>('/inspections', { serviceVisitId, kind: mode === 'JOB_SHEET' ? undefined : mode }),
     onSuccess: (r) => {
       onClose();
-      router.push(`/inspections/${r.id}`);
+      router.push(withReturn(`/inspections/${r.id}`, '/inspections'));
     },
   });
 
@@ -302,7 +303,7 @@ function VisitPicker({
                 onClick={() => {
                   if (mode === 'JOB_SHEET') {
                     onClose();
-                    router.push(`/inspections/job-sheet/${it.serviceVisitId}`);
+                    router.push(withReturn(`/inspections/job-sheet/${it.serviceVisitId}`, '/inspections'));
                   } else {
                     create.mutate(it.serviceVisitId);
                   }
