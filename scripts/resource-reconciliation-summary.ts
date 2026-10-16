@@ -41,6 +41,9 @@ async function main() {
   rule('1-5, 11 — position census');
   const p = s.positions;
   console.log(`  Verified primary service positions   ${num(p.verifiedPrimary, 4)}`);
+  // CR-2026-119 §5 — the wash bay is a vehicle position, not a service position:
+  // its own line, so the figure above stays honest about mechanical capacity.
+  console.log(`  Verified wash position (not service) ${num(p.verifiedWash, 4)}`);
   console.log(`  Verified overflow positions          ${num(p.verifiedOverflow, 4)}`);
   console.log(`  Support equipment (never capacity)   ${num(p.supportEquipment, 4)}`);
   console.log(`  Placeholders (not built yet)         ${num(p.placeholders, 4)}`);

@@ -48,6 +48,8 @@ export interface ReconciliationSummary {
   /** Items 1–5 and 11 — the position census. */
   positions: {
     verifiedPrimary: number;
+    /** CR-2026-119 §5 — the dedicated wash bay, reported apart from the service positions. */
+    verifiedWash: number;
     verifiedOverflow: number;
     supportEquipment: number;
     placeholders: number;
@@ -193,8 +195,14 @@ export class ReconciliationSummaryService {
     const activePositions = verifiedPositions.filter(usableNow);
 
     // --- items 1–5, 11 ------------------------------------------------------
+    // CR-2026-119 §5 — a dedicated wash bay is a vehicle position (one car at a
+    // time) but not a SERVICE position; counting it among the primaries would
+    // make the workshop read as one mechanical bay bigger than it is. It is
+    // reported on its own line instead of hidden.
+    const isWash = (r: Row) => String(r.resourceCategory) === 'POWER_WASH';
     const positions = {
-      verifiedPrimary: live.filter((r) => r.capacityRole === 'PRIMARY_SERVICE_POSITION').length,
+      verifiedPrimary: live.filter((r) => r.capacityRole === 'PRIMARY_SERVICE_POSITION' && !isWash(r)).length,
+      verifiedWash: live.filter((r) => r.capacityRole === 'PRIMARY_SERVICE_POSITION' && isWash(r)).length,
       verifiedOverflow: live.filter((r) => r.capacityRole === 'OVERFLOW_SERVICE_POSITION').length,
       supportEquipment: live.filter((r) => r.capacityRole === 'SUPPORT_EQUIPMENT').length,
       placeholders: live.filter((r) => r.capacityRole === 'PLACEHOLDER').length,

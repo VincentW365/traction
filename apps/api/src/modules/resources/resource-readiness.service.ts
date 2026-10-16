@@ -156,7 +156,15 @@ export class ResourceReadinessService {
         capabilityPositions[c.capability] = (capabilityPositions[c.capability] ?? 0) + r.capacity;
       }
     }
-    const activePositions = counted.reduce((n, r) => n + r.capacity, 0);
+    // CR-2026-119 §5 — a dedicated wash bay is a vehicle position (one car at a
+    // time, so it stays in `counted` and in the CLEANING pool above), but it is
+    // not a SERVICE position and must never read as one more place to put a
+    // mechanical job. Excluded from this headline figure the same way EXTERNAL
+    // is excluded from `internal`: the capability pools stay honest per
+    // capability, the position count stays honest about the workshop.
+    const activePositions = counted
+      .filter((r) => String(r.resourceCategory) !== 'POWER_WASH')
+      .reduce((n, r) => n + r.capacity, 0);
     const optionalUnverified = internal.filter((r) => String(r.capacityRole) === 'UNVERIFIED' && r.isActive);
     const provisional = counted.filter((r) => r.identityConfirmedAt == null);
     // Compute the CURRENT digest rather than trusting a caller to supply one.

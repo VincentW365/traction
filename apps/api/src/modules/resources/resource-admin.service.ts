@@ -48,6 +48,8 @@ export interface ResourceWriteModel {
   displayOrder?: number;
   isActive?: boolean;
   notes?: string | null;
+  /** CR-2026-119 §10 — where it is in the building, in the floor's own words. */
+  physicalPosition?: string | null;
   /**
    * CR-2026-108 Stage 5B — what this contributes to simultaneous capacity.
    * Separate from `isActive` and from operational status on purpose: a primary
@@ -192,6 +194,7 @@ export class ResourceAdminService {
         displayOrder: data.displayOrder ?? 0,
         isActive: data.isActive ?? true,
         notes: data.notes ?? null,
+        physicalPosition: data.physicalPosition?.trim() || null,
         // §10 — a newly opened expansion bay needs no deployment and no legacy
         // link, but it also does not get to claim capacity on the strength of
         // having been typed in. It starts UNVERIFIED unless someone says otherwise.
@@ -273,6 +276,7 @@ export class ResourceAdminService {
         ...(data.displayOrder !== undefined ? { displayOrder: data.displayOrder } : {}),
         ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
         ...(data.notes !== undefined ? { notes: data.notes } : {}),
+        ...(data.physicalPosition !== undefined ? { physicalPosition: data.physicalPosition?.trim() || null } : {}),
         ...(data.capacityRole !== undefined ? { capacityRole: data.capacityRole as never } : {}),
       },
     });
@@ -764,6 +768,7 @@ export class ResourceAdminService {
           id: true, code: true, name: true, resourceCategory: true, capacity: true,
           capacityRole: true, isActive: true, retiredAt: true, schedulingEnabled: true,
           identityConfirmedAt: true,
+          physicalPosition: true,
           legacyBayId: true,
           legacyBay: { select: { id: true, code: true, bayType: true } },
           operationalStatus: { select: { status: true } },
@@ -795,6 +800,8 @@ export class ResourceAdminService {
         // §1 — mapped from a name and a code series, or confirmed by somebody
         // standing in front of it? Two different facts.
         identityConfirmed: r.identityConfirmedAt != null,
+        // CR-2026-119 §10 — a third fact: WHERE it is, in the floor's words.
+        physicalPosition: r.physicalPosition ?? null,
         capabilities: r.serviceCapabilities.map((c) => c.capability),
         // Absence of a status row means AVAILABLE — `setStatus` upserts on change.
         operationalStatus: r.operationalStatus?.status ?? 'AVAILABLE',

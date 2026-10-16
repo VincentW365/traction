@@ -2178,6 +2178,12 @@ model WorkResource {
   // --- JSON extensible flags (secondary, future-proofing) ---
   capabilities        Json?
   notes               String?
+  // CR-2026-119 §10 — where this is in the building, in the words the floor
+  // uses ("Position 3", "Wash area", "Press corner"). Free text on purpose: the
+  // layout has not been measured, and the handwritten numbers are the only
+  // shared vocabulary. Never derived from the code — BAY-03 is not Position 3
+  // until somebody standing in the building says so.
+  physicalPosition    String?             @map("physical_position")
   createdAt           DateTime            @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime            @updatedAt @map("updated_at") @db.Timestamptz
 

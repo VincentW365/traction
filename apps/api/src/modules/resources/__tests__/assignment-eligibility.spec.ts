@@ -38,7 +38,11 @@ function build(resource: Record<string, any>, ticket: Record<string, any> = TICK
   const prisma: any = {
     workResource: { findUnique: vi.fn(async () => resource) },
     queueTicket: { findUnique: vi.fn(async () => ticket), update: vi.fn(async () => ({})) },
-    resourceOccupancy: { upsert: vi.fn(async () => ({})) },
+    // CR-2026-119 §5 — the guard now asks whether the vehicle is already somewhere
+    // else, and whether a wash bay is being given mechanical work. These fakes
+    // answer "no" and "no open items": the paths every existing case sits on.
+    resourceOccupancy: { upsert: vi.fn(async () => ({})), findFirst: vi.fn(async () => null) },
+    serviceOrderItem: { findMany: vi.fn(async () => []) },
     queueEvent: { create: vi.fn(async () => ({})) },
     $transaction: vi.fn(async (fn: any) => fn(prisma)),
   };

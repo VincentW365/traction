@@ -27,7 +27,10 @@ function build(liftType: string, serviceClass: string | null) {
       })),
       update: vi.fn(async () => ({})),
     },
-    resourceOccupancy: { upsert: vi.fn(async () => ({})) },
+    // CR-2026-119 §5 — the guard now asks whether the vehicle is somewhere else and
+    // whether a wash bay is being given mechanical work; "no" and "no items" here.
+    resourceOccupancy: { upsert: vi.fn(async () => ({})), findFirst: vi.fn(async () => null) },
+    serviceOrderItem: { findMany: vi.fn(async () => []) },
     queueEvent: { create: vi.fn(async () => ({})) },
   };
   prisma.$transaction = vi.fn(async (cb: any) => cb(prisma));

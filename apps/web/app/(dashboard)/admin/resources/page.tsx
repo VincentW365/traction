@@ -40,6 +40,8 @@ interface WorkResource {
   isActive: boolean;
   displayOrder: number;
   notes: string | null;
+  /** CR-2026-119 §10 — where it is in the building, in the floor's own words ("Position 3"). */
+  physicalPosition?: string | null;
   /** CR-2026-108 Stage 5B — every row starts UNVERIFIED and counts for nothing. */
   capacityRole?: string;
   /** CR-2026-108 §21 — the kinds of work that can happen here. */
@@ -177,9 +179,20 @@ function vehicleClassLabel(r: WorkResource): string {
   return '—';
 }
 
+// CR-2026-119 §8 — what each lift value means on screen. Free text in the data,
+// so an unknown value still renders rather than disappearing.
+const LIFT_LABEL: Record<string, string> = {
+  two_post: 'Two-post lift',
+  runway: 'Drive-on runway lift',
+  heavy: 'Heavy lift',
+  sedan: 'Sedan lift',
+  mobile: 'Mobile jack',
+  power_jack: 'Power jack',
+};
+
 function capabilitySummary(r: WorkResource): string {
   const caps: string[] = [];
-  if (r.liftType) caps.push(r.liftType === 'mobile' ? 'Mobile jack' : `${r.liftType} lift`);
+  if (r.liftType) caps.push(LIFT_LABEL[r.liftType] ?? `${r.liftType} lift`);
   if (r.hasAlignment) caps.push('Alignment');
   if (r.hasDiagnostics) caps.push('Diagnostics');
   return caps.length ? caps.join(' · ') : 'General';
@@ -201,6 +214,7 @@ interface FormState {
   capacity: number;
   displayOrder: number;
   notes: string;
+  physicalPosition: string;
 }
 
 const EMPTY_FORM: FormState = {
@@ -218,6 +232,7 @@ const EMPTY_FORM: FormState = {
   capacity: 1,
   displayOrder: 0,
   notes: '',
+  physicalPosition: '',
 };
 
 export default function ResourcesAdminPage() {
@@ -641,6 +656,7 @@ function ResourceForm({
           capacity: existing.capacity,
           displayOrder: existing.displayOrder,
           notes: existing.notes ?? '',
+          physicalPosition: existing.physicalPosition ?? '',
         }
       : EMPTY_FORM,
   );
@@ -659,6 +675,7 @@ function ResourceForm({
         ...form,
         liftType: form.liftType || null,
         notes: form.notes || null,
+        physicalPosition: form.physicalPosition || null,
         capacity: Number(form.capacity),
         displayOrder: Number(form.displayOrder),
       };
@@ -744,8 +761,15 @@ function ResourceForm({
             </label>
             <label className="block">
               <span className="input-label">Lift / equipment</span>
+              {/* CR-2026-119 §8 — the building has two-post lifts and drive-on runway
+                  lifts, and the old vocabulary ("heavy", "sedan") described neither.
+                  A runway lift is where alignment work usually lives, but recording
+                  one here claims nothing about alignment: that is a capability, set
+                  separately, once the equipment has been seen. */}
               <select value={form.liftType} onChange={(e) => set('liftType', e.target.value)} className="input-field">
-                <option value="">None</option>
+                <option value="">None (ground-level position)</option>
+                <option value="two_post">Two-post lift</option>
+                <option value="runway">Drive-on runway lift</option>
                 <option value="sedan">Sedan lift</option>
                 <option value="heavy">Heavy lift</option>
                 <option value="mobile">Mobile jack</option>
@@ -812,6 +836,19 @@ function ResourceForm({
               />
             </label>
           </div>
+
+          <label className="block">
+            <span className="input-label">Physical position</span>
+            {/* CR-2026-119 §10 — the floor's own words for where this is. Typed, never
+                derived from the code: BAY-03 is not "Position 3" until somebody
+                standing in the building says so. */}
+            <input
+              value={form.physicalPosition}
+              onChange={(e) => set('physicalPosition', e.target.value)}
+              placeholder='e.g. "Position 3", "Wash area", "Press corner"'
+              className="input-field"
+            />
+          </label>
 
           <label className="block">
             <span className="input-label">Internal notes</span>

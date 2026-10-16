@@ -44,6 +44,8 @@ interface ResourceRow {
   schedulingEnabled: boolean;
   link: { state: LinkState; bayId: string | null; bayCode: string | null; bayType: string | null };
   needsAttention: boolean;
+  /** CR-2026-119 §10 — where it is in the building, in the floor's words. Null until someone says. */
+  physicalPosition?: string | null;
 }
 
 interface LegacyBayRow {
@@ -360,6 +362,11 @@ export default function ResourceReconciliationPage() {
         </div>
       )}
 
+      {/* CR-2026-119 §10 — the building, as the floor numbers it. A reference to
+          existing records, never a source of them: a slot with nothing linked
+          says so, and creating a record for it is a deliberate act elsewhere. */}
+      <WorkshopLayout rows={[...unconfirmed, ...confirmed]} onSelect={(id) => setExpanded(id)} />
+
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* ---- the resources ------------------------------------------------ */}
         <div className="xl:col-span-2 space-y-6">
@@ -583,6 +590,97 @@ function Section({
   );
 }
 
+/**
+ * CR-2026-119 §10 — the Physical Workshop Layout reference.
+ *
+ * The photographic audit numbered eight working positions and named a wash area
+ * and a press corner. Those are the only shared vocabulary between the people
+ * who walk the floor and the records in this database, so this schematic is
+ * drawn in that vocabulary and nothing else. It does not measure the building,
+ * and it creates nothing: a slot with no record linked says so, and linking is
+ * done by typing the position onto the record, deliberately.
+ */
+const LAYOUT_SLOTS: Array<{ key: string; label: string; aliases: RegExp; kind: 'lift' | 'ground' | 'wash' | 'press' }> = [
+  { key: 'p1', label: 'Position 1', aliases: /^(position|pos|p)?\s*0?1$/i, kind: 'lift' },
+  { key: 'p2', label: 'Position 2', aliases: /^(position|pos|p)?\s*0?2$/i, kind: 'lift' },
+  { key: 'p3', label: 'Position 3', aliases: /^(position|pos|p)?\s*0?3$/i, kind: 'lift' },
+  { key: 'p4', label: 'Position 4', aliases: /^(position|pos|p)?\s*0?4$/i, kind: 'lift' },
+  { key: 'p5', label: 'Position 5', aliases: /^(position|pos|p)?\s*0?5$/i, kind: 'ground' },
+  { key: 'p6', label: 'Position 6', aliases: /^(position|pos|p)?\s*0?6$/i, kind: 'lift' },
+  { key: 'p7', label: 'Position 7', aliases: /^(position|pos|p)?\s*0?7$/i, kind: 'ground' },
+  { key: 'p8', label: 'Position 8', aliases: /^(position|pos|p)?\s*0?8$/i, kind: 'lift' },
+  { key: 'wash', label: 'Wash area', aliases: /wash/i, kind: 'wash' },
+  { key: 'press', label: 'Press corner', aliases: /press/i, kind: 'press' },
+];
+
+function WorkshopLayout({ rows, onSelect }: { rows: ResourceRow[]; onSelect: (id: string) => void }) {
+  const linked = (slot: (typeof LAYOUT_SLOTS)[number]) =>
+    rows.filter((r) => !r.retired && (r.physicalPosition ?? '').trim() && slot.aliases.test((r.physicalPosition ?? '').trim()));
+  const linkedCount = LAYOUT_SLOTS.filter((s) => linked(s).length > 0).length;
+  const tone: Record<(typeof LAYOUT_SLOTS)[number]['kind'], string> = {
+    lift: 'border-slate-300 bg-white',
+    ground: 'border-dashed border-slate-300 bg-slate-50',
+    wash: 'border-sky-300 bg-sky-50',
+    press: 'border-violet-300 bg-violet-50',
+  };
+  return (
+    <div className="card">
+      <div className="card-header flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">Physical workshop layout</h2>
+          <p className="text-xs text-slate-500">
+            As numbered on the photographs. A schematic, not a plan — nothing here is to scale.
+          </p>
+        </div>
+        <span className="badge bg-slate-100 text-slate-700 text-xs">{linkedCount} of {LAYOUT_SLOTS.length} slots linked to a record</span>
+      </div>
+      <div className="card-body">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-2">
+          {LAYOUT_SLOTS.map((slot) => {
+            const hits = linked(slot);
+            return (
+              <div key={slot.key} className={`rounded-md border px-3 py-2 min-h-[72px] ${tone[slot.kind]}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-800">{slot.label}</span>
+                  <span className="text-[10px] uppercase tracking-wider text-slate-400">
+                    {slot.kind === 'lift' ? 'lift' : slot.kind === 'ground' ? 'ground' : slot.kind}
+                  </span>
+                </div>
+                {hits.length === 0 ? (
+                  <p className="mt-1 text-xs italic text-amber-700">No record linked</p>
+                ) : (
+                  <div className="mt-1 space-y-0.5">
+                    {hits.map((r) => (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => onSelect(r.id)}
+                        className="block text-left text-xs text-blue-700 hover:underline"
+                        title="Open this record below"
+                      >
+                        <span className="font-mono">{r.code}</span> · {r.name}
+                      </button>
+                    ))}
+                    {hits.length > 1 && (
+                      <p className="text-[11px] text-red-700">
+                        {hits.length} records claim this one place — only one can be it.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-3 text-xs text-slate-500">
+          To link a record, open it below and type its position ("Position 3", "Wash area", "Press corner").
+          Two records on one slot means the same place is being counted twice — resolve it, never leave it.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function ResourceCard({
   r,
   data,
@@ -619,6 +717,17 @@ function ResourceCard({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-slate-900 text-sm">{r.code}</span>
             <span className="text-sm text-slate-500 truncate">{r.name}</span>
+            {/* CR-2026-119 §10 — where it is in the building, in the floor's words,
+                shown beside the code so the two are never confused for each other. */}
+            {r.physicalPosition ? (
+              <span className="px-1.5 py-0.5 rounded text-xs bg-blue-50 text-blue-700 border border-blue-200">
+                {r.physicalPosition}
+              </span>
+            ) : (
+              <span className="px-1.5 py-0.5 rounded text-xs bg-amber-50 text-amber-700 border border-amber-200" title="Nobody has said where this is yet">
+                Position not recorded
+              </span>
+            )}
             {!r.isActive && (
               <span className="px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500 border border-slate-200">
                 Inactive

@@ -183,8 +183,23 @@ export class ResourcesService {
       include: { serviceVisit: { include: { vehicle: { select: { serviceClass: true } } } } },
     });
     if (!ticket) throw new NotFoundException(`Queue ticket ${queueTicketId} not found`);
-    if (!['WAITING', 'PENDING_RANK'].includes(ticket.displayStatus)) {
+    // CR-2026-119 §5 — a vehicle moves between positions during one visit
+    // (lift → wash bay is the case management described). The old guard only
+    // allowed WAITING, so a vehicle released from a lift — now CALLED — could
+    // never be placed again, and "transfer to the wash area" was impossible.
+    // What must still be refused: a finished or cancelled ticket, and a vehicle
+    // that is physically somewhere else right now.
+    if (['COMPLETED', 'CANCELLED'].includes(ticket.displayStatus)) {
       throw new BadRequestException(`Ticket is in status ${ticket.displayStatus}, cannot assign`);
+    }
+    const elsewhere = await this.prisma.resourceOccupancy.findFirst({
+      where: { serviceVisitId: ticket.serviceVisitId, status: 'OCCUPIED', resourceId: { not: resourceId } },
+      select: { resource: { select: { code: true, name: true } } },
+    });
+    if (elsewhere) {
+      throw new BadRequestException(
+        `This vehicle is still at ${elsewhere.resource.name} (${elsewhere.resource.code}). Release it there before placing it here — it cannot be in two positions at once.`,
+      );
     }
 
     // CR-2026-095 — structured vehicle-class compatibility. Checked BEFORE the
@@ -201,6 +216,25 @@ export class ResourcesService {
       throw new BadRequestException(
         `${resource.name} is configured for SUVs only — this vehicle is a sedan.`,
       );
+    }
+
+    // CR-2026-119 §5 — the wash bay takes washing and nothing else. The dispatch
+    // engine already refuses this (resource-compatibility.checker: non-cleaning
+    // work never on POWER_WASH); this is the hand-placement path, and it must not
+    // be the loophole. A visit with mechanical AND cleaning work goes to a lift
+    // first and the wash after, so only this direction is a rule: nothing stops
+    // a dispatcher putting a wash-only car on a lift when the wash is down.
+    if (String(resource.resourceCategory) === 'POWER_WASH') {
+      const openItems = await this.prisma.serviceOrderItem.findMany({
+        where: { serviceOrder: { serviceVisitId: ticket.serviceVisitId, status: { notIn: ['CANCELLED', 'CLOSED'] } } },
+        select: { serviceType: { select: { requiresPowerWash: true } } },
+      });
+      const anyWash = openItems.some((i) => i.serviceType?.requiresPowerWash);
+      if (openItems.length > 0 && !anyWash) {
+        throw new BadRequestException(
+          `${resource.name} is the vehicle wash bay. This visit has no cleaning work on it, so it belongs in a service position.`,
+        );
+      }
     }
 
     // --- DMAIC Rule 3: mobile-jack sedan-only gate (with audited manager override) ---
