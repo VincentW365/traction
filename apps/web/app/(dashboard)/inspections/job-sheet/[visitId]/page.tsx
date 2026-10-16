@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../../../../../lib/api-client';
@@ -140,6 +140,7 @@ export default function JobSheetPage() {
   // CR-2026-118 §4 — where this job sheet was opened from; the visit if unknown.
   // Called before any early return so the hook order never changes.
   const ret = useReturnTo(`/visits/${visitId}`);
+  const router = useRouter();
   const q = useQuery<JobSheetData>({
     queryKey: ['job-sheet', visitId],
     queryFn: () => api.get(`/service-visits/${visitId}/job-sheet`),
@@ -282,7 +283,16 @@ export default function JobSheetPage() {
           <button onClick={() => saveDraft.mutate()} disabled={saveDraft.isPending} className="btn-secondary text-sm">
             {saveDraft.isPending ? 'Saving…' : 'Save'}
           </button>
-          <button onClick={() => window.print()} className="btn-primary text-sm">Print</button>
+          {/* CR-2026-123 — on a tablet at the car, finishing the sheet means saving
+              it and getting back to the job. One tap; the sheet itself is unchanged. */}
+          <button
+            onClick={() => saveDraft.mutateAsync().then(() => router.push(ret.path)).catch(() => undefined)}
+            disabled={saveDraft.isPending}
+            className="btn-primary text-sm"
+          >
+            {saveDraft.isPending ? 'Saving…' : 'Save & Done'}
+          </button>
+          <button onClick={() => window.print()} className="btn-secondary text-sm">Print</button>
         </div>
       </div>
       {saveDraft.isError && (

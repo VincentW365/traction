@@ -11,7 +11,7 @@
  */
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { withReturn } from '../../../../../lib/return-to';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSiteId } from '../../../../../hooks/use-site';
@@ -100,7 +100,8 @@ interface JobContext {
     appointmentNotes: string | null;
     queueTicketId: string | null;
     ticketNumber: string | null;
-    jobSheet: { savedAt: string | null; jobSheetNumber: string | null };
+    // CR-2026-123 — `signed`: the customer's signature is on the saved sheet.
+    jobSheet: { savedAt: string | null; signed: boolean; jobSheetNumber: string | null };
   };
   customer: {
     firstName: string;
@@ -131,11 +132,27 @@ interface JobContext {
   inspections: Array<{
     id: string;
     inspectionNumber: string;
+    // CR-2026-123 — which record it is: the pre-inspection or the vehicle inspection.
+    kind: 'VEHICLE_INSPECTION' | 'PRE_INSPECTION';
     status: string;
     createdAt: string;
     recommendations: Array<{ id: string; severity: string; description: string; customerDecision: string; resultingServiceOrderId: string | null }>;
   }>;
 }
+
+type InspectionKind = JobContext['inspections'][number]['kind'];
+const INSPECTION_KIND_LABEL: Record<InspectionKind, string> = {
+  PRE_INSPECTION: 'Pre-Inspection',
+  VEHICLE_INSPECTION: 'Vehicle Inspection',
+};
+const INSPECTION_STATUS_LABEL: Record<string, string> = {
+  DRAFT: 'In progress',
+  COMPLETED: 'Completed',
+  SIGNED_OFF: 'Signed off',
+  CLOSED: 'Closed',
+  SKIPPED: 'Skipped',
+  CANCELLED: 'Cancelled',
+};
 
 interface HistoryRow {
   serviceVisitId: string;
@@ -219,6 +236,22 @@ export default function TechnicianJobWorkspace() {
     queryClient.invalidateQueries({ queryKey: ['my-assignments'] });
     queryClient.invalidateQueries({ queryKey: ['kpi-live', orderId] });
   };
+
+  // CR-2026-123 — a technician adds an inspection from the job they are on, in
+  // one tap. The record is created against this visit (customer, vehicle and
+  // ticket come with it) and opened straight away, with the way back to this
+  // job already set. The Inspections page's ticket picker stays for the front
+  // desk, who are not standing at the car.
+  const router = useRouter();
+  const addInspection = useMutation({
+    mutationFn: (kind: InspectionKind) =>
+      api.post<{ id: string }>('/inspections', { serviceVisitId: ctxQuery.data!.visit.id, kind }),
+    onSuccess: (r) => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ['inspections'] });
+      router.push(withReturn(`/inspections/${r.id}`, `/technician/jobs/${orderId}`));
+    },
+  });
 
   const [pauseReason, setPauseReason] = useState<string>(PAUSE_REASONS[0].value);
   const [pauseNotes, setPauseNotes] = useState('');
@@ -515,32 +548,105 @@ export default function TechnicianJobWorkspace() {
               </div>
             )}
 
-            {/* §5 — the job sheet, one tap, always */}
-            <div className="grid grid-cols-2 gap-2">
-              <Link
-                href={withReturn(`/inspections/job-sheet/${visit.id}`, `/technician/jobs/${orderId}`)}
-                className="block text-center rounded-lg border border-blue-200 bg-blue-50 py-3 text-sm font-bold text-blue-800"
-              >
-                VIEW JOB SHEET
-                {visit.jobSheet.jobSheetNumber && (
-                  <span className="block text-[10px] font-mono font-normal text-blue-600">{visit.jobSheet.jobSheetNumber}</span>
-                )}
-              </Link>
-              {ctx.inspections[0] ? (
+            {/*
+              §5 / CR-2026-123 — the records of this visit, in one place, and the two
+              things a technician adds to them. Before this the block showed the job
+              sheet as something to VIEW and at most one inspection, with no way to
+              add one from here: a technician standing at the car had to go to the
+              Inspections page and pick their own ticket out of the board. Now: the
+              job sheet with its real state (not started / saved, unsigned / signed),
+              every inspection on the visit — the pre-inspection AND the vehicle
+              inspection, not just the latest — and a button for each kind that
+              either continues the one in progress or starts a new one.
+            */}
+            <div className="rounded-lg border border-slate-200 bg-white">
+              <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Records for this visit</span>
                 <Link
-                  href={withReturn(`/inspections/${ctx.inspections[0].id}`, `/technician/jobs/${orderId}`)}
-                  className="block text-center rounded-lg border border-slate-200 py-3 text-sm font-bold text-slate-700"
+                  href={withReturn(`/visits/${visit.id}`, `/technician/jobs/${orderId}`)}
+                  className="text-xs text-blue-700 hover:underline"
+                  title="Everything on file for this visit — timeline, files, every record"
                 >
-                  INSPECTION
-                  <span className="block text-[10px] font-mono font-normal text-slate-500">
-                    {ctx.inspections[0].inspectionNumber} · {ctx.inspections[0].status}
-                  </span>
+                  Full visit record ›
                 </Link>
-              ) : (
-                <div className="rounded-lg border border-slate-100 py-3 text-center text-xs text-slate-400">
-                  No inspection on this visit yet
+              </div>
+              <div className="p-2 space-y-2">
+                {/* The job sheet, with where it stands. */}
+                {(() => {
+                  const js = visit.jobSheet;
+                  const title = js.signed ? 'JOB SHEET — SIGNED' : js.savedAt ? 'FINISH JOB SHEET' : 'START JOB SHEET';
+                  const detail = js.signed
+                    ? `Signed · saved ${fmtTime(js.savedAt!)}`
+                    : js.savedAt
+                      ? `Saved ${fmtTime(js.savedAt)} · not signed yet`
+                      : 'Not started';
+                  return (
+                    <Link
+                      href={withReturn(`/inspections/job-sheet/${visit.id}`, `/technician/jobs/${orderId}`)}
+                      className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-3 ${
+                        js.signed ? 'border-emerald-200 bg-emerald-50' : 'border-blue-200 bg-blue-50'
+                      }`}
+                    >
+                      <span className="min-w-0">
+                        <span className={`block text-sm font-bold ${js.signed ? 'text-emerald-800' : 'text-blue-800'}`}>{title}</span>
+                        <span className={`block text-[11px] ${js.signed ? 'text-emerald-700' : 'text-blue-700'}`}>
+                          {detail}
+                          {js.jobSheetNumber && <span className="font-mono"> · {js.jobSheetNumber}</span>}
+                        </span>
+                      </span>
+                      <span className={`text-lg ${js.signed ? 'text-emerald-600' : 'text-blue-600'}`}>›</span>
+                    </Link>
+                  );
+                })()}
+
+                {/* Every inspection record on the visit. */}
+                {ctx.inspections.map((i) => (
+                  <Link
+                    key={i.id}
+                    href={withReturn(`/inspections/${i.id}`, `/technician/jobs/${orderId}`)}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2.5 hover:bg-slate-50"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-slate-800">{INSPECTION_KIND_LABEL[i.kind]}</span>
+                      <span className="block text-[11px] text-slate-500">
+                        <span className="font-mono">{i.inspectionNumber}</span> · {INSPECTION_STATUS_LABEL[i.status] ?? i.status}
+                        {i.status === 'DRAFT' ? '' : ` · ${fmtDate(i.createdAt)}`}
+                      </span>
+                    </span>
+                    <span className="text-slate-400 text-lg">›</span>
+                  </Link>
+                ))}
+
+                {/* Add — or continue the one already open of that kind. */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  {(['PRE_INSPECTION', 'VEHICLE_INSPECTION'] as InspectionKind[]).map((kind) => {
+                    const open = ctx.inspections.find((i) => i.kind === kind && i.status === 'DRAFT');
+                    return open ? (
+                      <Link
+                        key={kind}
+                        href={withReturn(`/inspections/${open.id}`, `/technician/jobs/${orderId}`)}
+                        className="block text-center rounded-lg border border-slate-300 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        CONTINUE {INSPECTION_KIND_LABEL[kind].toUpperCase()}
+                      </Link>
+                    ) : (
+                      <button
+                        key={kind}
+                        onClick={() => addInspection.mutate(kind)}
+                        disabled={addInspection.isPending}
+                        className="rounded-lg border border-blue-300 bg-white py-3 text-sm font-bold text-blue-800 hover:bg-blue-50 disabled:opacity-60"
+                      >
+                        {addInspection.isPending && addInspection.variables === kind ? 'OPENING…' : `+ ${INSPECTION_KIND_LABEL[kind].toUpperCase()}`}
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+                {addInspection.isError && (
+                  <p className="text-xs text-red-600">
+                    {addInspection.error instanceof Error ? addInspection.error.message : 'Could not start the inspection.'}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         </div>

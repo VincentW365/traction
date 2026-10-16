@@ -2384,7 +2384,7 @@ export class ServiceOrdersService {
     if (!order) throw new NotFoundException(`ServiceOrder ${orderId} not found`);
 
     const visit = order.serviceVisit;
-    const [inspections, timing] = await Promise.all([
+    const [inspections, timing, jobSheetSigned] = await Promise.all([
       this.prisma.vehicleInspection.findMany({
         where: { serviceVisitId: visit.id },
         select: {
@@ -2409,6 +2409,12 @@ export class ServiceOrdersService {
         orderBy: { createdAt: 'desc' },
       }),
       this.getWorkTiming(orderId),
+      // CR-2026-123 — is the customer's signature on the saved sheet? Asked as an
+      // existence check rather than by selecting the signature itself: the image
+      // can be half a megabyte and this context is polled every 15 seconds.
+      this.prisma.jobSheetDraft
+        .findFirst({ where: { serviceVisitId: visit.id, signatureImage: { not: null } }, select: { id: true } })
+        .then((row) => row != null),
     ]);
 
     // CR-2026-111c — the LINE estimate (vehicle-class aware), not a fresh sum of
@@ -2490,8 +2496,8 @@ export class ServiceOrdersService {
         queueTicketId: visit.queueTicket?.id ?? null,
         ticketNumber: visit.queueTicket?.ticketNumber ?? null,
         jobSheet: visit.jobSheetDraft
-          ? { savedAt: visit.jobSheetDraft.updatedAt, jobSheetNumber: visit.visitNumber ? `JS-${visit.visitNumber}` : null }
-          : { savedAt: null, jobSheetNumber: visit.visitNumber ? `JS-${visit.visitNumber}` : null },
+          ? { savedAt: visit.jobSheetDraft.updatedAt, signed: jobSheetSigned, jobSheetNumber: visit.visitNumber ? `JS-${visit.visitNumber}` : null }
+          : { savedAt: null, signed: false, jobSheetNumber: visit.visitNumber ? `JS-${visit.visitNumber}` : null },
       },
       customer: visit.customer,
       vehicle: visit.vehicle,

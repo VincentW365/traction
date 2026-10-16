@@ -13,6 +13,8 @@ function build(prismaOverrides: any = {}) {
     vehicleInspection: { findMany: vi.fn(async () => []) },
     serviceVisit: { findMany: vi.fn(async () => []) },
     serviceOrderPause: { findMany: vi.fn(async () => []) },
+    // CR-2026-123 — the "is the sheet signed?" existence check; no signature by default.
+    jobSheetDraft: { findFirst: vi.fn(async () => null) },
     ...prismaOverrides,
   };
   const service = new ServiceOrdersService(
@@ -148,6 +150,9 @@ describe('getJobContext (CR-2026-101 §1/§3/§4)', () => {
       ticketNumber: 'B01-260901-004',
     });
     expect(ctx.visit.jobSheet.jobSheetNumber).toBe('JS-B01-260901-004');
+    // CR-2026-123 — saved but unsigned: the technician's job page says "finish", not "signed".
+    expect(ctx.visit.jobSheet.savedAt).toEqual(new Date('2026-09-01T13:10:00Z'));
+    expect(ctx.visit.jobSheet.signed).toBe(false);
     // Inspections with authorization states (§7/§15).
     expect(ctx.inspections[0].recommendations[0]).toMatchObject({
       customerDecision: 'PENDING',
