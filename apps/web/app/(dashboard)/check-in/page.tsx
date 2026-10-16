@@ -6,6 +6,7 @@ import { api } from '../../../lib/api-client';
 import { StatusBadge } from '../../../components/status-badge';
 import { PageHeader } from '../../../components/ui/page-header';
 import { useSiteId } from '../../../hooks/use-site';
+import { CustomerNotificationComposer, type ComposerContext } from '../../../components/notification-composer';
 
 /* ---------- Types (matching actual API response shapes) ---------- */
 
@@ -93,7 +94,13 @@ export default function CheckInPage() {
     etaStartAt: string | null;
     customerStatusUrl: string | null;
     type: 'check-in' | 'walk-in';
+    // CR-2026-122 — what the composer needs to email the status link from here.
+    serviceVisitId: string;
+    customerId: string | null;
+    vehicleId: string | null;
   } | null>(null);
+  // CR-2026-122 — the shared composer, opened from the confirmation panel.
+  const [composerCtx, setComposerCtx] = useState<ComposerContext | null>(null);
 
   // Debounced search
   useEffect(() => {
@@ -176,6 +183,9 @@ export default function CheckInPage() {
         etaStartAt: data.etaStartAt,
         customerStatusUrl: data.customerStatusUrl ?? null,
         type: 'check-in',
+        serviceVisitId: data.serviceVisit.id,
+        customerId: selectedCustomer?.id ?? null,
+        vehicleId: selectedVehicle?.id ?? null,
       });
       queryClient.invalidateQueries({ queryKey: ['appointments'] });
     },
@@ -195,7 +205,7 @@ export default function CheckInPage() {
       color?: string;
       notificationOptInEmail?: boolean;
     }) => api.post<CheckInResponse>('/walk-ins', payload),
-    onSuccess: (data) => {
+    onSuccess: (data, payload) => {
       setSuccessResult({
         ticketNumber: data.queueTicket.ticketNumber,
         displayTicketNumber: data.queueTicket.displayTicketNumber ?? null,
@@ -203,6 +213,9 @@ export default function CheckInPage() {
         etaStartAt: data.etaStartAt,
         customerStatusUrl: data.customerStatusUrl ?? null,
         type: 'walk-in',
+        serviceVisitId: data.serviceVisit.id,
+        customerId: payload.customerId,
+        vehicleId: payload.vehicleId,
       });
       setShowWalkInForm(false);
       setSelectedServiceCodes([]);
@@ -328,6 +341,22 @@ export default function CheckInPage() {
                 {successResult.customerStatusUrl}
               </p>
               <p className="text-xs text-blue-500 mt-1">Share this link with the customer to track their visit status.</p>
+              {/* CR-2026-122 — same composer as the ticket: reviewed, routed, logged. */}
+              {successResult.customerId && (
+                <button
+                  onClick={() =>
+                    setComposerCtx({
+                      reason: 'STATUS_LINK',
+                      customerId: successResult.customerId!,
+                      vehicleId: successResult.vehicleId ?? undefined,
+                      serviceVisitId: successResult.serviceVisitId,
+                    })
+                  }
+                  className="btn-secondary text-xs mt-3"
+                >
+                  Email to Customer
+                </button>
+              )}
             </div>
           )}
           <button onClick={handleReset}
@@ -335,6 +364,13 @@ export default function CheckInPage() {
             Next Customer
           </button>
         </div>
+        {composerCtx && (
+          <CustomerNotificationComposer
+            open
+            context={composerCtx}
+            onClose={() => setComposerCtx(null)}
+          />
+        )}
       </div>
     );
   }

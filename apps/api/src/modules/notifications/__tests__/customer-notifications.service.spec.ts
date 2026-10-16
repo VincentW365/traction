@@ -544,3 +544,91 @@ describe('manual contact', () => {
     expect(createdLogs[0].status).toBe('MANUAL');
   });
 });
+
+/**
+ * CR-2026-122 — the customer's status link, emailed from the ticket.
+ *
+ * The one thing that must never happen: a status-link email with no link in
+ * it. The renderer drops a line whose value is missing, so an expired or absent
+ * token would produce a polite, link-less email that reads as a mistake. The
+ * service refuses instead, in words the front desk can act on.
+ */
+describe('status link email (CR-2026-122)', () => {
+  const VISIT = {
+    id: 'visit-1',
+    status: 'IN_QUEUE',
+    vehicleId: 'veh-1',
+    customerId: 'cust-1',
+    customerStatusToken: 'tok-abc123',
+    tokenExpiresAt: new Date(Date.now() + 6 * 3600 * 1000),
+    queueTicket: { ticketNumber: 'B01-007' },
+    site: { timezone: 'America/Jamaica' },
+  };
+
+  function withVisit(visit: Record<string, unknown> | null) {
+    const built = build();
+    const prisma = built.prisma as { serviceVisit: { findUnique: unknown }; notificationTemplate: { findFirst: unknown } };
+    prisma.serviceVisit.findUnique = vi.fn(async () => visit);
+    // No stored row for STATUS_LINK, so the store heals it from factory wording —
+    // which is the body that actually carries {{statusUrl}}.
+    prisma.notificationTemplate.findFirst = vi.fn(async ({ where }: { where: { channel: string; reason?: string } }) =>
+      where.channel === 'EMAIL' && where.reason !== 'STATUS_LINK' ? TEMPLATE_EMAIL : null,
+    );
+    return built;
+  }
+
+  it('puts the live link and its expiry into the draft, from the visit, never typed', async () => {
+    const { service } = withVisit(VISIT);
+    const res = await service.compose({ reason: 'STATUS_LINK', customerId: 'cust-1', serviceVisitId: 'visit-1' });
+    expect(res.email!.body).toContain('/status/tok-abc123');
+    expect(res.email!.body).toMatch(/The link works until \S+/);
+    expect(res.email!.body).toContain('B01-007');
+    expect(res.email!.subject).toContain('1234 AB');
+    // Operational: about this customer's own visit, never gated on marketing consent.
+    expect(res.purpose).toBe('TRANSACTIONAL');
+    expect(res.consent.requiresConsent).toBe(false);
+  });
+
+  it('refuses when the visit has no link that still works', async () => {
+    const { service } = withVisit({ ...VISIT, tokenExpiresAt: new Date(Date.now() - 60_000) });
+    await expect(
+      service.compose({ reason: 'STATUS_LINK', customerId: 'cust-1', serviceVisitId: 'visit-1' }),
+    ).rejects.toThrow(/expired/);
+  });
+
+  it('refuses when the visit never had a link', async () => {
+    const { service } = withVisit({ ...VISIT, customerStatusToken: null, tokenExpiresAt: null });
+    await expect(
+      service.compose({ reason: 'STATUS_LINK', customerId: 'cust-1', serviceVisitId: 'visit-1' }),
+    ).rejects.toThrow(/expired/);
+  });
+
+  it('refuses without a visit — a status link belongs to one', async () => {
+    const { service } = build();
+    await expect(service.compose({ reason: 'STATUS_LINK', customerId: 'cust-1', vehicleId: 'veh-1' })).rejects.toThrow(
+      /belongs to a visit/,
+    );
+  });
+
+  it('refuses the SEND on the same grounds, so a stale draft cannot be forced through', async () => {
+    const { service, provider } = withVisit({ ...VISIT, tokenExpiresAt: new Date(Date.now() - 60_000) });
+    await expect(
+      service.send(
+        {
+          reason: 'STATUS_LINK',
+          customerId: 'cust-1',
+          serviceVisitId: 'visit-1',
+          email: { recipient: 'vw@example.com', subject: 'Your link', body: 'Here it is: https://example/status/tok-abc123' },
+        },
+        'user-1',
+      ),
+    ).rejects.toThrow(/expired/);
+    expect(provider.send).not.toHaveBeenCalled();
+  });
+
+  it('leaves every other reason exactly as it was', async () => {
+    const { service } = withVisit({ ...VISIT, customerStatusToken: null, tokenExpiresAt: null });
+    const res = await service.compose({ reason: 'QUEUE_UPDATE', customerId: 'cust-1', serviceVisitId: 'visit-1' });
+    expect(res.email).not.toBeNull();
+  });
+});

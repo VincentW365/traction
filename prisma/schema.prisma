@@ -239,6 +239,7 @@ enum NotificationReason {
   APPOINTMENT_CHANGED
   APPOINTMENT_CANCELLED
   APPOINTMENT_REMINDER
+  STATUS_LINK
 }
 
 // CR-2026-096 — follow-up status of a due-for-service customer. This is the BUSINESS

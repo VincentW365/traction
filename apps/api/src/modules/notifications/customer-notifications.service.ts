@@ -31,6 +31,7 @@ import {
 import { CommunicationPreferenceService } from './communication-preference.service';
 import { NotificationRoutingService } from './notification-routing.service';
 import { PERMISSIONS } from '../../common/constants/permissions';
+import { publicUrl } from '../../common/helpers/public-url';
 import {
   buildVehicleDescription,
   findDisallowedPlaceholders,
@@ -219,6 +220,7 @@ export class CustomerNotificationsService {
 
   async compose(input: ComposeInput) {
     const context = await this.loadContext(input);
+    this.assertStatusLink(input.reason, context);
     const data = context.templateData;
 
     const emailTemplate = await this.getTemplate(input.reason);
@@ -362,6 +364,7 @@ export class CustomerNotificationsService {
     }
 
     const context = await this.loadContext(input);
+    this.assertStatusLink(input.reason, context);
     const c = context.customer;
 
     // Duplicate vehicle-ready guard — resend is allowed, but only deliberately.
@@ -838,6 +841,10 @@ export class CustomerNotificationsService {
 
     let visit: { id: string; status: string; vehicleId: string } | null = null;
     let ticketNumber: string | null = null;
+    // CR-2026-122 — the customer's status link, as the visit holds it. Null when
+    // the visit has no token or the token has passed its window; the renderer
+    // would drop the line, so `assertStatusLink` refuses the send instead.
+    let statusLink: { url: string; expiresAt: Date; expiresText: string } | null = null;
     if (input.serviceVisitId) {
       const v = await this.prisma.serviceVisit.findUnique({
         where: { id: input.serviceVisitId },
@@ -846,7 +853,12 @@ export class CustomerNotificationsService {
           status: true,
           vehicleId: true,
           customerId: true,
-          queueTicket: { select: { ticketNumber: true } },
+          customerStatusToken: true,
+          tokenExpiresAt: true,
+          // CR-2026-122 — the short customer number (CR-2026-089) is what the
+          // customer was read at the desk; the long reference is for enquiries.
+          queueTicket: { select: { ticketNumber: true, displayTicketNumber: true } },
+          site: { select: { timezone: true } },
         },
       });
       if (!v) throw new NotFoundException('Service visit not found');
@@ -854,7 +866,19 @@ export class CustomerNotificationsService {
         throw new ForbiddenException('Visit does not belong to this customer.');
       }
       visit = { id: v.id, status: v.status, vehicleId: v.vehicleId };
-      ticketNumber = v.queueTicket?.ticketNumber ?? null;
+      ticketNumber = v.queueTicket?.displayTicketNumber ?? v.queueTicket?.ticketNumber ?? null;
+      if (v.customerStatusToken && v.tokenExpiresAt && v.tokenExpiresAt.getTime() > Date.now()) {
+        statusLink = {
+          url: publicUrl(`/status/${v.customerStatusToken}`),
+          expiresAt: v.tokenExpiresAt,
+          expiresText: v.tokenExpiresAt.toLocaleString('en-US', {
+            weekday: 'long',
+            hour: 'numeric',
+            minute: '2-digit',
+            timeZone: v.site?.timezone || undefined,
+          }),
+        };
+      }
     }
 
     const vehicleId = input.vehicleId ?? visit?.vehicleId ?? null;
@@ -952,8 +976,30 @@ export class CustomerNotificationsService {
       actionNeededBy: null,
       businessName: BUSINESS_NAME,
       siteName: BUSINESS_NAME,
+      // CR-2026-122 — filled only from a link that still works (see above).
+      statusUrl: statusLink?.url ?? null,
+      statusLinkExpires: statusLink?.expiresText ?? null,
     };
 
-    return { customer, vehicle, visit, ticketNumber, serviceDue, templateData };
+    return { customer, vehicle, visit, ticketNumber, serviceDue, templateData, statusLink };
+  }
+
+  /**
+   * CR-2026-122 — a status-link email with no link in it would read as a
+   * mistake to the customer, and the renderer drops a line whose value is
+   * missing rather than sending "{{statusUrl}}". So the reason is refused, in
+   * words the front desk can act on, whenever the visit has nothing to send.
+   */
+  private assertStatusLink(reason: NotificationReason, context: { visit: { id: string } | null; statusLink: unknown }) {
+    if (reason !== 'STATUS_LINK') return;
+    if (!context.visit) {
+      throw new BadRequestException('A status link belongs to a visit. Open the ticket and send it from there.');
+    }
+    if (!context.statusLink) {
+      throw new BadRequestException(
+        "This visit's status link has expired, so there is nothing to send that would still work. " +
+          'The link lasts 24 hours from check-in; for a longer visit, keep the customer updated from the ticket instead.',
+      );
+    }
   }
 }

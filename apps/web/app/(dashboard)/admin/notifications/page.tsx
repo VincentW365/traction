@@ -31,6 +31,7 @@ const REASON_LABELS: Record<string, string> = {
   APPOINTMENT_CHANGED: 'Appointment Changed',
   APPOINTMENT_CANCELLED: 'Appointment Cancelled',
   APPOINTMENT_REMINDER: 'Appointment Reminder',
+  STATUS_LINK: 'Status Link',
   CUSTOM: 'Custom Message',
 };
 

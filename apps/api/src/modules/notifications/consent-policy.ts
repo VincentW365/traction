@@ -58,6 +58,9 @@ export const REASON_PURPOSE: Record<NotificationReason, CommunicationPurposeName
   CUSTOM: 'TRANSACTIONAL',
   // A prompt about a commitment already made.
   APPOINTMENT_REMINDER: 'REMINDER',
+  // CR-2026-122 — the customer's own status link for a visit in progress:
+  // operational, never gated on the optional-email preference.
+  STATUS_LINK: 'TRANSACTIONAL',
   // Outreach about work the customer has not asked for yet.
   SERVICE_DUE: 'MARKETING',
 };

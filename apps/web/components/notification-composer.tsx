@@ -36,6 +36,7 @@ export type NotificationReason =
   | 'QUEUE_WORK_STARTED'
   | 'QUEUE_UPDATE'
   | 'PICKUP_READY'
+  | 'STATUS_LINK'
   | 'CUSTOM';
 
 const REASON_LABELS: Record<NotificationReason, string> = {
@@ -45,6 +46,8 @@ const REASON_LABELS: Record<NotificationReason, string> = {
   QUEUE_WORK_STARTED: 'Work Started',
   QUEUE_UPDATE: 'Service Update',
   PICKUP_READY: 'Vehicle Ready for Collection',
+  // CR-2026-122 — the customer's own status link, sent from the ticket.
+  STATUS_LINK: 'Status Link',
   CUSTOM: 'Custom Message',
 };
 
@@ -56,6 +59,7 @@ const QUEUE_REASON_CHOICES: NotificationReason[] = [
   'QUEUE_CHECKED_IN',
   'QUEUE_WORK_STARTED',
   'QUEUE_UPDATE',
+  'STATUS_LINK',
   'CUSTOMER_ACTION_REQUIRED',
   'CUSTOM',
 ];

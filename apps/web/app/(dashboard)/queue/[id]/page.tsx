@@ -975,13 +975,32 @@ export default function QueueTicketDetailPage() {
           </div>
           <div className="card-body space-y-2">
             <p className="text-xs text-slate-500">
-              Text or hand this to the customer — it shows their place in line and
+              Email, text or hand this to the customer — it shows their place in line and
               progress, with no prices and only a masked plate.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <code className="flex-1 min-w-[12rem] text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1.5 text-slate-700 break-all">
                 {statusLink}
               </code>
+              {/* CR-2026-122 — the link goes out through the shared composer, so
+                  it is routed, logged and audited like every other customer email,
+                  and the front desk reviews the wording before it leaves. Expired
+                  links are not offered: the API would refuse them anyway. */}
+              {!statusLinkExpired && (
+                <button
+                  onClick={() =>
+                    setComposerCtx({
+                      reason: 'STATUS_LINK',
+                      customerId: sv.customer.id,
+                      vehicleId: sv.vehicle.id,
+                      serviceVisitId: sv.id,
+                    })
+                  }
+                  className="btn-primary text-xs"
+                >
+                  Email to Customer
+                </button>
+              )}
               <button
                 onClick={() => {
                   navigator.clipboard?.writeText(statusLink).then(

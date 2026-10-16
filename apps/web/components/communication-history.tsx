@@ -18,6 +18,7 @@ const REASON_LABELS: Record<string, string> = {
   QUEUE_WORK_STARTED: 'Work Started',
   QUEUE_UPDATE: 'Service Update',
   PICKUP_READY: 'Ready for Collection',
+  STATUS_LINK: 'Status Link',
   CUSTOM: 'Message',
 };
 

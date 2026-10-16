@@ -44,6 +44,11 @@ export const ALLOWED_PLACEHOLDERS = [
   // internal state (see docs/131 §6).
   'actionRequired',
   'actionNeededBy',
+  // CR-2026-122 — the customer's own status link and when it stops working. Both
+  // are filled from the visit, never typed; the send is refused when the visit
+  // has no usable link, so a status-link email can never go out without one.
+  'statusUrl',
+  'statusLinkExpires',
 ] as const;
 
 export type PlaceholderKey = (typeof ALLOWED_PLACEHOLDERS)[number];

@@ -38,6 +38,7 @@ export type NotificationReasonCode =
   | 'APPOINTMENT_CHANGED'
   | 'APPOINTMENT_CANCELLED'
   | 'APPOINTMENT_REMINDER'
+  | 'STATUS_LINK'
   | 'CUSTOM';
 
 export interface DefaultTemplate {
@@ -115,6 +116,32 @@ Bert's Service Centre`,
 Your {{vehicleDescription}}, registration {{registrationNumber}}, has been checked in at Bert's Service Centre. Your ticket is {{ticketDisplayNumber}}.
 
 We will keep you updated on its progress.
+
+Thank you,
+Bert's Service Centre`,
+  },
+
+  // --- Queue: the customer's status link ---------------------------------------
+  // CR-2026-122 — sent from the status-link card on the ticket (and the check-in
+  // confirmation) when a customer wants the link by email, or has lost it.
+  // {{statusUrl}} and {{statusLinkExpires}} come from the visit; the API refuses
+  // to compose or send this while the visit has no link that still works.
+  {
+    key: 'STATUS_LINK_EMAIL',
+    purpose: 'TRANSACTIONAL',
+    reason: 'STATUS_LINK',
+    channel: 'EMAIL',
+    name: 'Status link',
+    subject: "Follow your vehicle's progress — {{registrationNumber}}",
+    body: `Hi {{customerFirstName}},
+
+Here is the link to follow your {{vehicleDescription}}, registration {{registrationNumber}}, while it is with us:
+
+{{statusUrl}}
+
+It shows your place in the line and how the work is going, and it updates by itself. Your ticket is {{ticketDisplayNumber}}.
+
+The link works until {{statusLinkExpires}}. If you need it after that, call the front desk and we will send you a new one.
 
 Thank you,
 Bert's Service Centre`,
