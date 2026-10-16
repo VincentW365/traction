@@ -64,7 +64,17 @@ export function fmtEtaTime(iso: string | null | undefined, timeZone?: string): s
 export function fmtEtaWindow(w: EtaWindow | null | undefined, showRange: boolean, timeZone?: string): string {
   if (!w) return '—';
   if (!showRange || w.min === w.max) return fmtEtaTime(w.at, timeZone);
-  return `${fmtEtaTime(w.min, timeZone)}–${fmtEtaTime(w.max, timeZone)}`;
+  const from = fmtEtaTime(w.min, timeZone);
+  const to = fmtEtaTime(w.max, timeZone);
+  // CR-2026-124 — the day period is said once when both ends share it:
+  // "10:30–10:50 AM", as this comment always promised, rather than
+  // "10:30 AM–10:50 AM", which was long enough to push a licence plate onto a
+  // second line on the lobby screen. Across noon both stay: "11:50 AM–12:10 PM".
+  const PERIOD = /\s?([AP]M)$/i;
+  const pf = from.match(PERIOD)?.[1]?.toUpperCase();
+  const pt = to.match(PERIOD)?.[1]?.toUpperCase();
+  if (pf && pf === pt) return `${from.replace(PERIOD, '')}–${to}`;
+  return `${from}–${to}`;
 }
 
 /** "updated 2:02 PM" for the advisor / visit record. */

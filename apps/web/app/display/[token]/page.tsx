@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'next/navigation';
 import { io, type Socket } from 'socket.io-client';
-import { fmtEtaWindow, type PublicEta } from '../../../lib/eta-format';
+import { fmtEtaWindow, type EtaWindow, type PublicEta } from '../../../lib/eta-format';
 
 // Resolve the API base URL at call time (browser-safe): explicit env override,
 // else derive from the current host so a LAN device calls the same host:3001
@@ -52,8 +52,15 @@ interface DisplayBoard {
   ready: { ticketNumber: string; plate: string | null }[];
 }
 
-/** Rows visible per lane at once, before the lane starts cycling. */
+/**
+ * Rows per lane before the lane starts cycling. CR-2026-124 — this is now the
+ * STARTING figure only: each lane measures how many of its cards actually fit
+ * the height it has (see `useFittedRows`) and pages by that, so the last card
+ * is never half off the bottom of the screen. The directive's five remains the
+ * figure a 32-inch screen at 1080p comes to.
+ */
 const ROWS_PER_PAGE = 5;
+const ROWS_PER_PAGE_MAX = 8;
 /** How long each page of a lane stays up. Slow on purpose — this is read, not watched. */
 const PAGE_MS = 9000;
 
@@ -110,59 +117,98 @@ function useRotatingIndex(length: number, intervalMs: number): number {
  * CR-2026-118 §5 — which page of a lane is showing. A lane with more vehicles
  * than fit cycles through them a page at a time; one that fits does nothing.
  */
-function useLanePage<T>(items: T[]): { page: T[]; pageIndex: number; pageCount: number; from: number; to: number } {
-  const pageCount = Math.max(1, Math.ceil(items.length / ROWS_PER_PAGE));
+function useLanePage<T>(items: T[], rowsPerPage: number): { page: T[]; pageIndex: number; pageCount: number; from: number; to: number } {
+  const rows = Math.max(1, rowsPerPage);
+  const pageCount = Math.max(1, Math.ceil(items.length / rows));
   const pageIndex = useRotatingIndex(pageCount, PAGE_MS);
   const safeIndex = Math.min(pageIndex, pageCount - 1);
-  const from = safeIndex * ROWS_PER_PAGE;
-  const page = items.slice(from, from + ROWS_PER_PAGE);
+  const from = safeIndex * rows;
+  const page = items.slice(from, from + rows);
   return { page, pageIndex: safeIndex, pageCount, from: items.length ? from + 1 : 0, to: from + page.length };
 }
 
-// CR-2026-105b — the customer-facing estimate on a card. Times only, in the site's
-// zone, as a range when the estimate is uncertain; "Delayed" without a reason.
-function EtaLines({ item, tz, mode }: { item: PublicEta; tz: string; mode: 'queue' | 'service' | 'qc' }) {
+/**
+ * CR-2026-124 — how many cards fit the lane's body. Measured from the first
+ * card (every card in a lane is the same height by construction: the estimate
+ * table is always rendered, with "to follow" where there is no time yet) and
+ * the body's height and gap, re-measured whenever the screen or the list
+ * changes. A 1080p screen comes to five; a taller one shows more, a smaller
+ * one fewer — and the last card is never cut off.
+ */
+function useFittedRows(ref: RefObject<HTMLDivElement | null>, itemCount: number): number {
+  const [rows, setRows] = useState(ROWS_PER_PAGE);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      if (itemCount === 0) return;
+      const first = el.firstElementChild as HTMLElement | null;
+      if (!first) return;
+      const cs = getComputedStyle(el);
+      const gap = parseFloat(cs.rowGap) || 0;
+      const inner = el.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
+      const card = first.getBoundingClientRect().height;
+      if (card <= 0 || inner <= 0) return;
+      const fit = Math.floor((inner + gap) / (card + gap));
+      setRows(Math.max(1, Math.min(ROWS_PER_PAGE_MAX, fit)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, itemCount]);
+  return rows;
+}
+
+/**
+ * CR-2026-105b / CR-2026-124 — the customer-facing estimate on a card, as a
+ * small table rather than a line of prose: labels in a fixed left column, times
+ * right-aligned in tabular figures, so every card on the board lines up and a
+ * long range can never push the licence plate onto a second line. Times only,
+ * in the site's zone, as a range when the estimate is uncertain.
+ *
+ * §5.6C — no reliable estimate: no time is invented. The row still renders, and
+ * says "to follow", so cards in a lane keep one height (which is what lets the
+ * lane measure its paging from a single card).
+ */
+function EtaTable({ item, tz, rows }: { item: PublicEta; tz: string; rows: Array<'start' | 'completion'> }) {
   const delayed = item.publicState === 'DELAYED';
-  const value = 'text-slate-200 font-semibold tabular-nums';
-  const label = 'text-[clamp(0.7rem,0.95vw,1.05rem)] leading-tight text-slate-400';
-  const delayedTag = (
-    <div className="text-[clamp(0.75rem,1vw,1.1rem)] font-semibold uppercase tracking-wider text-amber-300">Delayed</div>
-  );
-
-  // §5.6C — when there is no reliable estimate, say nothing rather than invent a time.
-  if (!item.estimatedCompletion) return delayed ? <div className="mt-2">{delayedTag}</div> : null;
-
-  if (mode === 'queue') {
-    return (
-      <div className={`mt-2 ${label}`}>
-        {item.estimatedStart && (
-          <div>
-            Est. start <span className={value}>{fmtEtaWindow(item.estimatedStart, item.showRange, tz)}</span>
-          </div>
-        )}
-        <div>
-          Est. completion <span className={value}>{fmtEtaWindow(item.estimatedCompletion, item.showRange, tz)}</span>
-        </div>
-      </div>
-    );
-  }
-
+  const cell = (w: EtaWindow | null) => (w ? fmtEtaWindow(w, item.showRange, tz) : null);
+  const stats = rows.map((r) => ({
+    key: r,
+    // A delayed card's completion is a revised figure, and the label says so.
+    label: r === 'start' ? 'Est. start' : delayed ? 'Updated est.' : 'Est. completion',
+    value: cell(r === 'start' ? item.estimatedStart : item.estimatedCompletion),
+  }));
+  // Side by side, label over value: the pair reads as one line of facts, and
+  // the two columns sit in the same place on every card in the lane.
   return (
-    <div className={`mt-2 ${label}`}>
-      {delayed ? (
-        <>
-          {delayedTag}
-          <div>
-            Updated est. <span className={value}>{fmtEtaWindow(item.estimatedCompletion, item.showRange, tz)}</span>
+    <div
+      className={`mt-[clamp(0.4rem,0.6vw,0.75rem)] grid border-t border-white/10 pt-[clamp(0.35rem,0.5vw,0.65rem)] gap-x-[clamp(0.75rem,1.2vw,1.4rem)] ${
+        stats.length > 1 ? 'grid-cols-2' : 'grid-cols-1'
+      }`}
+    >
+      {stats.map((s) => (
+        <div key={s.key} className="min-w-0">
+          <div className="whitespace-nowrap text-[clamp(0.6rem,0.8vw,0.95rem)] font-medium uppercase tracking-wider text-slate-400">
+            {s.label}
           </div>
-        </>
-      ) : (
-        <div>
-          Est. completion <span className={value}>{fmtEtaWindow(item.estimatedCompletion, item.showRange, tz)}</span>
+          <div
+            className={`whitespace-nowrap text-[clamp(0.9rem,1.25vw,1.5rem)] leading-tight tabular-nums ${
+              s.value ? `font-bold ${delayed ? 'text-amber-200' : 'text-slate-100'}` : 'font-normal text-slate-500'
+            }`}
+          >
+            {s.value ?? 'to follow'}
+          </div>
         </div>
-      )}
+      ))}
     </div>
   );
+}
+
+/** The amber word, inline where a lane's status sits. Never a reason — this is the lobby. */
+function Delayed() {
+  return <span className="font-semibold uppercase tracking-wider text-amber-300">Delayed</span>;
 }
 
 export default function DisplayBoardPage() {
@@ -210,12 +256,6 @@ export default function DisplayBoardPage() {
     };
   }, [siteId, refetch]);
 
-  // Lane paging hooks are unconditional (rules of hooks); they see empty lists
-  // while loading and simply do nothing.
-  const queueLane = useLanePage(data?.inQueue ?? []);
-  const serviceLane = useLanePage(data?.inService ?? []);
-  const readyLane = useLanePage(data?.ready ?? []);
-
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -258,13 +298,16 @@ export default function DisplayBoardPage() {
   const showPlates = data.showPlates !== false;
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white flex flex-col">
+    <div className="relative h-screen overflow-hidden bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white flex flex-col">
+      {/* CR-2026-124 — `h-screen`, not `min-h-screen`: exactly the screen, never
+          taller, so the lanes measure the height they really have and the footer
+          stays on screen. */}
       {/* Faint automotive watermark — premium, not busy */}
       <GearWatermark className="pointer-events-none absolute -right-24 -top-24 h-[42rem] w-[42rem] text-white/[0.02]" />
       <GearWatermark className="pointer-events-none absolute -left-32 bottom-[-6rem] h-[30rem] w-[30rem] text-white/[0.015]" />
 
       {/* Header */}
-      <header className="relative flex items-center justify-between gap-6 px-[clamp(1.5rem,3vw,3.5rem)] py-[clamp(1rem,1.8vw,2rem)] border-b border-white/10 shrink-0">
+      <header className="relative flex items-center justify-between gap-6 px-[clamp(1.5rem,3vw,3.5rem)] py-[clamp(0.75rem,1.2vw,1.5rem)] border-b border-white/10 shrink-0">
         <div className="flex items-center gap-[clamp(0.75rem,1.4vw,1.5rem)] min-w-0">
           <img
             src="/brand-mark.png"
@@ -281,7 +324,7 @@ export default function DisplayBoardPage() {
           </div>
         </div>
         <div className="text-right shrink-0">
-          <div className="text-[clamp(2rem,3.6vw,4.25rem)] font-bold tabular-nums leading-none">
+          <div className="text-[clamp(1.9rem,3.1vw,3.75rem)] font-bold tabular-nums leading-none">
             {timeStr}
           </div>
           <div className="mt-1.5 flex items-center justify-end gap-2.5 text-[clamp(0.7rem,1vw,1.1rem)] text-slate-400">
@@ -304,95 +347,121 @@ export default function DisplayBoardPage() {
       </header>
 
       {/* Lanes */}
-      <main className="relative flex-1 grid grid-cols-3 gap-[clamp(0.75rem,1.4vw,1.5rem)] p-[clamp(0.75rem,1.6vw,1.75rem)] overflow-hidden">
+      <main className="relative flex-1 min-h-0 grid grid-cols-3 gap-[clamp(0.75rem,1.4vw,1.5rem)] p-[clamp(0.75rem,1.6vw,1.75rem)] overflow-hidden">
+        {/*
+          CR-2026-124 — one card shape in every lane: the plate on its own line on
+          top with the short status beside it, the times underneath in a table.
+          Nothing on the right of the plate is ever wide enough to wrap it.
+        */}
         <Lane
           title="Waiting"
           subtitle="Waiting to be serviced"
-          count={data.inQueue.length}
-          paging={queueLane}
+          items={data.inQueue}
+          keyOf={(item) => item.ticketNumber}
           accent={ACCENTS.blue}
           icon={<ClockIcon />}
           empty="No vehicles waiting"
-        >
-          {queueLane.page.map((item) => (
-            <VehicleCard key={item.ticketNumber} plate={item.plate} ticket={item.ticketNumber} showPlates={showPlates} accent={ACCENTS.blue}>
-              {item.position != null ? (
-                <div className="text-right leading-none">
-                  <div className="text-[clamp(1.1rem,1.8vw,2.1rem)] font-semibold text-blue-200">Waiting</div>
-                  <div className="mt-1 text-[clamp(0.75rem,1vw,1.1rem)] font-medium text-slate-400 tabular-nums">
-                    #{item.position} of {data.totalInQueue}
-                  </div>
-                  <EtaLines item={item} tz={data.timezone} mode="queue" />
+          renderItem={(item) => (
+            <VehicleCard
+              plate={item.plate}
+              ticket={item.ticketNumber}
+              showPlates={showPlates}
+              accent={ACCENTS.blue}
+              status={
+                // One short line, always, so every card in the lane is the same
+                // height and the ticket number beside the plate never gives way:
+                // the place in line (the lane header already says "Waiting"), and
+                // "Delayed" when it applies.
+                // Stacked, not side by side: two short lines fit inside the plate's
+                // own height, so a delayed card is no taller and the ticket number
+                // beside the plate keeps its room.
+                <div className="flex flex-col items-end gap-[0.2em] whitespace-nowrap text-[clamp(0.75rem,1vw,1.2rem)] leading-tight">
+                  {item.position != null ? (
+                    <span className="rounded-md bg-blue-500/15 px-[0.55em] py-[0.1em] font-bold tabular-nums text-blue-200">
+                      #{item.position} of {data.totalInQueue}
+                    </span>
+                  ) : (
+                    <span className="font-semibold uppercase tracking-wider text-slate-500">Holding</span>
+                  )}
+                  {item.publicState === 'DELAYED' && <Delayed />}
                 </div>
-              ) : (
-                <div className="text-right leading-none">
-                  <div className="text-[clamp(1rem,1.4vw,1.5rem)] font-medium text-slate-500">
-                    {item.publicState === 'DELAYED' ? 'Delayed' : 'Holding'}
-                  </div>
-                </div>
-              )}
+              }
+            >
+              <EtaTable item={item} tz={data.timezone} rows={['start', 'completion']} />
             </VehicleCard>
-          ))}
-        </Lane>
+          )}
+        />
 
         <Lane
           title="In Service"
           subtitle="Being worked on now"
-          count={data.inService.length}
-          paging={serviceLane}
+          items={data.inService}
+          keyOf={(item) => item.ticketNumber}
           accent={ACCENTS.amber}
           icon={<WrenchIcon />}
           empty="No active jobs"
-        >
-          {serviceLane.page.map((item) => (
-            <VehicleCard key={item.ticketNumber} plate={item.plate} ticket={item.ticketNumber} showPlates={showPlates} accent={ACCENTS.amber}>
-              <div className="text-right leading-none">
-                {/* §5.6B — Quality Check is its own, honest status: worked on, being
-                    checked, not yet ready. */}
-                <div className="text-[clamp(1.1rem,1.8vw,2.1rem)] font-semibold text-amber-200">
-                  {item.stage === 'QC' ? 'Quality Check' : 'In Service'}
+          renderItem={(item) => (
+            <VehicleCard
+              plate={item.plate}
+              ticket={item.ticketNumber}
+              showPlates={showPlates}
+              accent={ACCENTS.amber}
+              status={
+                // §5.6B — Quality Check is its own, honest status: worked on, being
+                // checked, not yet ready. It replaces the position on the one status
+                // line; "In Service" itself is what the lane header says.
+                <div className="flex flex-col items-end gap-[0.2em] whitespace-nowrap text-[clamp(0.75rem,1vw,1.2rem)] font-semibold uppercase leading-tight tracking-wider">
+                  {item.stage === 'QC' ? (
+                    // Allowed to break into its two words: two short lines fit inside
+                    // the plate's height, and the ticket number keeps its room.
+                    <span className="max-w-[7em] whitespace-normal rounded-md bg-amber-500/15 px-[0.55em] py-[0.1em] text-center text-amber-200">
+                      Quality Check
+                    </span>
+                  ) : (
+                    <span className="text-amber-300/80">{item.bay ? item.bay : 'Being worked on'}</span>
+                  )}
+                  {item.publicState === 'DELAYED' && <Delayed />}
                 </div>
-                <div className="mt-1 text-[clamp(0.7rem,0.95vw,1.05rem)] font-medium uppercase tracking-wider text-amber-400/70">
-                  {item.stage === 'QC' ? 'Final check before collection' : item.bay ? item.bay : 'Vehicle being worked on'}
-                </div>
-                <EtaLines item={item} tz={data.timezone} mode={item.stage === 'QC' ? 'qc' : 'service'} />
-              </div>
+              }
+            >
+              <EtaTable item={item} tz={data.timezone} rows={['completion']} />
             </VehicleCard>
-          ))}
-        </Lane>
+          )}
+        />
 
         <Lane
           title="Ready"
           subtitle="Ready for collection"
-          count={data.ready.length}
-          paging={readyLane}
+          items={data.ready}
+          keyOf={(item) => item.ticketNumber}
           accent={ACCENTS.emerald}
           icon={<CheckBadgeIcon />}
           empty="Nothing ready yet"
-        >
-          {readyLane.page.map((item) => (
+          renderItem={(item) => (
             <VehicleCard
-              key={item.ticketNumber}
               plate={item.plate}
               ticket={item.ticketNumber}
               showPlates={showPlates}
               accent={ACCENTS.emerald}
               highlight
-            >
-              <span className="flex items-center gap-2.5 text-[clamp(0.9rem,1.3vw,1.5rem)] font-bold uppercase tracking-wider text-emerald-300">
+              status={
                 <svg
-                  className="w-[clamp(1.75rem,2.6vw,2.75rem)] h-[clamp(1.75rem,2.6vw,2.75rem)] text-emerald-400"
+                  className="w-[clamp(2rem,3vw,3.25rem)] h-[clamp(2rem,3vw,3.25rem)] text-emerald-400"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
+                  aria-hidden="true"
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                 </svg>
-                Ready for Collection
-              </span>
+              }
+            >
+              <div className="mt-[clamp(0.4rem,0.6vw,0.75rem)] border-t border-emerald-400/20 pt-[clamp(0.35rem,0.5vw,0.65rem)] text-[clamp(0.85rem,1.15vw,1.3rem)] font-bold uppercase tracking-wider text-emerald-300">
+                Ready for collection
+              </div>
             </VehicleCard>
-          ))}
-        </Lane>
+          )}
+        />
       </main>
 
       {/* Footer — rotating service tip over the persistent "watch the board" message */}
@@ -411,7 +480,7 @@ export default function DisplayBoardPage() {
         </div>
         <p className="mt-1 text-[clamp(0.75rem,1vw,1.1rem)] font-medium text-slate-500">
           {showPlates ? (
-            <>Find your <span className="text-slate-300">licence plate</span> on this board. Your ticket number is shown underneath it.</>
+            <>Find your <span className="text-slate-300">licence plate</span> on this board. Your ticket number is shown beside it.</>
           ) : (
             <>Find your <span className="text-slate-300">ticket number</span> on this board — it was given to you at check-in.</>
           )}{' '}
@@ -435,6 +504,8 @@ type Accent = {
   iconBg: string;
   countBg: string;
   ring: string;
+  /** CR-2026-124 — the plate badge's border and fill. */
+  plate: string;
 };
 
 const ACCENTS = {
@@ -444,6 +515,7 @@ const ACCENTS = {
     iconBg: 'bg-blue-500/15 text-blue-300 ring-1 ring-blue-400/25',
     countBg: 'bg-blue-500/15 text-blue-200',
     ring: 'ring-white/5',
+    plate: 'border-blue-300/40 bg-blue-400/10',
   },
   amber: {
     text: 'text-amber-300',
@@ -451,6 +523,7 @@ const ACCENTS = {
     iconBg: 'bg-amber-500/15 text-amber-300 ring-1 ring-amber-400/25',
     countBg: 'bg-amber-500/15 text-amber-200',
     ring: 'ring-white/5',
+    plate: 'border-amber-300/40 bg-amber-400/10',
   },
   emerald: {
     text: 'text-emerald-300',
@@ -458,36 +531,44 @@ const ACCENTS = {
     iconBg: 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/25',
     countBg: 'bg-emerald-500/15 text-emerald-200',
     ring: 'ring-emerald-500/20',
+    plate: 'border-emerald-300/40 bg-emerald-400/10',
   },
 } satisfies Record<string, Accent>;
 
-type Paging = { pageIndex: number; pageCount: number; from: number; to: number };
-
-function Lane({
+/**
+ * CR-2026-124 — a lane owns its paging. It measures how many of its own cards
+ * fit (`useFittedRows`), pages by that, and cycles. The page only hands it the
+ * list and how to draw one card.
+ */
+function Lane<T>({
   title,
   subtitle,
-  count,
-  paging,
+  items,
+  keyOf,
+  renderItem,
   accent,
   icon,
   empty,
-  children,
 }: {
   title: string;
   subtitle: string;
-  count: number;
-  paging: Paging;
+  items: T[];
+  keyOf: (item: T) => string;
+  renderItem: (item: T) => ReactNode;
   accent: Accent;
   icon: ReactNode;
   empty: string;
-  children: ReactNode;
 }) {
+  const count = items.length;
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const rows = useFittedRows(bodyRef, count);
+  const paging = useLanePage(items, rows);
   return (
     <section className="relative flex flex-col overflow-hidden rounded-2xl bg-slate-900/50 ring-1 ring-white/5 shadow-2xl shadow-black/40 backdrop-blur-sm">
       {/* Accent strip */}
       <div className={`h-1 w-full bg-gradient-to-r ${accent.strip}`} />
 
-      <div className="flex items-center gap-[clamp(0.6rem,1vw,1rem)] px-[clamp(1rem,1.6vw,1.75rem)] pt-[clamp(0.9rem,1.4vw,1.5rem)] pb-[clamp(0.75rem,1.1vw,1.25rem)]">
+      <div className="flex items-center gap-[clamp(0.6rem,1vw,1rem)] px-[clamp(1rem,1.6vw,1.75rem)] pt-[clamp(0.7rem,1vw,1.2rem)] pb-[clamp(0.6rem,0.85vw,1rem)]">
         <span
           className={`flex h-[clamp(2.25rem,3vw,3.25rem)] w-[clamp(2.25rem,3vw,3.25rem)] items-center justify-center rounded-xl ${accent.iconBg}`}
         >
@@ -506,14 +587,19 @@ function Lane({
         </span>
       </div>
 
-      <div className="flex-1 overflow-hidden px-[clamp(0.6rem,1vw,1.1rem)] pb-[clamp(0.6rem,1vw,1.1rem)] space-y-[clamp(0.5rem,0.8vw,0.85rem)]">
+      {/* A flex column with a real gap (not margins), so the fit measurement can
+          read the gap back from computed style. */}
+      <div
+        ref={bodyRef}
+        className="flex-1 overflow-hidden flex flex-col gap-[clamp(0.5rem,0.8vw,0.85rem)] px-[clamp(0.6rem,1vw,1.1rem)] pb-[clamp(0.6rem,1vw,1.1rem)]"
+      >
         {count === 0 ? (
           <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-600">
             <span className="opacity-40">{icon}</span>
             <span className="text-[clamp(0.95rem,1.3vw,1.4rem)]">{empty}</span>
           </div>
         ) : (
-          children
+          paging.page.map((item) => <Fragment key={keyOf(item)}>{renderItem(item)}</Fragment>)
         )}
       </div>
 
@@ -538,15 +624,23 @@ function Lane({
 }
 
 /**
- * CR-2026-118 §5 — one vehicle on the board. The licence plate is the largest
- * thing on the card; the ticket number sits under it. No plate recorded → the
- * card says so and the ticket number carries the row.
+ * CR-2026-118 §5 / CR-2026-124 — one vehicle on the board.
+ *
+ * The licence plate is the largest thing on the card and it is ALWAYS one line:
+ * it is drawn as a plate — a bordered badge in a fixed-width face, upper-case,
+ * never wrapped — on the top row, with only the short status beside it. The
+ * estimate (or the ready line) goes UNDER the plate at full width, so nothing
+ * to its right is ever wide enough to break it. Before this the status and the
+ * times sat beside the plate and squeezed "7777 XY" onto two lines.
+ *
+ * No plate recorded → the card says so and the ticket number carries the row.
  */
 function VehicleCard({
   plate,
   ticket,
   showPlates,
   accent,
+  status,
   children,
   highlight,
 }: {
@@ -554,35 +648,52 @@ function VehicleCard({
   ticket: string;
   showPlates: boolean;
   accent: Accent;
+  /** The short status beside the plate: a word, a position, a tick. */
+  status: ReactNode;
+  /** The full-width row under the plate: the estimate table, or the ready line. */
   children: ReactNode;
   highlight?: boolean;
 }) {
-  const lead = showPlates && plate ? plate : ticket;
-  const sub = showPlates ? (plate ? `Ticket ${ticket}` : 'No plate recorded') : null;
+  const hasPlate = showPlates && !!plate;
   return (
     <div
-      className={`flex items-center justify-between gap-[clamp(0.75rem,1.4vw,1.5rem)] rounded-xl px-[clamp(0.9rem,1.4vw,1.6rem)] py-[clamp(0.7rem,1.1vw,1.25rem)] ring-1 ${
-        highlight
-          ? 'bg-emerald-500/10 ring-emerald-500/30'
-          : `bg-slate-800/60 ${accent.ring}`
+      className={`rounded-xl px-[clamp(0.9rem,1.4vw,1.6rem)] py-[clamp(0.55rem,0.85vw,1rem)] ring-1 ${
+        highlight ? 'bg-emerald-500/10 ring-emerald-500/30' : `bg-slate-800/60 ${accent.ring}`
       }`}
     >
-      {/* min-w-0 + break-words lets a long registration or ticket wrap instead of
-          overflowing into the status block. */}
-      <div className="min-w-0 flex-1">
-        <div
-          className={`text-[clamp(1.6rem,2.6vw,3.25rem)] font-extrabold tracking-wide tabular-nums leading-tight break-words ${accent.text}`}
-          aria-label={showPlates && plate ? `Licence plate ${plate}` : `Ticket ${ticket}`}
-        >
-          {lead}
+      <div className="flex items-center justify-between gap-[clamp(0.6rem,1vw,1.2rem)]">
+        {/* The plate (or the ticket, when there is no plate) with the ticket number
+            beside it on the same baseline — one row, so the card stays short. The
+            ticket text gives way first; the plate never does. */}
+        <div className="flex min-w-0 items-baseline gap-[clamp(0.5rem,0.8vw,1rem)]">
+          {hasPlate ? (
+            <div
+              className={`shrink-0 whitespace-nowrap rounded-md border-2 ${accent.plate} px-[0.4em] py-[0.08em] font-mono text-[clamp(1.35rem,2.05vw,2.75rem)] font-black leading-none tracking-[0.06em] tabular-nums ${accent.text}`}
+              aria-label={`Licence plate ${plate}`}
+            >
+              {plate}
+            </div>
+          ) : (
+            <div
+              className={`shrink-0 whitespace-nowrap text-[clamp(1.35rem,2.05vw,2.75rem)] font-extrabold leading-none tracking-wide tabular-nums ${accent.text}`}
+              aria-label={`Ticket ${ticket}`}
+            >
+              {ticket}
+            </div>
+          )}
+          {showPlates && (
+            <div
+              className={`min-w-0 truncate text-[clamp(0.75rem,0.95vw,1.1rem)] font-medium tabular-nums ${
+                hasPlate ? 'text-slate-400' : 'italic text-slate-500'
+              }`}
+            >
+              {hasPlate ? `Ticket ${ticket}` : 'No plate recorded'}
+            </div>
+          )}
         </div>
-        {sub && (
-          <div className={`mt-0.5 text-[clamp(0.75rem,1vw,1.15rem)] font-medium tabular-nums ${plate ? 'text-slate-400' : 'text-slate-500 italic'}`}>
-            {sub}
-          </div>
-        )}
+        <div className="shrink-0 text-right">{status}</div>
       </div>
-      <div className="shrink-0 text-right">{children}</div>
+      {children}
     </div>
   );
 }
