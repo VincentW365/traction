@@ -342,7 +342,7 @@ export class ReconciliationSummaryService {
     if (positions.unverified > 0) {
       blockers.push(
         `${positions.unverified} resource${positions.unverified === 1 ? '' : 's'} still unclassified — ` +
-          'the walk is incomplete, so every count here describes part of the shop.',
+          'so every count here describes part of the shop.',
       );
     }
     if (!reconciliationComplete) {

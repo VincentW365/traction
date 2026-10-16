@@ -2,7 +2,7 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../infrastructure/prisma/prisma.service';
 import { FEATURE_KEY } from '../decorators/require-feature.decorator';
-import { FEATURE_OFF_MESSAGE, type FeatureKey } from '../constants/features';
+import { FEATURE_OFF_FALLBACK_MESSAGE, FEATURE_OFF_MESSAGE, type FeatureKey } from '../constants/features';
 import { isFeatureOn } from '../helpers/feature-flags';
 
 /**
@@ -38,7 +38,7 @@ export class FeatureFlagGuard implements CanActivate {
         throw new ForbiddenException({
           code: 'FEATURE_DISABLED',
           feature,
-          message: FEATURE_OFF_MESSAGE[feature],
+          message: FEATURE_OFF_MESSAGE[feature] ?? FEATURE_OFF_FALLBACK_MESSAGE,
         });
       }
     }

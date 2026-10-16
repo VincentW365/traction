@@ -77,8 +77,9 @@ describe('§24 RESOURCE_AWARE SHADOW has no operational authority', () => {
     }
   });
 
-  it('the shadow engine is consulted only by the simulator, readiness and the comparison recorder', () => {
-    const callers = ['booking-simulator/booking-simulator.service.ts', 'scheduling/availability/shadow-comparison.service.ts'];
+  it('the shadow engine is consulted only by readiness and the comparison recorder', () => {
+    // CR-2026-121 — the Booking Simulator, its other caller, has been removed.
+    const callers = ['scheduling/availability/shadow-comparison.service.ts'];
     for (const rel of callers) {
       expect(read(rel), rel).toMatch(/\.snapshot\(|\.evaluate\(/);
     }

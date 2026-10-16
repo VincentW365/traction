@@ -4,6 +4,14 @@
 #   bsop-web  Next.js web (free)
 # Redis is NOT required (BullMQ is not wired). After the first deploy you set a few
 # cross-service URLs and trigger ONE web redeploy — see DEPLOY_RENDER.md.
+#
+# CR-2026-121 — the four URL values below are what make customer links work on any
+# network. The API builds every customer-facing link from PUBLIC_APP_URL, and the
+# web app calls the API at NEXT_PUBLIC_API_URL (baked in at BUILD time, so changing
+# it means a web redeploy). With all four set to the public https hostnames, the
+# booking link and the status link open on a customer's phone on any wifi or
+# mobile data. Left unset, deploy:check fails the API build and the web build
+# refuses to run on Render, so a half-configured deployment never serves traffic.
 
 databases:
   - name: bsop-db
@@ -23,13 +31,18 @@ services:
     # Migrate + seed run here (once per deploy), not in startCommand: the free plan
     # spins down when idle, and seeding on every wake would add ~10s to each cold start.
     # Seeding is idempotent and required — it is how the active inspection template,
-    # technician skills, and new business-rule keys reach an already-seeded database.
+    # technician skills, new business-rule keys and (CR-2026-121) the confirmed
+    # workshop positions reach an already-seeded database.
     # A DB failure here fails the deploy on purpose, rather than shipping a broken build.
+    # booking:shadow-validate (CR-2026-121) runs after the seed so the resource
+    # readiness check is stamped against the configuration just deployed; it writes
+    # one validation record and decides nothing, so a failure there must not stop
+    # the deploy — hence the "|| echo".
     # deploy:check runs LAST (CR-2026-094): read-only, and it fails the deploy when
     # migrations or the reference seed did not actually land — a broken environment
     # stops here instead of serving traffic. An empty customer table is a warning in
     # that check, never a failure: operational data arrives by the controlled import.
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm exec turbo build --filter=@bsop/api && pnpm exec prisma migrate deploy && pnpm run db:seed && node scripts/deploy-check.mjs
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm exec turbo build --filter=@bsop/api && pnpm exec prisma migrate deploy && pnpm run db:seed && (pnpm run booking:shadow-validate || echo shadow-validation-skipped) && node scripts/deploy-check.mjs
     # migrate stays here too as a safety net (idempotent, no-op when already applied).
     # CR-2026-106 — the forms check runs at every start too (a few ms): a database
     # replaced or restored after the last build can no longer serve traffic with
@@ -54,16 +67,30 @@ services:
       - key: ALLOW_DEV_LOGIN
         value: "false"                 # dev-login stays off in the cloud
       - key: API_CORS_ORIGIN
-        sync: false                    # set to the bsop-web URL after first deploy
+        sync: false                    # the public bsop-web URL, https, exact (e.g. https://bsop-web.onrender.com)
       - key: PUBLIC_APP_URL
-        sync: false                    # CR-2026-106: the public bsop-web URL (https), used for every customer-facing link
-      # CR-2026-108 — the UAT booking cookie is SameSite=Lax by default. Render's
-      # default hostnames put bsop-web and bsop-api under onrender.com, which is a
-      # public suffix, so each subdomain is its own registrable domain and the
-      # browser treats the call as cross-site — Lax would drop the cookie. Remove
-      # this when the services move to a shared custom domain.
-      - key: UAT_COOKIE_CROSS_SITE
-        value: "true"
+        sync: false                    # CR-2026-106: the same public bsop-web URL — every customer-facing link is built from it
+      # CR-2026-121 — customer email. The mailbox stays HERE, in deployment config,
+      # never in Settings (a credential in the rules table would be readable by every
+      # manager and copied into the audit log). Whether email goes to customers or
+      # to a test address is the Settings switch "Send Email to Customers", which now
+      # defaults ON; without these values every send is recorded as SIMULATED.
+      - key: NOTIFICATION_MODE
+        value: LIVE                    # deploy:check fails a production build on anything else
+      - key: EMAIL_PROVIDER
+        sync: false                    # "smtp" — the only provider that sends real mail
+      - key: SMTP_HOST
+        sync: false                    # e.g. smtp.office365.com
+      - key: SMTP_PORT
+        sync: false                    # 587 (STARTTLS, SMTP_SECURE=false) or 465 (SMTP_SECURE=true)
+      - key: SMTP_SECURE
+        sync: false                    # "true" only for port 465
+      - key: SMTP_USER
+        sync: false                    # the mailbox login
+      - key: SMTP_PASS
+        sync: false                    # its password or app password
+      - key: SMTP_FROM
+        sync: false                    # e.g. "Bert's Auto Parts Service Centre <service@example.com>"
 
   - type: web
     name: bsop-web

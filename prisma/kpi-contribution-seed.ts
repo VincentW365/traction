@@ -226,6 +226,16 @@ export const KPI_CONTRIBUTION_SEED: ContributionSeed[] = [
     notes: 'Named under "filters" in the general-service activity breakdown.',
   },
   {
+    // CR-2026-121 — added to the catalogue by CR-2026-120 without a mapping, which
+    // left it the one service forcing any job it appeared on to Custom. Treated
+    // exactly like the air filter it sits beside: a filter named under "filters"
+    // in the general-service breakdown, so no extra time and no package change.
+    serviceCode: 'CABIN-FLT-01',
+    contributionMode: 'INCLUDED_IN_BASE',
+    durationSource: 'NO_DURATION',
+    notes: 'A filter under "filters" in the general-service activity breakdown, like the air filter.',
+  },
+  {
     serviceCode: 'WIPER-01',
     contributionMode: 'INCLUDED_IN_BASE',
     durationSource: 'NO_DURATION',

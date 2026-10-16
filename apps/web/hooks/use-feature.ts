@@ -24,7 +24,9 @@ import { useSiteId } from './use-site';
  *    Manager-only anyway.
  */
 export const FEATURES = {
-  BOOKING_SIMULATOR: 'booking_simulator_enabled',
+  // CR-2026-121 — empty: the Booking Simulator, the one switched feature, has
+  // been removed. Mirrors `apps/api/src/common/constants/features.ts`; the next
+  // switchable tool is added to both.
 } as const;
 
 interface RuleRow {

@@ -82,7 +82,6 @@ interface Reconciliation {
 }
 
 interface TruthAudit {
-  confirmationsRequired: string[];
   derived: {
     verifiedActivePositions: number;
     unverifiedResources: number;
@@ -167,7 +166,6 @@ export default function ResourceReconciliationPage() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [showChecklist, setShowChecklist] = useState(false);
 
   const recon = useQuery<Reconciliation>({
     queryKey: ['resource-reconciliation', siteId],
@@ -241,12 +239,6 @@ export default function ResourceReconciliationPage() {
         ]}
         actions={
           <>
-            <button
-              onClick={() => setShowChecklist((v) => !v)}
-              className="px-3 py-2 text-sm font-medium rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
-            >
-              {showChecklist ? 'Hide' : 'Show'} walk-the-shop checklist
-            </button>
             <Link
               href="/admin/resources"
               className="px-3 py-2 text-sm font-medium rounded-lg bg-slate-900 text-white hover:bg-slate-800"
@@ -299,20 +291,9 @@ export default function ResourceReconciliationPage() {
         </p>
       </div>
 
-      {/* ---- §13 the physical walk --------------------------------------- */}
-      {showChecklist && (
-        <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50 p-5">
-          <h2 className="text-sm font-semibold text-slate-900">Walk the shop, then fill this in</h2>
-          <p className="text-xs text-slate-500 mt-1 mb-3">
-            None of these can be worked out from the data. They are answered by standing in the building.
-          </p>
-          <ol className="space-y-2 text-sm text-slate-700 list-decimal list-inside">
-            {(audit.data?.confirmationsRequired ?? []).map((q) => (
-              <li key={q} className="leading-relaxed">{q}</li>
-            ))}
-          </ol>
-        </div>
-      )}
+      {/* The "walk the shop" checklist that stood here (CR-2026-108 §13) was
+          removed in CR-2026-121: the walk is done and its answers are applied by
+          the deployment seed. */}
 
       {/* ---- what each kind of work has available ------------------------- */}
       {derived && derived.capabilityPools.length > 0 && (

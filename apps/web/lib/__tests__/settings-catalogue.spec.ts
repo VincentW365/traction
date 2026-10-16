@@ -220,9 +220,8 @@ describe('values read the way a person would say them', () => {
 });
 
 describe('related tools are reachable from where the decision is made', () => {
-  it('booking links to the simulator and the catalogue', () => {
+  it('booking links to the catalogue', () => {
     const hrefs = findCategory('booking')!.links!.map((l) => l.href);
-    expect(hrefs).toContain('/admin/testing/booking');
     expect(hrefs).toContain('/admin/service-catalogue');
   });
 
@@ -243,40 +242,34 @@ describe('related tools are reachable from where the decision is made', () => {
 });
 
 /**
- * CR-2026-116 — the Booking Simulator can be switched off, and then no screen
- * may offer a way into it.
+ * CR-2026-116 — a link can be tied to a business switch, and then no screen may
+ * offer a way into the tool while the switch is off. CR-2026-121 removed the one
+ * tool that used it (the Booking Simulator); the mechanism stays for the next.
  */
-describe('links to a switched-off tool', () => {
-  const simulatorLinks = [
-    findCategory('booking')!.links!.find((l) => l.href === '/admin/testing/booking')!,
-    SETTINGS_LAUNCHPADS.find((l) => l.slug === 'system')!.links.find((l) => l.href === '/admin/testing/booking')!,
-  ];
-
-  it('every route to the simulator is tied to the switch', () => {
-    expect(simulatorLinks).toHaveLength(2);
-    for (const l of simulatorLinks) expect(l.requiresRule).toBe('booking_simulator_enabled');
-  });
+describe('links tied to a switch', () => {
+  const gated = { label: 'Example', href: '/admin/example', requiresRule: 'example_tool_enabled' };
 
   it('is offered while the rule is on, and withdrawn when it is off', () => {
-    for (const l of simulatorLinks) {
-      expect(linkIsAvailable(l, () => true)).toBe(true);
-      expect(linkIsAvailable(l, () => false)).toBe(false);
-    }
+    expect(linkIsAvailable(gated, () => true)).toBe(true);
+    expect(linkIsAvailable(gated, () => false)).toBe(false);
   });
 
   it('is offered when the deployment has no row for the rule yet', () => {
     // undefined means "the migration has not run here", not "off". Introducing
     // a switch must never be what removes a working tool.
-    for (const l of simulatorLinks) expect(linkIsAvailable(l, () => undefined)).toBe(true);
+    expect(linkIsAvailable(gated, () => undefined)).toBe(true);
   });
 
   it('leaves every link that names no rule alone', () => {
     expect(linkIsAvailable({ href: '/admin/service-catalogue' } as { requiresRule?: string }, () => false)).toBe(true);
   });
 
-  it('puts the switch itself outside the tool it hides', () => {
-    // A setting reachable only through the thing it can hide is a one-way door.
-    const keys = findCategory('booking')!.sections.flatMap((s) => s.settings.map((x) => x.key));
-    expect(keys).toContain('booking_simulator_enabled');
+  it('offers no route to the removed Booking Simulator, and no setting for its switch', () => {
+    const all = [
+      ...SETTINGS_CATEGORIES.flatMap((c) => c.links ?? []),
+      ...SETTINGS_LAUNCHPADS.flatMap((l) => l.links),
+    ];
+    for (const l of all) expect(l.href).not.toContain('/admin/testing/');
+    expect(catalogued()).not.toContain('booking_simulator_enabled');
   });
 });

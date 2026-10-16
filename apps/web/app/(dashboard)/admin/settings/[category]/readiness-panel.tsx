@@ -79,7 +79,7 @@ export function ResourceReadinessPanel({ siteId }: { siteId: string }) {
           </p>
         </div>
         <SettingStatus tone={ready ? 'good' : 'warn'}>
-          {ready ? 'Ready to switch on' : 'Setup needed'}
+          {ready ? 'Ready to switch on' : 'Not ready to switch on'}
         </SettingStatus>
       </div>
 

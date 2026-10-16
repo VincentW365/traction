@@ -1,17 +1,28 @@
 import { describe, it, expect } from 'vitest';
 import { ForbiddenException } from '@nestjs/common';
 import { isFeatureOn, type RuleReader } from '../feature-flags';
-import { FEATURES, FEATURE_DEFAULTS, featureValueIsOn } from '../../constants/features';
+import {
+  FEATURES,
+  FEATURE_DEFAULTS,
+  FEATURE_OFF_FALLBACK_MESSAGE,
+  featureValueIsOn,
+  type FeatureKey,
+} from '../../constants/features';
 import { FeatureFlagGuard } from '../../guards/feature-flag.guard';
 import { FEATURE_KEY } from '../../decorators/require-feature.decorator';
 
 /**
- * CR-2026-116 — the Booking Simulator is a switch the business owns.
+ * CR-2026-116 — a feature switch the business owns.
  *
  * The thing worth testing is not that a boolean reads back. It is that "off"
  * means the tool is actually gone: hiding a menu item while the endpoints keep
  * answering would make the switch a decoration.
+ *
+ * CR-2026-121 — the Booking Simulator, the feature this was written for, has
+ * been removed, so the table of switches is empty and these tests exercise the
+ * mechanism with a stand-in key. They are what the next switch is held to.
  */
+const FEATURE = 'example_tool_enabled' as FeatureKey;
 
 /** A rule table with whatever rows a test needs, and nothing else. */
 function rules(rows: Record<string, unknown>): RuleReader {
@@ -23,25 +34,31 @@ function rules(rows: Record<string, unknown>): RuleReader {
   };
 }
 
-describe('reading the switch', () => {
+describe('the table of switches', () => {
+  it('is empty today, and says so rather than carrying a dead key', () => {
+    expect(Object.keys(FEATURES)).toHaveLength(0);
+    expect(Object.keys(FEATURE_DEFAULTS)).toHaveLength(0);
+  });
+});
+
+describe('reading a switch', () => {
   it('is on when a manager has set it on', async () => {
-    expect(await isFeatureOn(rules({ booking_simulator_enabled: true }), FEATURES.BOOKING_SIMULATOR)).toBe(true);
+    expect(await isFeatureOn(rules({ [FEATURE]: true }), FEATURE)).toBe(true);
   });
 
   it('is off when a manager has set it off', async () => {
-    expect(await isFeatureOn(rules({ booking_simulator_enabled: false }), FEATURES.BOOKING_SIMULATOR)).toBe(false);
+    expect(await isFeatureOn(rules({ [FEATURE]: false }), FEATURE)).toBe(false);
   });
 
   it('is ON when the deployment has no row yet', async () => {
     // The migration that seeds the row may not have run. Introducing a switch
     // must never be the thing that removes a tool managers already use.
-    expect(await isFeatureOn(rules({}), FEATURES.BOOKING_SIMULATOR)).toBe(true);
-    expect(FEATURE_DEFAULTS.booking_simulator_enabled).toBe(true);
+    expect(await isFeatureOn(rules({}), FEATURE)).toBe(true);
   });
 
   it('treats a value nobody could have chosen through Settings as off', async () => {
     // The toggle stores a real boolean. A string, a number or null is not a
-    // decision — and a testing tool is the wrong place to guess generously.
+    // decision — and a switch is the wrong place to guess generously.
     for (const junk of ['true', 'yes', 1, null, {}]) {
       expect(featureValueIsOn(junk)).toBe(false);
     }
@@ -58,8 +75,8 @@ describe('reading the switch', () => {
         },
       },
     };
-    await isFeatureOn(reader, FEATURES.BOOKING_SIMULATOR);
-    expect(asked).toEqual({ ruleKey: 'booking_simulator_enabled', effectiveTo: null });
+    await isFeatureOn(reader, FEATURE);
+    expect(asked).toEqual({ ruleKey: FEATURE, effectiveTo: null });
   });
 });
 
@@ -75,22 +92,22 @@ describe('the guard on the controller', () => {
   }
 
   it('lets the request through when the feature is on', async () => {
-    await expect(
-      guardWith([FEATURES.BOOKING_SIMULATOR], { booking_simulator_enabled: true }).canActivate(context),
-    ).resolves.toBe(true);
+    await expect(guardWith([FEATURE], { [FEATURE]: true }).canActivate(context)).resolves.toBe(true);
   });
 
   it('refuses when it is off, naming the switch and where to find it', async () => {
-    const guard = guardWith([FEATURES.BOOKING_SIMULATOR], { booking_simulator_enabled: false });
+    const guard = guardWith([FEATURE], { [FEATURE]: false });
     await expect(guard.canActivate(context)).rejects.toBeInstanceOf(ForbiddenException);
     try {
       await guard.canActivate(context);
     } catch (e) {
       const body = (e as ForbiddenException).getResponse() as { code: string; feature: string; message: string };
       expect(body.code).toBe('FEATURE_DISABLED');
-      expect(body.feature).toBe('booking_simulator_enabled');
+      expect(body.feature).toBe(FEATURE);
       // Not "Forbidden" — that sends a manager hunting for a permissions
-      // problem that does not exist.
+      // problem that does not exist. A switch with no wording of its own still
+      // says what happened and where the switch lives.
+      expect(body.message).toBe(FEATURE_OFF_FALLBACK_MESSAGE);
       expect(body.message).toMatch(/switched off/i);
       expect(body.message).toMatch(/Settings/);
     }

@@ -113,7 +113,6 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
     description: 'Appointment availability, online booking, notice periods and scheduling policies.',
     icon: 'calendar',
     links: [
-      { label: 'Open Booking Simulator', href: '/admin/testing/booking', requiresRule: 'booking_simulator_enabled' },
       { label: 'Manage services', href: '/admin/service-catalogue' },
     ],
     sections: [
@@ -309,23 +308,6 @@ export const SETTINGS_CATEGORIES: SettingsCategoryDef[] = [
             help: 'Which kinds of resource are counted when capacity is worked out from the workshop. One per line.',
             control: 'list',
             advanced: true,
-          },
-        ],
-      },
-      {
-        // CR-2026-116 — the switch lives here, in the category the tool belongs
-        // to, and NEVER behind the tool it controls. A setting reachable only
-        // through the thing it can hide would be a one-way door.
-        title: 'Testing tools',
-        help: 'Tools for checking how booking behaves. They change nothing customers see.',
-        settings: [
-          {
-            key: 'booking_simulator_enabled',
-            label: 'Booking Simulator',
-            help: 'A Manager-only tool that explains why a time is or is not offered, and can make a test booking that is kept separate from real ones.',
-            control: 'toggle',
-            impact:
-              'Turning this off removes the Booking Simulator from Setup and stops new test bookings being started. Nothing a customer sees changes, and test records already created are kept.',
           },
         ],
       },
@@ -767,12 +749,11 @@ export const SETTINGS_LAUNCHPADS: Array<{
   },
   {
     slug: 'system',
-    title: 'System & Testing',
-    description: 'Booking simulator, test bookings, resource reconciliation and deployment checks.',
+    title: 'System',
+    description: 'Work positions, deployment checks and the audit trail.',
     icon: 'flask',
     links: [
-      { label: 'Booking Simulator', href: '/admin/testing/booking', help: 'Why a time is or is not offered, and a safe way to make a test booking.', requiresRule: 'booking_simulator_enabled' },
-      { label: 'Confirm Work Positions', href: '/admin/resources/reconciliation', help: 'Match bays to records and say what work each can take.' },
+      { label: 'Confirm Work Positions', href: '/admin/resources/reconciliation', help: 'What each position is and what work it can take.' },
       { label: 'Deployment', href: '/admin/deployment', help: 'Whether this installation is configured correctly.' },
       { label: 'Audit Logs', href: '/admin/audit-logs', help: 'Who changed what, and when.' },
     ],

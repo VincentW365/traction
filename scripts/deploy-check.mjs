@@ -113,6 +113,31 @@ if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_LOGIN === 'tr
   check('ALLOW_DEV_LOGIN', true, process.env.ALLOW_DEV_LOGIN === 'true' ? 'enabled (non-production)' : 'off');
 }
 
+// CR-2026-121 — can a real email leave this deployment at all? Live routing is
+// a Settings decision (and now defaults ON), but the mailbox is deployment
+// config and nothing else can supply it. Without it every customer send is
+// recorded as SIMULATED: visible on the Notifications screen, never lost
+// silently, and never delivered either. A warning, not a failure — a deploy
+// must not be blocked on mailbox credentials — but it names every variable.
+{
+  const provider = (process.env.EMAIL_PROVIDER ?? 'stub').toLowerCase();
+  const host = (process.env.SMTP_HOST ?? '').trim();
+  const from = (process.env.SMTP_FROM ?? '').trim();
+  let ok = false;
+  let detail;
+  if (provider === 'smtp' && host && from) {
+    ok = true;
+    detail = `smtp via ${host}, from ${from}`;
+  } else if (provider === 'smtp') {
+    detail = 'smtp, but SMTP_HOST and/or SMTP_FROM are missing — the API refuses to start like this';
+  } else {
+    detail =
+      `"${provider}" — no real email can leave this deployment; customer sends are recorded as SIMULATED. ` +
+      'Set EMAIL_PROVIDER=smtp with SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS and SMTP_FROM.';
+  }
+  check('EMAIL_PROVIDER', ok, detail, { warnOnly: true });
+}
+
 // CR-2026-108 Stage 1 — the GLOBAL notification mode. TEST redirects EVERY
 // customer message to one mailbox: safe on a laptop, silently harmful in
 // production, where a real customer simply stops being told their car is ready

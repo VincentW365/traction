@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { seedInspectionTemplate } from './inspection-template-data';
 import { seedKpiFramework } from './kpi-seed-data';
+import { seedWorkshop } from './workshop-seed-data';
 
 const prisma = new PrismaClient();
 
@@ -298,6 +299,18 @@ async function main() {
   }
   console.warn(`Work resources: ${resources.length} seeded`);
 
+  // --- CR-2026-121: the workshop as management confirmed it ---
+  // Creates the eight numbered positions, the wash area and the press when they
+  // are absent, classifies the support equipment and ground positions while they
+  // are still unclassified, and closes out the six legacy bay records. Nothing a
+  // manager has since decided on the Resources screens is overwritten.
+  const workshop = await seedWorkshop(prisma, site.id);
+  console.warn(
+    `Workshop: ${workshop.created.length} created, ${workshop.classified.length} classified, ` +
+      `${workshop.retired.length} retired, ${workshop.dispositioned.length} legacy bays closed out, ` +
+      `${workshop.untouched} left as they were`,
+  );
+
   // --- v4.1: Initialize ResourceOccupancy for each resource (all AVAILABLE) ---
   const allResources = await prisma.workResource.findMany({ where: { siteId: site.id } });
   for (const res of allResources) {
@@ -471,18 +484,18 @@ async function main() {
     // Settings once the readiness audit and preflight pass. Never a redeploy.
     { ruleKey: 'booking_enforce_online_bookable', valueJson: false, notes: 'CR-2026-108: when true, /book offers ONLY services with bookableOnline=true. False preserves the pre-CR behaviour (every active, non-external, non-excluded service). Activation is gated by a preflight — see docs/122 §E.' },
     { ruleKey: 'booking_share_message_template', valueJson: 'Hi! You can book your next service at {siteName} online here: {bookingUrl} — pick your vehicle, the service you need, and a time that suits you.', notes: 'CR-2026-106: the wording staff copy and pass on with the public booking link; {bookingUrl} and {siteName} are replaced.' },
-    // CR-2026-116 — the Booking Simulator is a tool the business switches on and
-    // off. Seeded TRUE so a fresh database behaves like the running one; the
-    // migration seeds the same value into deployments that already exist.
-    // CR-2026-117 — test routing is a management decision, not an env var. OFF
-    // is the safe state; the mailbox itself stays in deployment config.
-    { ruleKey: 'notifications_live_sending', valueJson: false, notes: 'CR-2026-117: OFF routes every customer email to the test recipient. ON sends to real customers. Requires a mailbox connected in deployment config.' },
+    // CR-2026-117 — test routing is a management decision, not an env var; the
+    // mailbox itself stays in deployment config. CR-2026-121 — seeded ON:
+    // management's instruction is that customer email goes to customers, and
+    // the rule wins over NOTIFICATION_MODE, so OFF here had put a LIVE
+    // deployment back into test routing. Without a mailbox a send is recorded
+    // as SIMULATED, never delivered to the wrong place.
+    { ruleKey: 'notifications_live_sending', valueJson: true, notes: 'CR-2026-121: ON — customer email goes to customers. OFF routes every customer email to the test recipient instead. Needs a mailbox connected in deployment config to actually send.' },
     { ruleKey: 'notifications_test_email_to', valueJson: '', notes: 'CR-2026-117: where customer email goes while live sending is off. Empty falls back to NOTIFICATION_TEST_EMAIL_TO.' },
     // CR-2026-118 §5 — what the lobby screen shows about a vehicle, and for how long.
     { ruleKey: 'display_board_show_plates', valueJson: true, notes: 'CR-2026-118: show the vehicle registration on the waiting-room display.' },
     { ruleKey: 'display_board_plate_mask', valueJson: false, notes: 'CR-2026-118: show only the last characters of each registration on the display.' },
     { ruleKey: 'display_board_ready_hours', valueJson: 4, notes: 'CR-2026-118: hours a Ready vehicle stays on the display before dropping off.' },
-    { ruleKey: 'booking_simulator_enabled', valueJson: true, notes: 'CR-2026-116: shows or hides Setup -> Booking Simulator and its test-booking sessions. Off also refuses the endpoints behind it, so the tool is genuinely gone rather than merely unlisted.' },
   ];
 
   for (const r of cr105cRules) {

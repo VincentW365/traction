@@ -125,8 +125,6 @@ export interface ResourceTruthAudit {
   /** Service demand vs bays that exist, in the vocabulary the catalogue uses. */
   bayTypeCoverage: Array<{ bayType: string; servicesRequiring: number; pilotServicesRequiring: number; activeBays: number; shortfall: boolean }>;
   technicians: TechnicianReliability;
-  /** Questions only management can answer. */
-  confirmationsRequired: string[];
   /**
    * CR-2026-108 Stage 5B — capacity DERIVED from configuration, never entered.
    * Adding a bay raises it; maintenance lowers it; no key is edited, no deploy.
@@ -289,7 +287,6 @@ export class ResourceTruthAuditService {
       modelDivergence: await this.modelDivergence(),
       bayTypeCoverage: await this.bayTypeCoverage(),
       technicians: await this.technicianReliability(),
-      confirmationsRequired: CONFIRMATIONS,
       derived: await this.derivedCapacity(rows),
     };
   }
@@ -525,23 +522,8 @@ export class ResourceTruthAuditService {
   }
 }
 
-/**
- * The questions the database cannot answer. Deliberately phrased as things a
- * person confirms, not as options a system infers from throughput.
- */
-const CONFIRMATIONS: string[] = [
-  'How many physical vehicles can actually be worked on at the same time?',
-  'Which bays are operational today?',
-  'Do Bays 6 and 7 physically exist, and are they commissioned?',
-  'Are the two OVERFLOW slots genuine vehicle service positions, and under what circumstances?',
-  'Are the mobile jacks (MJACK-01/02) independent work positions, or equipment used at a bay?',
-  'Are the stands (STAND-01/02) independent work positions, or equipment used at a bay?',
-  'How many ALIGNMENT positions exist? (The catalogue has one, and Wheel Alignment is a pilot service.)',
-  'How many TIRE positions exist? (The catalogue requires a TIRE bay type that has no bay at all.)',
-  'How many LUBE positions exist?',
-  'Where does Vehicle Cleaning physically happen — a mechanical bay, or the Power Wash location?',
-  'Where do Pre-Purchase Inspections physically happen?',
-  'Which resources may substitute for GENERAL work?',
-  'Are any resources unavailable at particular times of day or days of the week?',
-  'Are technician shifts recorded anywhere outside this platform, and can they be maintained in it?',
-];
+// CR-2026-121 — the "walk the shop" question list that used to be served here
+// is gone. The walk happened (photographic audit, CR-2026-119) and management
+// answered what it left open on 2026-10-16; those answers are now applied by
+// `prisma/workshop-seed-data.ts` on every deploy, so there is nothing left for a
+// screen to ask.

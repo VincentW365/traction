@@ -33,7 +33,7 @@ async function main() {
   if (s.readyForStage5C) {
     console.log('\n  STATUS: READY — the reconciled inventory can be Stage 5C input.\n');
   } else {
-    console.log('\n  STATUS: NOT READY — the physical walk is incomplete.\n');
+    console.log('\n  STATUS: NOT READY — the resource inventory is not fully classified.\n');
     s.blockers.forEach((b, i) => console.log(`    ${i + 1}. ${b}`));
     console.log('\n  Every count below therefore describes part of the Service Centre.');
   }
@@ -149,7 +149,7 @@ async function main() {
       );
     }
     if (s.singlePositionBookableServices.every((x) => x.basis === 'INCOMPLETE_CONFIGURATION')) {
-      console.log('\n  These reflect the unfinished walk, not a shop that cannot do the work.');
+      console.log('\n  These reflect unclassified resources, not a shop that cannot do the work.');
       console.log('  Re-run after classifying the bays; the list should shrink to the real cases.');
     } else {
       console.log('\n  booking_max_concurrent_appointments is 2, so two customers can hold the');

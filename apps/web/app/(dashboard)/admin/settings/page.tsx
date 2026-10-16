@@ -149,6 +149,10 @@ export default function SettingsPage() {
             tone={capacityMode === 'FIXED' ? 'info' : 'good'}
             note={capacityMode === 'FIXED' ? 'Running alongside, decides nothing' : undefined}
           />
+          {/* CR-2026-121 — while the fixed limit is in use, resource readiness is
+              a fact about a mode nobody has chosen, so it is reported, not
+              shouted. "Needs setup" is reserved for the case where resource-aware
+              scheduling is live and its checks no longer pass. */}
           <SettingsSummaryCard
             label="Resource Readiness"
             value={
@@ -157,11 +161,13 @@ export default function SettingsPage() {
                 : readiness
                   ? readiness.production.ready
                     ? 'Ready'
-                    : 'Setup needed'
+                    : capacityMode === 'FIXED'
+                      ? 'Shadow only'
+                      : 'Needs setup'
                   : 'Checking…'
             }
-            tone={readiness ? (readiness.production.ready ? 'good' : 'warn') : 'neutral'}
-            note={readiness && servicesTotal > 0 ? `${servicesReady} of ${servicesTotal} services ready` : undefined}
+            tone={readiness ? (readiness.production.ready ? 'good' : capacityMode === 'FIXED' ? 'info' : 'warn') : 'neutral'}
+            note={readiness && servicesTotal > 0 ? `${servicesReady} of ${servicesTotal} services covered` : undefined}
           />
         </dl>
       </div>
@@ -178,7 +184,7 @@ export default function SettingsPage() {
               title={c.title}
               description={c.description}
               summary={categorySummary(c.slug, rules)}
-              status={categoryStatus(c.slug, { bookingOn, readiness })}
+              status={categoryStatus(c.slug, { bookingOn, readiness, capacityMode })}
             />
           ))}
           {SETTINGS_LAUNCHPADS.map((l) => (
@@ -249,14 +255,16 @@ function categorySummary(slug: string, rules: BusinessRule[]): string | undefine
 
 function categoryStatus(
   slug: string,
-  ctx: { bookingOn: boolean; readiness?: ReadinessSummary },
+  ctx: { bookingOn: boolean; readiness?: ReadinessSummary; capacityMode: string },
 ): { tone: StatusTone; label: string } | undefined {
   if (slug === 'booking') {
     return ctx.bookingOn ? { tone: 'good', label: 'Active' } : { tone: 'bad', label: 'Inactive' };
   }
   if (slug === 'capacity' && ctx.readiness) {
-    return ctx.readiness.production.ready
-      ? { tone: 'good', label: 'Ready' }
+    if (ctx.readiness.production.ready) return { tone: 'good', label: 'Ready' };
+    // CR-2026-121 — on the fixed limit this is information, not a to-do.
+    return ctx.capacityMode === 'FIXED'
+      ? { tone: 'info', label: 'Fixed limit' }
       : { tone: 'warn', label: 'Needs setup' };
   }
   return undefined;

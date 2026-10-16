@@ -36,7 +36,6 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EtaService } from '../scheduling/eta/eta.service';
 import { localDayKey } from '../../common/helpers/operating-hours';
 import { phoneForStorage } from '../../common/helpers/search-terms';
-import type { UatContext } from '../booking-simulator/uat-session';
 import type { BookingRules } from './booking.config';
 import { isSlotAvailable, type SlotRules } from './availability.engine';
 import {
@@ -297,7 +296,7 @@ export class PublicBookingService {
   // Step 5 — confirm (transactional, locked)
   // ---------------------------------------------------------------------------
 
-  async confirm(dto: ConfirmBookingDto, clientKey: string, uatContext: UatContext | null = null) {
+  async confirm(dto: ConfirmBookingDto, clientKey: string) {
     const site = await this.resolveSite();
     const rules = await this.loadRules(site.id);
     this.assertEnabled(rules.booking);
@@ -314,13 +313,6 @@ export class PublicBookingService {
     const end = new Date(start.getTime() + slotRules.durationMinutes * MS);
     this.avail.assertSlotAllowed(start, end, site, rules, 'CUSTOMER');
     const serviceRequest = normaliseServiceRequest(dto.serviceRequest);
-
-    // CR-2026-108 Stage 3 — the UAT context comes from the HttpOnly session cookie
-    // the controller resolved, never from this request body. An invalid or expired
-    // attempt is refused UPSTREAM at redemption rather than downgraded here: a
-    // tester who believes UAT is active must never silently create a real customer
-    // and send them a real message.
-    const uat: UatContext | null = uatContext;
 
     // Who is booking?
     const sessionCustomerId = dto.sessionToken ? this.verifySession(dto.sessionToken) : null;
@@ -401,9 +393,6 @@ export class PublicBookingService {
             },
             notes: 'Created by customer self-service booking (CR-2026-105c).',
             ...(possibleDuplicate ? { identityReviewStatus: 'PENDING_REVIEW', possibleDuplicateOfId: possibleDuplicate.id } : {}),
-            // CR-2026-108 — created inside a UAT session: tagged to the run, so its
-            // notifications are captured and cleanup can remove it.
-            ...(uat ? { testDataRunId: uat.testDataRunId } : {}),
           },
           select: { id: true },
         });
@@ -439,9 +428,6 @@ export class PublicBookingService {
               make: v.make?.trim() || null,
               model: v.model?.trim() || null,
               modelYear: v.modelYear ?? null,
-              // CR-2026-108 — created inside a UAT session: tagged to the run, so
-              // its notifications are captured and cleanup can remove it.
-              ...(uat ? { testDataRunId: uat.testDataRunId } : {}),
             },
             select: { id: true },
           });
@@ -506,7 +492,7 @@ export class PublicBookingService {
         afterJson: { possibleDuplicateOfId: flag.possibleDuplicateOfId, matchedOn: flag.matchedOn, appointmentId: created.appt.id, actorType: 'CUSTOMER' },
       });
     }
-    await this.notify('CONFIRMED', created.appt, site, rules.booking, created.token, uat);
+    await this.notify('CONFIRMED', created.appt, site, rules.booking, created.token);
 
     return { ...this.confirmationView(created.appt, site, rules.booking, created.token), serviceRequest: serviceRequest.view };
   }
@@ -776,10 +762,6 @@ export class PublicBookingService {
     site: SiteContext,
     booking: BookingRules,
     token: string | null,
-    // CR-2026-108 Stage 3 — carried explicitly so a brand-new UAT customer's
-    // confirmation is captured on the FIRST message, rather than depending on a
-    // lookup rediscovering a tag written moments earlier in the same request.
-    uat?: { testDataRunId: string; runLabel: string } | null,
   ): Promise<void> {
     try {
       // CR-2026-112 — the confirmation is an email. The public booking form
@@ -804,7 +786,6 @@ export class PublicBookingService {
         vehicle: `${[appt.vehicle.make, appt.vehicle.model].filter(Boolean).join(' ') || 'Vehicle'} · plate ${maskPlate(appt.vehicle.plateNumber)}`,
         customerId: appt.customer.id,
         vehicleId: appt.vehicle.id,
-        ...(uat ? { testContext: { testDataRunId: uat.testDataRunId, runLabel: uat.runLabel } } : {}),
       });
     } catch (err) {
       this.logger.error(`Booking notification (${kind}) failed for ${appt.id}: ${(err as Error).message}`);

@@ -101,36 +101,6 @@ export default function BookPage() {
   const [step, setStep] = useState<Step>('customer');
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * CR-2026-108 Stage 3 — UAT launch exchange.
-   *
-   * A launch token appears in the URL for exactly ONE request. It is redeemed
-   * immediately for an HttpOnly cookie the page cannot read, and the URL is then
-   * replaced with a clean /book, so the privileged token never reaches browser
-   * history, bookmarks, referrers or a screenshot.
-   *
-   * If the exchange FAILS the booking is blocked, never downgraded. A tester
-   * holding an expired link must not sail on and create a real customer who then
-   * receives a real message and lands in operational reporting.
-   */
-  const [uatState, setUatState] = useState<'none' | 'exchanging' | 'active' | 'failed'>('none');
-  const [uatRunLabel, setUatRunLabel] = useState<string | null>(null);
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const token = new URLSearchParams(window.location.search).get('uat');
-    if (!token) return;
-    setUatState('exchanging');
-    publicApi
-      .post<{ runLabel: string }>('/public/booking/uat/redeem', { token })
-      .then((r) => { setUatRunLabel(r.runLabel); setUatState('active'); })
-      .catch(() => setUatState('failed'))
-      .finally(() => {
-        // Clean the address bar either way — a spent or dead token has no business
-        // lingering in history, bookmarks, referrers or a screenshot.
-        window.history.replaceState({}, '', '/book');
-      });
-  }, []);
-
   // --- Step 1: Customer -----------------------------------------------------
   // CR-2026-106: mobile + plate, or mobile + email. Never name only.
   const [phone, setPhone] = useState('');
@@ -381,31 +351,6 @@ export default function BookPage() {
     if (canVisit(target)) setStep(target);
   }
 
-  // CR-2026-108 Stage 3 — a UAT launch that did not redeem BLOCKS the flow. It is
-  // deliberately not downgraded into an ordinary booking: someone who followed a
-  // test link believes nothing real is happening, and letting them continue would
-  // create a real customer, send them a real message and contaminate reporting.
-  // The wording says what to do and nothing about tokens or cryptography.
-  if (uatState === 'exchanging') {
-    return (
-      <Shell>
-        <div className="card p-6 text-center text-sm text-slate-500">Starting the test booking session…</div>
-      </Shell>
-    );
-  }
-  if (uatState === 'failed') {
-    return (
-      <Shell>
-        <div className="card p-6 space-y-3 text-center">
-          <p className="text-sm font-semibold text-slate-900">This test booking session is invalid or has expired.</p>
-          <p className="text-sm text-slate-600">Return to the Booking Simulator and start a new UAT session.</p>
-          <p className="text-xs text-slate-500">If you meant to book a real appointment, open the booking page normally.</p>
-          <a href="/book" className="btn btn-secondary inline-block">Book a real appointment</a>
-        </div>
-      </Shell>
-    );
-  }
-
   if (siteQ.isLoading) {
     return (
       <Shell>
@@ -476,18 +421,6 @@ export default function BookPage() {
 
   return (
     <Shell site={siteQ.data}>
-      {/* CR-2026-108 — a UAT session must be unmistakable. A tester who cannot tell
-          whether they are in one is exactly how a real customer gets contacted. */}
-      {uatState === 'active' && (
-        <div className="mb-4 rounded-md border border-violet-300 bg-violet-50 px-3 py-2 text-xs text-violet-900">
-          <span className="font-semibold">Test booking session</span>
-          {uatRunLabel ? <span className="font-mono"> · {uatRunLabel}</span> : null}
-          <span className="block text-violet-800">
-            Nothing here reaches a real customer: records are marked as test data and messages are recorded instead of sent.
-          </span>
-        </div>
-      )}
-
       <Stepper current={step} stepIndex={stepIndex} canVisit={canVisit} complete={complete} onGo={goTo} />
 
       {error && <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}

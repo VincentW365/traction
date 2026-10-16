@@ -19,6 +19,7 @@ import { PrismaClient } from '@prisma/client';
 import { ResourceAvailabilityService, primaryCapability } from '../apps/api/src/modules/scheduling/availability/resource-availability.service';
 import { ShadowComparisonService } from '../apps/api/src/modules/scheduling/availability/shadow-comparison.service';
 import { BookingAvailabilityService } from '../apps/api/src/modules/scheduling/availability/booking-availability.service';
+import { SERVICE_DURATION_SELECT } from '../apps/api/src/modules/scheduling/availability/service-duration';
 import { EtaService } from '../apps/api/src/modules/scheduling/eta/eta.service';
 import { SHADOW_VALIDATION_KEY } from '../apps/api/src/modules/resources/resource-readiness.service';
 import type { PrismaService } from '../apps/api/src/infrastructure/prisma/prisma.service';
@@ -39,7 +40,11 @@ async function main() {
   const site = await prisma.site.findFirstOrThrow({ select: { id: true, name: true, timezone: true } });
   const services = await prisma.serviceType.findMany({
     where: { bookableOnline: true, isActive: true },
-    select: { code: true, name: true, customerFacingName: true, baseDurationMinutes: true, requiredBayType: true },
+    // CR-2026-121 — SERVICE_DURATION_SELECT, not a hand-written list: since the
+    // CR-2026-111 duration consolidation the resolver refuses a service loaded
+    // without its vehicle-class columns, and this script had silently been
+    // failing on its first service ever since. Same select the public API uses.
+    select: { ...SERVICE_DURATION_SELECT, customerFacingName: true, requiredBayType: true },
     orderBy: { code: 'asc' },
   });
 

@@ -1093,14 +1093,14 @@
               <table>
                 <thead><tr><th>Group</th><th>Controls</th></tr></thead>
                 <tbody>
-                  <tr><td><strong>Booking &amp; Scheduling</strong></td><td>Online booking on or off, notice periods, how far ahead customers may book, closed dates, latest start time, and the Booking Simulator switch.</td></tr>
+                  <tr><td><strong>Booking &amp; Scheduling</strong></td><td>Online booking on or off, notice periods, how far ahead customers may book, closed dates and latest start time.</td></tr>
                   <tr><td><strong>Capacity &amp; Resources</strong></td><td>How many jobs can overlap, and whether capacity comes from a fixed number or from the bays themselves.</td></tr>
                   <tr><td><strong>Customer Experience</strong></td><td>What customers are told, and how estimated times are worked out.</td></tr>
                   <tr><td><strong>Queue &amp; Arrival Rules</strong></td><td>The appointment protection window and how same-day arrivals are handled.</td></tr>
                   <tr><td><strong>Notifications</strong></td><td>Whether email reaches real customers or is held at a test address, plus reminders, consent, service-due reminders and daily follow-ups.</td></tr>
                   <tr><td><strong>Workshop Operations</strong></td><td>Opening hours, job timing, the customer display board, servicing defaults.</td></tr>
                   <tr><td><strong>Services &amp; Catalogue</strong></td><td>Service names, lengths, and which are offered online.</td></tr>
-                  <tr><td><strong>System &amp; Testing</strong></td><td>Booking Simulator, bay confirmation, deployment checks, audit logs.</td></tr>
+                  <tr><td><strong>System</strong></td><td>Work positions, deployment checks, audit logs.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1153,26 +1153,6 @@
           </div>
         </article>
 
-        <article class="task" data-roles="mgr">
-          <div class="task-head">
-            <h3>Try something without touching real data</h3>
-            <p class="where">Setup &rsaquo; Booking Simulator</p>
-          </div>
-          <div class="task-body">
-            <p>Two jobs, both useful when a customer says a time &ldquo;should&rdquo; be available:</p>
-            <ol>
-              <li>Pick a service and a date range and run the simulation. Every slot comes back with the reason
-                it is or is not offered &mdash; capacity, opening hours, notice period, bay type.</li>
-              <li>Start a test booking session to walk the real customer booking flow. Anything it creates is
-                tagged as test data and its emails are captured rather than sent.</li>
-            </ol>
-            <div class="note">
-              This is a setup tool. If you would rather it were not on the menu at all, switch it off at
-              <span class="path">Settings &rsaquo; Booking &amp; Scheduling &rsaquo; Testing tools</span> and it
-              disappears &mdash; screen, menu entry and all. Turning it back on is the same one switch.
-            </div>
-          </div>
-        </article>
       </section>
 
       <!-- ============ 06 ============ -->
@@ -1312,7 +1292,7 @@
                   <tr><td>A job will not start</td><td>Parts not acknowledged, no qualified technician on shift, or no suitable bay. Open the ticket &mdash; the reason is on it.</td></tr>
                   <tr><td>&ldquo;One job at a time&rdquo; when starting work</td><td>Working as intended. Finish or pause the job already on your clock.</td></tr>
                   <tr><td>An assignment is refused</td><td>The technician lacks a skill the services need, or the named bay is the wrong type. The message says which.</td></tr>
-                  <tr><td>A time the customer wants is not offered</td><td>Run it through the Booking Simulator &mdash; it names the exact rule, usually notice period, latest start or capacity.</td></tr>
+                  <tr><td>A time the customer wants is not offered</td><td>Almost always the notice period, the latest start time or the number of appointments allowed at once &mdash; all under <strong>Settings &rsaquo; Booking &amp; Scheduling</strong>. Closed dates are there too.</td></tr>
                   <tr><td>The email button refuses</td><td>No real email address on file. Add one, or call instead. Do not enter a placeholder.</td></tr>
                   <tr><td>A customer says they never got the email</td><td>Check Settings &rsaquo; Notifications: if <strong>Send Email to Customers</strong> is off, it went to the test address instead. The send still shows as successful.</td></tr>
                   <tr><td>Waiting times look impossible</td><td>Almost always an old visit nobody closed. Check for open visits from previous days.</td></tr>

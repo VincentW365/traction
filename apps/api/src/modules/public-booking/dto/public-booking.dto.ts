@@ -176,11 +176,6 @@ export class ConfirmBookingDto {
   @ApiPropertyOptional({ type: ServiceRequestDto, description: 'CR-2026-106 — reason / concern / description / mileage' })
   @IsOptional() @ValidateNested() @Type(() => ServiceRequestDto)
   serviceRequest?: ServiceRequestDto;
-
-  // CR-2026-108 Stage 3 — there is deliberately NO uat field here. The UAT context
-  // arrives as an HttpOnly cookie minted by /public/booking/uat/redeem, so the
-  // privileged token never travels in a form body, a URL or anything the page can
-  // read back.
 }
 
 export class CancelBookingDto {
