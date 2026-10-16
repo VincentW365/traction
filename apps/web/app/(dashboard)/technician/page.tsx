@@ -25,6 +25,7 @@ import { EmptyState } from '../../../components/ui/empty-state';
 import { LoadingState } from '../../../components/ui/loading-state';
 import { StatusBadge } from '../../../components/status-badge';
 import { PAUSE_REASONS } from '../../../lib/service-order-actions';
+import { jobClock } from '../../../lib/job-clock';
 import { KpiStrip, type LiveKpi } from '../../../components/kpi-strip';
 import { ServiceQualifiers } from '../../../components/service-qualifiers';
 
@@ -386,13 +387,13 @@ export default function TechnicianWorkView() {
   });
 
   // Timer math for the on-the-clock job (§6 — JOB timing, not workday timing).
+  // CR-2026-125 — the shared clock, which stops at the hand-off to Quality Check.
   const timing = workTimingQuery.data;
-  const startedMs = timing?.startedAt ? new Date(timing.startedAt).getTime() : null;
-  const openPauseMs = timing?.openPauseStartedAt ? now - new Date(timing.openPauseStartedAt).getTime() : 0;
-  const elapsedMs = startedMs ? now - startedMs : 0;
-  const workingMs = startedMs ? elapsedMs - (timing?.pausedMs ?? 0) - openPauseMs : 0;
+  const clock = jobClock(timing, now);
+  const startedMs = clock.started;
+  const { elapsedMs, workingMs } = clock;
   const expectedMs = (currentJob?.expectedMinutes ?? 0) * 60000;
-  const overExpected = !!startedMs && expectedMs > 0 && elapsedMs > expectedMs;
+  const overExpected = startedMs && !clock.finished && expectedMs > 0 && elapsedMs > expectedMs;
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -561,9 +562,9 @@ export default function TechnicianWorkView() {
                               <div className="input-label">Elapsed{overExpected ? ' · over expected' : ''}</div>
                               <div className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${overExpected ? 'text-amber-700' : 'text-slate-900'}`}>{fmtClock(elapsedMs)}</div>
                             </div>
-                            <div className="rounded-xl border p-3 text-center bg-emerald-50 border-emerald-200">
-                              <div className="input-label">Working</div>
-                              <div className="text-2xl font-bold font-mono tabular-nums mt-0.5 text-emerald-700">{fmtClock(workingMs)}</div>
+                            <div className={`rounded-xl border p-3 text-center ${clock.finished ? 'bg-slate-50 border-slate-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                              <div className="input-label">Working{clock.finished ? ' · final' : ''}</div>
+                              <div className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${clock.finished ? 'text-slate-900' : 'text-emerald-700'}`}>{fmtClock(workingMs)}</div>
                             </div>
                           </div>
                           {timing?.startedAt && (

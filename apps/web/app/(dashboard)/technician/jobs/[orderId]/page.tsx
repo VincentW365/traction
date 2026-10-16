@@ -13,6 +13,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { withReturn } from '../../../../../lib/return-to';
+import { jobClock } from '../../../../../lib/job-clock';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSiteId } from '../../../../../hooks/use-site';
 import { useQueueSocket } from '../../../../../hooks/use-queue-socket';
@@ -79,6 +80,8 @@ interface JobContext {
   };
   timing: {
     startedAt: string | null;
+    // CR-2026-125 — stamped on entry to Quality Check; the clocks stop here.
+    completedAt: string | null;
     pausedMs: number;
     waitingPartsMs: number;
     waitingCustomerMs: number;
@@ -323,10 +326,10 @@ export default function TechnicianJobWorkspace() {
   const { order, visit, customer, vehicle, timing } = ctx;
   // §12 — the customer's stated concern, prominent, never buried.
   const concern = visit.appointmentNotes ?? visit.intakeNotes ?? null;
-  const startedMs = timing.startedAt ? new Date(timing.startedAt).getTime() : null;
-  const openPauseMs = timing.openPauseStartedAt ? now - new Date(timing.openPauseStartedAt).getTime() : 0;
-  const elapsedMs = startedMs ? now - startedMs : 0;
-  const workingMs = startedMs ? elapsedMs - timing.pausedMs - openPauseMs : 0;
+  // CR-2026-125 — one shared clock that stops at the hand-off to Quality Check.
+  const clock = jobClock(timing, now);
+  const startedMs = clock.started;
+  const { elapsedMs, workingMs } = clock;
   const expectedMs = order.expectedMinutes * 60000;
   const overExpected = startedMs && expectedMs > 0 && elapsedMs > expectedMs;
   const isHeld = ['PAUSED', 'WAITING_PARTS', 'WAITING_CUSTOMER'].includes(order.status);
@@ -432,19 +435,25 @@ export default function TechnicianJobWorkspace() {
               <ServiceQualifiers orderId={order.id} invalidateKeys={[['kpi-live', order.id]]} />
             </div>
 
-            {/* Timers (§11) */}
+            {/* Timers (§11). CR-2026-125 — final once the work has gone to Quality
+                Check: the figures stop at the hand-off and say so. */}
             {startedMs ? (
               <>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className={`rounded-xl border p-3 text-center ${overExpected ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200'}`}>
-                    <div className="input-label">Elapsed{overExpected ? ' · over expected' : ''}</div>
-                    <div className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${overExpected ? 'text-amber-700' : 'text-slate-900'}`}>{fmtClock(elapsedMs)}</div>
+                  <div className={`rounded-xl border p-3 text-center ${clock.finished ? 'bg-slate-50 border-slate-200' : overExpected ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200'}`}>
+                    <div className="input-label">Elapsed{clock.finished ? ' · final' : overExpected ? ' · over expected' : ''}</div>
+                    <div className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${!clock.finished && overExpected ? 'text-amber-700' : 'text-slate-900'}`}>{fmtClock(elapsedMs)}</div>
                   </div>
-                  <div className={`rounded-xl border p-3 text-center ${isHeld ? 'bg-orange-50 border-orange-200' : 'bg-emerald-50 border-emerald-200'}`}>
-                    <div className="input-label">Working{isHeld ? ' (stopped)' : ''}</div>
-                    <div className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${isHeld ? 'text-orange-700' : 'text-emerald-700'}`}>{fmtClock(workingMs)}</div>
+                  <div className={`rounded-xl border p-3 text-center ${clock.finished ? 'bg-slate-50 border-slate-200' : isHeld ? 'bg-orange-50 border-orange-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                    <div className="input-label">Working{clock.finished ? ' · final' : isHeld ? ' (stopped)' : ''}</div>
+                    <div className={`text-2xl font-bold font-mono tabular-nums mt-0.5 ${clock.finished ? 'text-slate-900' : isHeld ? 'text-orange-700' : 'text-emerald-700'}`}>{fmtClock(workingMs)}</div>
                   </div>
                 </div>
+                {clock.finished && timing.completedAt && (
+                  <p className="text-[11px] text-slate-500 text-center">
+                    Sent to Quality Check at {fmtTime(timing.completedAt)} — your time on this job stopped there.
+                  </p>
+                )}
                 <KpiStrip kpi={kpiQuery.data} />
               </>
             ) : null}
